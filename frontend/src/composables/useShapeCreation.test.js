@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { startPaletteDrag, isConnectorType, DATA_TRANSFER_KEY } from './useShapeCreation.js'
+import { startPaletteDrag, isConnectorType, DATA_TRANSFER_KEY, useShapeCreation } from './useShapeCreation.js'
 
 // The palette-drag gesture has two halves in different files: the tile produces a
 // dataTransfer payload (startPaletteDrag) and the canvas consumes it
@@ -45,6 +45,45 @@ describe('startPaletteDrag', () => {
 
   it('does not throw when dataTransfer is absent (synthetic events)', () => {
     expect(() => startPaletteDrag({}, 'rect', fakeEditorUi())).not.toThrow()
+  })
+})
+
+// The canvas ghosts the draft with ShapeView, which needs the armed type — without
+// it every shape previewed as a rectangle (issue #31).
+function fakeDrawUi(type) {
+  return {
+    state: { tool: 'draw', drawShapeType: type },
+    viewport: { state: { panX: 0, panY: 0, zoom: 1 } },
+    setTool: () => {},
+  }
+}
+
+// The drag arms edge auto-pan, which schedules a frame; the node test env has no
+// rAF, and the pan itself is not what these tests are about.
+globalThis.requestAnimationFrame ??= () => 0
+
+function fakePointerEvent(x, y) {
+  return {
+    button: 0,
+    clientX: x,
+    clientY: y,
+    currentTarget: { getBoundingClientRect: () => ({ left: 0, top: 0 }), scrollLeft: 0, scrollTop: 0 },
+  }
+}
+
+describe('draw preview', () => {
+  it('carries the armed shape type through the drag', () => {
+    const creation = useShapeCreation({}, fakeDrawUi('ellipse'))
+    creation.onCanvasPointerDown(fakePointerEvent(10, 10))
+    creation.onCanvasPointerMove(fakePointerEvent(110, 60))
+    expect(creation.preview.value).toMatchObject({ box: true, type: 'ellipse', x: 10, y: 10, w: 100, h: 50 })
+  })
+
+  it('previews a connector as a line, with no shape type', () => {
+    const creation = useShapeCreation({}, fakeDrawUi('arrow'))
+    creation.onCanvasPointerDown(fakePointerEvent(10, 10))
+    creation.onCanvasPointerMove(fakePointerEvent(50, 30))
+    expect(creation.preview.value).toMatchObject({ line: true, x1: 10, y1: 10, x2: 50, y2: 30 })
   })
 })
 

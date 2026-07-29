@@ -152,7 +152,7 @@ Minimalistic. Left: editable diagram title + a subtle **Saved / Saving…** indi
 ## 5. Shapes
 
 ### 5.1 Shape set
-Ellipse (Shift → circle), rectangle (Shift → square), square, triangle, diamond. **Text box** behaves as a shape in all respects but renders with no border or fill. New shapes spawn with a **designed default style** (curated fill, border, Inter text) — never raw black-on-white.
+Ellipse (Shift → circle), rectangle (Shift → square), square, triangle, diamond. **Text box** behaves as a shape in all respects but renders with no border or fill. New shapes spawn with a **designed default style** (themed border, transparent fill, Inter text) — never raw black-on-white. Outline-only by default keeps a new shape from hiding what it is drawn over; the user applies a fill from the right palette. While drawing, the canvas shows a dashed live preview of the actual shape.
 
 ### 5.2 Anchor points vs. resize handles
 Every shape has **8 key points** (4 mid-edges + 4 corners), disambiguated by context:

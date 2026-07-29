@@ -53,7 +53,7 @@ export function useShapeCreation(store, editorUi) {
 
   function onCanvasPointerDown(event) {
     if (editorUi.state.tool !== 'draw' || event.button !== 0) return
-    beginDraft(drag, preview, logicalPoint(event))
+    beginDraft(drag, preview, editorUi.state.drawShapeType, logicalPoint(event))
     event.currentTarget.setPointerCapture?.(event.pointerId)
     // As the drag reaches an edge, auto-pan and re-size the draft to the pointer.
     const surface = event.currentTarget
@@ -113,16 +113,18 @@ function toLogicalPoint(event, viewport) {
   }
 }
 
-function beginDraft(drag, preview, point) {
+function beginDraft(drag, preview, type, point) {
   drag.active = true
   drag.start = point
-  preview.value = { box: true, x: point.x, y: point.y, w: 0, h: 0 }
+  preview.value = { box: true, type, x: point.x, y: point.y, w: 0, h: 0 }
 }
 
+// The draft carries the armed shape type so the canvas can ghost the actual
+// shape (ellipse, diamond, star…) instead of a generic rectangle.
 function updateDraft(drag, preview, type, point) {
   preview.value = isConnectorType(type)
     ? { line: true, x1: drag.start.x, y1: drag.start.y, x2: point.x, y2: point.y }
-    : { box: true, ...boxBetween(drag.start, point) }
+    : { box: true, type, ...boxBetween(drag.start, point) }
 }
 
 // A normalised rectangle spanning the two pointer corners.
