@@ -113,10 +113,12 @@ function toLogicalPoint(event, viewport) {
   }
 }
 
+// The zero-size draft comes from updateDraft too, so a connector never starts
+// out as a box ghost ('arrow' is both a connector tool and a shape type).
 function beginDraft(drag, preview, type, point) {
   drag.active = true
   drag.start = point
-  preview.value = { box: true, type, x: point.x, y: point.y, w: 0, h: 0 }
+  updateDraft(drag, preview, type, point)
 }
 
 // The draft carries the armed shape type so the canvas can ghost the actual
