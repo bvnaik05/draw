@@ -80,10 +80,26 @@ describe('draw preview', () => {
   })
 
   it('previews a connector as a line, with no shape type', () => {
-    const creation = useShapeCreation({}, fakeDrawUi('arrow'))
+    const creation = useShapeCreation({}, fakeDrawUi('connector-arrow'))
     creation.onCanvasPointerDown(fakePointerEvent(10, 10))
     creation.onCanvasPointerMove(fakePointerEvent(50, 30))
     expect(creation.preview.value).toMatchObject({ line: true, x1: 10, y1: 10, x2: 50, y2: 30 })
+  })
+
+  // The block arrow shares its label with the arrow connector; only the ids keep
+  // them apart, so pin that the shape tool still draws (and commits) a shape.
+  it('previews the block arrow as a shape, not a connector line', () => {
+    const creation = useShapeCreation({}, fakeDrawUi('arrow'))
+    creation.onCanvasPointerDown(fakePointerEvent(10, 10))
+    creation.onCanvasPointerMove(fakePointerEvent(90, 50))
+    expect(creation.preview.value).toMatchObject({ box: true, type: 'arrow', w: 80, h: 40 })
+  })
+
+  // Pressing without moving must not flash a box ghost for a connector tool.
+  it('starts a connector drag as a zero-length line, never a box', () => {
+    const creation = useShapeCreation({}, fakeDrawUi('elbow'))
+    creation.onCanvasPointerDown(fakePointerEvent(10, 10))
+    expect(creation.preview.value).toMatchObject({ line: true, x1: 10, y1: 10, x2: 10, y2: 10 })
   })
 })
 
@@ -92,5 +108,12 @@ describe('isConnectorType', () => {
     expect(isConnectorType('rect')).toBe(false)
     // A connector drops as a two-endpoint line, not a boxed shape.
     expect(isConnectorType('line')).toBe(true)
+  })
+
+  // The palette lists a block-arrow SHAPE and an arrow CONNECTOR; the connector
+  // is 'connector-arrow' precisely so 'arrow' stays a shape here.
+  it('treats the block arrow as a shape and the arrow connector as a connector', () => {
+    expect(isConnectorType('arrow')).toBe(false)
+    expect(isConnectorType('connector-arrow')).toBe(true)
   })
 })

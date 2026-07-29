@@ -1,7 +1,9 @@
-// Factories for shapes and connectors. They assign stable ids (a process-local
-// counter, NOT Math.random/Date per CONVENTIONS) and fill defaults — geometry
-// plus the active theme's primary triad (border + text ink) so every shape is
-// beautiful by default. New shapes are outline-only — see styleForType.
+// Factories for shapes and connectors. They assign stable ids — a process-local
+// counter, never a Date and never a per-id Math.random (CONVENTIONS); the only
+// randomness is one short per-session salt, see CLIENT_SALT below — and fill
+// defaults: geometry plus the active theme's primary triad (border + text ink),
+// so every shape is beautiful by default. New shapes are outline-only — see
+// styleForType.
 
 import { primaryTriad, CONNECTOR_DEFAULT_STYLE } from './theme.js'
 

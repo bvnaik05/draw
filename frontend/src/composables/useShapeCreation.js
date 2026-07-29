@@ -21,11 +21,14 @@ import { useEdgeAutoPan } from '@/composables/useEdgeAutoPan.js'
 export const DATA_TRANSFER_KEY = 'application/x-frappe-draw-tool'
 
 // Connector draw tools → geometry + default endpoints. 'line' is a plain
-// straight segment with no arrowheads; 'arrow' adds an end arrow. elbow/curved
-// keep the end arrow. The user changes endpoints afterwards in the right palette.
+// straight segment with no arrowheads; 'connector-arrow' adds an end arrow.
+// elbow/curved keep the end arrow. The user changes endpoints afterwards in the
+// right palette. The arrow connector is namespaced because 'arrow' is already a
+// SHAPE type (the block arrow polygon): sharing the id made every block arrow
+// commit as a connector line instead.
 const CONNECTOR_SPECS = {
   line: { type: 'straight', arrowheads: { start: 'none', end: 'none' } },
-  arrow: { type: 'straight', arrowheads: { start: 'none', end: 'arrow' } },
+  'connector-arrow': { type: 'straight', arrowheads: { start: 'none', end: 'arrow' } },
   straight: { type: 'straight', arrowheads: { start: 'none', end: 'arrow' } },
   elbow: { type: 'elbow', arrowheads: { start: 'none', end: 'arrow' } },
   curved: { type: 'curved', arrowheads: { start: 'none', end: 'arrow' } },
@@ -113,8 +116,8 @@ function toLogicalPoint(event, viewport) {
   }
 }
 
-// The zero-size draft comes from updateDraft too, so a connector never starts
-// out as a box ghost ('arrow' is both a connector tool and a shape type).
+// The zero-size draft comes from updateDraft too, so a connector tool never
+// starts out as a box ghost before the first pointer move.
 function beginDraft(drag, preview, type, point) {
   drag.active = true
   drag.start = point

@@ -172,7 +172,6 @@ const previewShape = computed(() => {
   if (!draft?.box) return null
   const type = draft.type === 'text' || draft.type === 'image' ? 'rectangle' : draft.type
   return {
-    id: 'draw-preview',
     type: type || 'rectangle',
     x: draft.x,
     y: draft.y,
