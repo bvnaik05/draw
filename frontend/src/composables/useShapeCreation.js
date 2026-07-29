@@ -21,11 +21,14 @@ import { useEdgeAutoPan } from '@/composables/useEdgeAutoPan.js'
 export const DATA_TRANSFER_KEY = 'application/x-frappe-draw-tool'
 
 // Connector draw tools → geometry + default endpoints. 'line' is a plain
-// straight segment with no arrowheads; 'arrow' adds an end arrow. elbow/curved
-// keep the end arrow. The user changes endpoints afterwards in the right palette.
+// straight segment with no arrowheads; 'connector-arrow' adds an end arrow.
+// elbow/curved keep the end arrow. The user changes endpoints afterwards in the
+// right palette. The arrow connector is namespaced because 'arrow' is already a
+// SHAPE type (the block arrow polygon): sharing the id made every block arrow
+// commit as a connector line instead.
 const CONNECTOR_SPECS = {
   line: { type: 'straight', arrowheads: { start: 'none', end: 'none' } },
-  arrow: { type: 'straight', arrowheads: { start: 'none', end: 'arrow' } },
+  'connector-arrow': { type: 'straight', arrowheads: { start: 'none', end: 'arrow' } },
   straight: { type: 'straight', arrowheads: { start: 'none', end: 'arrow' } },
   elbow: { type: 'elbow', arrowheads: { start: 'none', end: 'arrow' } },
   curved: { type: 'curved', arrowheads: { start: 'none', end: 'arrow' } },
@@ -53,7 +56,7 @@ export function useShapeCreation(store, editorUi) {
 
   function onCanvasPointerDown(event) {
     if (editorUi.state.tool !== 'draw' || event.button !== 0) return
-    beginDraft(drag, preview, logicalPoint(event))
+    beginDraft(drag, preview, editorUi.state.drawShapeType, logicalPoint(event))
     event.currentTarget.setPointerCapture?.(event.pointerId)
     // As the drag reaches an edge, auto-pan and re-size the draft to the pointer.
     const surface = event.currentTarget
@@ -113,16 +116,20 @@ function toLogicalPoint(event, viewport) {
   }
 }
 
-function beginDraft(drag, preview, point) {
+// The zero-size draft comes from updateDraft too, so a connector tool never
+// starts out as a box ghost before the first pointer move.
+function beginDraft(drag, preview, type, point) {
   drag.active = true
   drag.start = point
-  preview.value = { box: true, x: point.x, y: point.y, w: 0, h: 0 }
+  updateDraft(drag, preview, type, point)
 }
 
+// The draft carries the armed shape type so the canvas can ghost the actual
+// shape (ellipse, diamond, star…) instead of a generic rectangle.
 function updateDraft(drag, preview, type, point) {
   preview.value = isConnectorType(type)
     ? { line: true, x1: drag.start.x, y1: drag.start.y, x2: point.x, y2: point.y }
-    : { box: true, ...boxBetween(drag.start, point) }
+    : { box: true, type, ...boxBetween(drag.start, point) }
 }
 
 // A normalised rectangle spanning the two pointer corners.
