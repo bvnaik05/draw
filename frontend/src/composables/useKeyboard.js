@@ -104,9 +104,22 @@ function handleKeydown(event, store, editorUi, clipboard, transform) {
 }
 
 // The per-mode handler for the active diagram type (or null for block/unset).
+// The unified canvas has no type of its own (it resolves to block), but a mind
+// map / flowchart node on it is selected and edited in place (#45), so fall back
+// to the handler for whichever model owns the selection.
 function modeKeyboardFor(store) {
   const strategy = getModeStrategy(store.state.diagramType)
-  return MODE_KEYBOARD_HANDLERS[strategy.keyboardMode] ?? null
+  return MODE_KEYBOARD_HANDLERS[strategy.keyboardMode] ?? selectedNodeHandler(store)
+}
+
+// Node ids are prefixed per model ('n…' mind map, 'f…' flowchart, 's…' shape),
+// so the owning model of a selected id is unambiguous.
+function selectedNodeHandler(store) {
+  const id = (store.state.selection || [])[0]
+  if (!id) return null
+  if (store.state.mindmap?.nodes?.some((node) => node.id === id)) return MODE_KEYBOARD_HANDLERS.mindmap
+  if (store.state.flowchart?.nodes?.some((node) => node.id === id)) return MODE_KEYBOARD_HANDLERS.flowchart
+  return null
 }
 
 // Offer a non-modifier key to the active type's handler; returns true if consumed.

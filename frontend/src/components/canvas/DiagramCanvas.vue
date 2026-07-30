@@ -15,7 +15,7 @@ import { useModeStrategy } from '@/stores/useModeStrategy.js'
 import { themeVarStyle } from '@/diagram/theme.js'
 import { axisAlignedBBox, anchorPoint, pointInShape } from '@/diagram/geometry.js'
 import { isVisible, isInteractable } from '@/diagram/shapeFlags.js'
-import { layoutMindMap } from '@/diagram/mindmapLayout.js'
+import { layoutMindMap, offsetPositions } from '@/diagram/mindmapLayout.js'
 import { flowchartContentBounds } from '@/diagram/flowchartLayout.js'
 import { whiteboardContentBounds } from '@/diagram/whiteboardLayout.js'
 import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
@@ -73,12 +73,12 @@ const isWhiteboard = computed(() => activeType.value === 'whiteboard')
 // The unified canvas (roadmap: canvas unification). Detected from the document's
 // own type, NOT the strategy — an unknown 'unified' type falls back to the BLOCK
 // strategy, so activeType would read 'block'. On a unified doc the shared block
-// substrate and the whiteboard layer compose over one canvas (the auto-layout
-// types become frames in a later phase); legacy single-type docs are unchanged.
-// A unified doc renders the composed canvas — EXCEPT while a frame is focused for
-// editing, when the mode strategy is overridden to that sub-model's type and the
-// editor renders as its single-type editor (so isUnified goes false here).
-const isUnified = computed(() => isUnifiedDocument(store.state) && !editorUi.state.focusedFrame)
+// substrate, the whiteboard layer and the auto-layout models compose over one
+// canvas; legacy single-type docs are unchanged. A unified doc ALWAYS renders
+// that composed canvas: mind maps and flowcharts on it are ordinary canvas
+// objects edited in place, so there is no focus mode that swaps the editor into
+// a single-type view (#45).
+const isUnified = computed(() => isUnifiedDocument(store.state))
 const showBlockLayer = computed(() => !rendersOwnLayer.value || isUnified.value)
 
 const mindmapLayout = computed(() =>
@@ -90,17 +90,30 @@ const mindmapLayout = computed(() =>
 const mmOrigin = computed(() => store.state.mindmap?.origin || { x: 0, y: 0 })
 const fcOrigin = computed(() => store.state.flowchart?.origin || { x: 0, y: 0 })
 
-// ----- Unified-canvas frames: select + move (Phase 4c) -----------------------
-// A frame (mind map / flowchart) is a selectable, movable object. A hit-rect over
-// its content bbox captures the press; dragging it repositions the whole frame
-// (its origin) as one undo step. The inner content stays pointer-events:none.
+// ----- Unified-canvas mind map / flowchart objects ---------------------------
+// A mind map / flowchart on the unified canvas is a selectable, movable object
+// whose CONTENT stays live: nodes are clicked, dragged and edited in place, in
+// the current viewport (#45). A hit-rect behind the content covers the object's
+// padded bbox, so pressing its empty space selects the whole object and dragging
+// it repositions the origin as one undo step.
 const FRAME_PAD = 12
 const selectedFrame = ref(null) // 'mindmap' | 'flowchart' | null
 const frameDrag = reactive({ kind: null, dx: 0, dy: 0, startX: 0, startY: 0 })
 
-// Content bbox (local, pre-origin) for each frame, padded, or null when empty.
-const mmBox = computed(() => {
+// The mind map is auto-laid-out around its own origin, so on the unified canvas
+// we fold the frame origin into the layout instead of rendering under a
+// translate: node hit-testing and drag-to-reparent then work directly in canvas
+// units, with no per-frame coordinate conversion (useMindmapInteraction).
+const mmPositions = computed(() => {
   const positions = mindmapLayout.value?.positions
+  if (!positions) return null
+  return isUnified.value ? offsetPositions(positions, mmOrigin.value) : positions
+})
+
+// Padded content bbox for each object: mind-map coords already include the origin
+// (mmPositions); flowchart node coords stay local to its origin translate.
+const mmBox = computed(() => {
+  const positions = mmPositions.value
   if (!positions || !store.state.mindmap?.nodes.length) return null
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const id in positions) {
@@ -117,8 +130,10 @@ const fcBox = computed(() => {
   return { x: b.x - FRAME_PAD, y: b.y - FRAME_PAD, w: b.w + FRAME_PAD * 2, h: b.h + FRAME_PAD * 2 }
 })
 
-// Origins with the live drag delta folded in, so the frame follows the cursor.
-const renderedMmOrigin = computed(() => offsetForDrag('mindmap', mmOrigin.value))
+// Render transforms with the live drag delta folded in, so the object follows the
+// cursor. The mind map already carries its origin in mmPositions, so it only
+// needs the delta; the flowchart is translated by its origin as well.
+const renderedMmOffset = computed(() => offsetForDrag('mindmap', { x: 0, y: 0 }))
 const renderedFcOrigin = computed(() => offsetForDrag('flowchart', fcOrigin.value))
 function offsetForDrag(kind, origin) {
   if (frameDrag.kind !== kind) return origin
@@ -401,14 +416,6 @@ function openAtActualSize() {
 
 let resizeObserver = null
 
-// Entering/leaving a frame's focus mode reframes the view: on enter, fit the now
-// single-type content (the frame); on exit, fit the unified canvas. Without this
-// the frame renders at its own coords, off-screen from where the frame sat.
-watch(
-  () => editorUi.state.focusedFrame,
-  () => nextTick(fitToView),
-)
-
 onMounted(() => {
   openAtActualSize()
   // Route editorUi.fit() (bottom-left control + ⇧1 shortcut) through fitToView so
@@ -490,6 +497,37 @@ function interactionContext(event) {
   // interactions can begin inline text edits without re-calling the composable
   // outside setup (e.g. whiteboard double-click-to-type, spec C1/W1).
   return { point, event, viewport, store, editorUi, editing }
+}
+
+// --- Flowchart objects on the unified canvas (#45) ---------------------------
+// The flowchart's own interaction is surface-delegated (it reads data-fc-node off
+// the event target), so on the unified canvas we route just the presses that land
+// on its content to it, in the frame-local coords its layer renders in. A gesture
+// flag keeps the following move/up going to the same place. Everything happens
+// where the object already sits — no focus mode, no camera move.
+const flowchartGesture = ref(false)
+
+function unifiedFlowchartHandlers() {
+  return isUnified.value ? modeInteraction.value.flowchart || null : null
+}
+
+function flowchartContext(event) {
+  const context = interactionContext(event)
+  const origin = fcOrigin.value
+  return { ...context, point: { x: context.point.x - origin.x, y: context.point.y - origin.y } }
+}
+
+function delegateFlowchartEvent(handlerName, event) {
+  const handlers = unifiedFlowchartHandlers()
+  if (!handlers) return false
+  if (handlerName === 'onPointerDown') {
+    if (editorUi.state.tool !== 'select') return false
+    if (!event.target?.closest?.('[data-fc-node]')) return false
+    flowchartGesture.value = true
+  } else if (!flowchartGesture.value) return false
+  handlers[handlerName]?.(event, flowchartContext(event))
+  if (handlerName === 'onPointerUp') flowchartGesture.value = false
+  return true
 }
 
 // Try delegating one surface event to the mode interaction's handler. Returns
@@ -590,15 +628,24 @@ function commitSectionDraft() {
   editorUi.setTool('select')
 }
 
+// Any press drops the mind-map/flowchart object selection; a press on that
+// object's own hit-rect re-selects it immediately after. Capture phase, because
+// its content (mind-map nodes) stops propagation and would otherwise leave the
+// object's outline showing while a node inside it is being edited.
+function onSurfacePointerDownCapture(event) {
+  selectedFrame.value = null
+  // A press outside a flowchart object closes its open node-type picker / pending
+  // connector, the same as pressing its own empty canvas does in single-type mode.
+  const flowchart = unifiedFlowchartHandlers()
+  if (flowchart && !event.target?.closest?.('[data-fc-node], [data-fc-picker]')) flowchart.cancel?.()
+}
+
 // Route a surface pointerdown to the active tool: hand pans, draw creates, and
 // select runs the normal click/move/marquee selection (spec §7.1/§7.2/§4.3).
 function onSurfacePointerDown(event) {
   // A press anywhere but a section's title (which stops propagation) clears the
   // section selection, so its handles/menu disappear.
   editorUi.clearSection()
-  // A press that reaches the surface (a frame hit-rect stops propagation) is
-  // outside any frame — deselect the unified-canvas frame.
-  selectedFrame.value = null
   // Section draw tool wins before any per-type handling (works in every type).
   if (editorUi.state.tool === 'section') return startSectionDraft(event)
   // Hand tool always pans, for every type (shared transform, Part G4).
@@ -626,6 +673,11 @@ function onSurfacePointerDown(event) {
     surface.value?.setPointerCapture?.(event.pointerId)
     return
   }
+  // A press on a flowchart object's node/port drives that object in place.
+  if (delegateFlowchartEvent('onPointerDown', event)) {
+    surface.value?.setPointerCapture?.(event.pointerId)
+    return
+  }
   // Mind map is auto-layout: no free shape select/draw/move on the surface
   // (node interactions live on the nodes themselves).
   if (isMindmap.value) return
@@ -637,6 +689,7 @@ function onSurfacePointerMove(event) {
   if (panning.value) return viewport.movePan(event)
   if (editorUi.state.tool === 'section' && sectionDraft.value) return updateSectionDraft(event)
   if (delegateSurfaceEvent('onPointerMove', event)) return
+  if (delegateFlowchartEvent('onPointerMove', event)) return
   if (!isMindmap.value && editorUi.state.tool === 'draw') creation.onCanvasPointerMove(event)
 }
 
@@ -644,7 +697,15 @@ function onSurfacePointerUp(event) {
   viewport.endPan()
   if (editorUi.state.tool === 'section' && sectionDraft.value) return commitSectionDraft()
   if (delegateSurfaceEvent('onPointerUp', event)) return
+  if (delegateFlowchartEvent('onPointerUp', event)) return
   if (!isMindmap.value && editorUi.state.tool === 'draw') creation.onCanvasPointerUp(event)
+}
+
+// A cancelled pointer (browser gesture takeover, lost capture) must end whatever
+// the press started, or the next move would be read as a continuing drag.
+function onSurfacePointerCancel() {
+  cancelSectionDraft()
+  flowchartGesture.value = false
 }
 
 // Double-click: edit the text of a hit shape or the label of a hit connector.
@@ -747,10 +808,11 @@ const surfaceCursor = computed(() => {
     :style="[themeStyle, { cursor: surfaceCursor, background: canvas.background || '#FFFFFF', userSelect: 'none', WebkitUserSelect: 'none' }]"
     class="relative h-full w-full overflow-hidden"
     @wheel.prevent="onWheel"
+    @pointerdown.capture="onSurfacePointerDownCapture"
     @pointerdown="onSurfacePointerDown"
     @pointermove="onSurfacePointerMove"
     @pointerup="onSurfacePointerUp"
-    @pointercancel="cancelSectionDraft"
+    @pointercancel="onSurfacePointerCancel"
     @pointerleave="viewport.endPan()"
     @dblclick="onSurfaceDoubleClick"
     @contextmenu.prevent="onContextMenu"
@@ -846,12 +908,13 @@ const surfaceCursor = computed(() => {
           :flowchart="store.state.flowchart"
         />
 
-        <!-- Unified canvas: mind map & flowchart render as positioned, read-only
-             frames (translated by their origin). In-frame editing is wired in a
-             later phase; pointer-events off here so a frame never intercepts the
-             block/whiteboard interaction underneath it. -->
-        <g v-if="isUnified && mindmapLayout && store.state.mindmap.nodes.length && mmBox"
-          :transform="`translate(${renderedMmOrigin.x} ${renderedMmOrigin.y})`">
+        <!-- Unified canvas: mind map & flowchart are ordinary canvas objects (#45).
+             Their content is live — nodes select, drag and edit in place — with a
+             hit-rect BEHIND it so pressing the object's empty space selects and
+             moves the whole thing. The mind map's origin is baked into
+             mmPositions, so its group only carries the live drag delta. -->
+        <g v-if="isUnified && mmPositions && store.state.mindmap.nodes.length && mmBox"
+          :transform="`translate(${renderedMmOffset.x} ${renderedMmOffset.y})`">
           <rect
             :x="mmBox.x" :y="mmBox.y" :width="mmBox.w" :height="mmBox.h" rx="10"
             :fill="selectedFrame === 'mindmap' ? 'rgba(0,110,219,0.04)' : 'transparent'"
@@ -859,11 +922,12 @@ const surfaceCursor = computed(() => {
             :stroke-width="selectedFrame === 'mindmap' ? 1.5 : 0"
             stroke-dasharray="6 4" style="cursor: move"
             @pointerdown.stop="startFrameDrag('mindmap', $event)"
-            @dblclick.stop="editorUi.setFocusedFrame('mindmap')"
           />
-          <g class="unified-frame-content">
-            <MindMapNodeLayer :mindmap="store.state.mindmap" :positions="mindmapLayout.positions" />
-          </g>
+          <MindMapNodeLayer
+            :mindmap="store.state.mindmap"
+            :positions="mmPositions"
+            :marquee-backdrop="false"
+          />
         </g>
         <g v-if="isUnified && store.state.flowchart.nodes.length && fcBox"
           :transform="`translate(${renderedFcOrigin.x} ${renderedFcOrigin.y})`">
@@ -874,11 +938,8 @@ const surfaceCursor = computed(() => {
             :stroke-width="selectedFrame === 'flowchart' ? 1.5 : 0"
             stroke-dasharray="6 4" style="cursor: move"
             @pointerdown.stop="startFrameDrag('flowchart', $event)"
-            @dblclick.stop="editorUi.setFocusedFrame('flowchart')"
           />
-          <g style="pointer-events: none">
-            <FlowchartLayer :flowchart="store.state.flowchart" />
-          </g>
+          <FlowchartLayer :flowchart="store.state.flowchart" />
         </g>
 
         <!-- Whiteboard: strokes + stickies + objects (spec Part C). Renders for a
@@ -931,13 +992,5 @@ const surfaceCursor = computed(() => {
 :deep(textarea) {
   user-select: text;
   -webkit-user-select: text;
-}
-
-/* Unified-canvas frames render read-only: their content must NOT capture pointer
-   events (the frame's hit-rect handles select/move). Override the viewport's
-   [&_*]:pointer-events-auto utility, which otherwise re-enables every descendant. */
-:deep(.unified-frame-content),
-:deep(.unified-frame-content *) {
-  pointer-events: none !important;
 }
 </style>

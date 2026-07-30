@@ -32,6 +32,7 @@ const options = NODE_TYPES.map((type) => ({
 
 <template>
   <div
+    data-fc-picker
     class="w-[256px] rounded-lg border border-outline-gray-2 bg-surface-base py-1 shadow-2xl"
     @pointerdown.stop
     @pointerup.stop

@@ -40,6 +40,10 @@ import '@/composables/useMindmapKeys.js'
 const props = defineProps({
   mindmap: { type: Object, required: true },
   positions: { type: Object, required: true },
+  // The full-canvas marquee backdrop below only makes sense when the mind map
+  // owns the whole canvas. On the unified canvas it is one object among many, so
+  // the backdrop would swallow every press outside it (#45).
+  marqueeBackdrop: { type: Boolean, default: true },
 })
 
 const store = useDiagramStore()
@@ -271,10 +275,18 @@ function surfaceRect(event) {
 // model (N5).
 const pressSelectedId = ref(null)
 
+// Only the select tool drives nodes. On the unified canvas the mind map shares
+// the surface with the whiteboard/draw tools, and a pen stroke or a dragged shape
+// over the map must reach the canvas instead of grabbing a node (#45).
+function nodesInteractive() {
+  return editorUi.state.tool === 'select'
+}
+
 // Pointer down on a node: cross-link mode wires two nodes; an additive modifier
 // toggles the node in the shared selection (bulk-select, no drag); otherwise
 // select + begin a possible drag-to-reparent (the composable thresholds it).
 function onNodePointerDown(event, id) {
+  if (!nodesInteractive()) return
   event.stopPropagation()
   if (mindmapUi.pendingLinkSource) return finishLink(id)
   if (isAdditiveEvent(event)) return store.toggleInSelection(id)
@@ -312,6 +324,7 @@ function isCrosslinkSelected(id) {
 // drops the text cursor in. A drag (reparent) is not a click, so it never edits.
 // Double-click (startEdit) still selects+edits immediately.
 function onNodeClick(event, id) {
+  if (!nodesInteractive()) return
   event.stopPropagation()
   if (isAdditiveEvent(event)) return
   if (interaction.gesture.moved) return
@@ -468,6 +481,7 @@ function nodePoly(node, b) {
          so their own clicks/drags are unaffected. Sized huge so it always spans
          the viewport at any pan/zoom. -->
     <rect
+      v-if="marqueeBackdrop"
       x="-200000"
       y="-200000"
       width="400000"

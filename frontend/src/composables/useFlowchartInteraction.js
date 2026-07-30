@@ -420,11 +420,15 @@ export function useFlowchartInteraction(store, editorUi, interactionRef) {
     return branch?.label || ''
   }
 
+  // `cancel` is registered alongside the pointer handlers so the canvas can close
+  // an open picker / pending connector when a press lands outside the flowchart —
+  // on the unified canvas such a press never reaches onPointerDown (#45).
   registerModeInteraction(interactionRef, 'flowchart', {
     onPointerDown,
     onPointerMove,
     onPointerUp,
     onDoubleClick,
+    cancel,
   })
   onBeforeUnmount(() => registerModeInteraction(interactionRef, 'flowchart', null))
 

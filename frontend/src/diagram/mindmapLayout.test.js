@@ -5,6 +5,7 @@ import {
   branchPath,
   isNodeHidden,
   hiddenDescendantCount,
+  offsetPositions,
 } from './mindmapLayout.js'
 
 // Two boxes overlap if they intersect on both axes (touching edges is allowed).
@@ -103,6 +104,20 @@ describe('mindmapLayout', () => {
     expect(isNodeHidden(model, child)).toBe(true)
     expect(isNodeHidden(model, branch)).toBe(false)
     expect(hiddenDescendantCount(model, branch)).toBe(2)
+  })
+
+  it('shifts every node box by the map origin, keeping the sizes', () => {
+    const model = createMindMap()
+    addChild(model, model.rootId)
+    const positions = layoutMindMap(model).positions
+    const moved = offsetPositions(positions, { x: 120, y: -40 })
+    for (const id in positions) {
+      expect(moved[id].x).toBe(positions[id].x + 120)
+      expect(moved[id].y).toBe(positions[id].y - 40)
+      expect(moved[id].w).toBe(positions[id].w)
+    }
+    // A zero origin is the identity, so an unmoved map costs nothing to render.
+    expect(offsetPositions(positions, { x: 0, y: 0 })).toBe(positions)
   })
 
   it('builds a bezier branch path that starts at the parent and ends at the child', () => {
