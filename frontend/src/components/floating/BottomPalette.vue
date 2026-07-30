@@ -84,10 +84,12 @@ const SHAPES = [
   { type: 'callout', icon: 'message-square', label: 'Callout' },
 ]
 // Lines/connectors now live inside the Shapes popover (no separate menu). A
-// plain Line has no arrowheads; Arrow ends in an arrow; elbow/curved too.
+// plain Line has no arrowheads; Arrow ends in an arrow; elbow/curved too. The
+// arrow connector's id is namespaced so it never collides with the 'arrow'
+// block-arrow SHAPE above (they'd both key `byType` and the draw tool).
 const LINES = [
   { type: 'line', icon: 'minus', label: 'Line' },
-  { type: 'arrow', icon: 'arrow-right', label: 'Arrow' },
+  { type: 'connector-arrow', icon: 'arrow-right', label: 'Arrow' },
   { type: 'elbow', icon: 'corner-down-right', label: 'Elbow connector' },
   { type: 'curved', icon: 'git-commit', label: 'Curved connector' },
 ]

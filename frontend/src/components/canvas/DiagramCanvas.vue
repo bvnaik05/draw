@@ -164,6 +164,25 @@ const ownLayerBounds = computed(() => {
 // during a gesture; here we only route the surface's pointer/drag/dblclick.
 const selection = useSelection(store, editorUi)
 const creation = useShapeCreation(store, editorUi)
+// The live draw ghost, as a throwaway shape so ShapeView draws the real
+// geometry of the armed tool (spec §7.1). Text/image have no outline of their
+// own, so they preview as a plain box.
+const previewShape = computed(() => {
+  const draft = creation.preview.value
+  if (!draft?.box) return null
+  const type = draft.type === 'text' || draft.type === 'image' ? 'rectangle' : draft.type
+  return {
+    type: type || 'rectangle',
+    x: draft.x,
+    y: draft.y,
+    w: draft.w,
+    h: draft.h,
+    rotation: 0,
+    opacity: 1,
+    fill: 'none',
+    border: { color: '#006EDB', width: 1.5, dash: 'dashed' },
+  }
+})
 const imageInsert = useImageInsert(store)
 // The whiteboard object selection lives here (separate from block shape
 // selection); we clear it when a block shape on the board is picked, so the two
@@ -791,20 +810,14 @@ const surfaceCursor = computed(() => {
           <HoverArrows />
           <SelectionLayer />
 
-          <!-- Dashed ghost of the shape/connector being drawn (spec §7.1). -->
-          <rect
-            v-if="creation.preview.value?.box"
-            :x="creation.preview.value.x"
-            :y="creation.preview.value.y"
-            :width="creation.preview.value.w"
-            :height="creation.preview.value.h"
-            fill="none"
-            stroke="#006EDB"
-            stroke-width="1.5"
-            stroke-dasharray="6 4"
-          />
+          <!-- Dashed ghost of the shape/connector being drawn (spec §7.1). The
+               shape ghost reuses ShapeView so the preview matches the armed
+               tool's real outline; it never takes pointer events. -->
+          <g v-if="previewShape" style="pointer-events: none">
+            <ShapeView :shape="previewShape" />
+          </g>
           <line
-            v-else-if="creation.preview.value?.line"
+            v-if="creation.preview.value?.line"
             :x1="creation.preview.value.x1"
             :y1="creation.preview.value.y1"
             :x2="creation.preview.value.x2"
