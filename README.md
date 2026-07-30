@@ -16,7 +16,7 @@
 Frappe Draw puts every diagram type on a **single canvas** — no separate editors, no
 type picker. Start drawing immediately, and pull in exactly what you need:
 
-- **Insert menu** drops auto-laid-out **mind-map** and **flowchart** frames onto the canvas, like templates.
+- **Shapes panel** drops auto-laid-out **mind-map** and **flowchart** frames onto the canvas, like templates.
 - **In-frame editing** — double-click any frame to focus it and edit with that type's full dedicated editor, then step back to the canvas.
 - Mix mind maps, flowcharts, whiteboard sketches and block shapes in **one document**.
 
