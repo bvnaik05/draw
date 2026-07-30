@@ -4,7 +4,7 @@
 
 import { createResource } from 'frappe-ui'
 import { themeVarStyle, findThemePreset, primaryTriad } from '@/diagram/theme.js'
-import { parseDiagramDocument } from '@/diagram/schema.js'
+import { parseDiagramDocument, isUnifiedDocument } from '@/diagram/schema.js'
 import { layoutMindMap, branchPath } from '@/diagram/mindmapLayout.js'
 import { resolveNodeColor, nodeFill, readableInk } from '@/diagram/mindmapColors.js'
 import { isRoot } from '@/diagram/mindmapModel.js'
@@ -72,6 +72,23 @@ function escapeText(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+// Colours come out of the persisted document, and this markup is injected into the
+// DOM to preview a diagram — including diagrams SHARED by someone else. escapeText is
+// for text nodes and does not neutralise quotes, so a crafted colour could close the
+// attribute it sits in. Allow only real colour syntax and fall back otherwise.
+const COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([0-9.,%\s/]+\)|hsla?\([0-9.,%\s/deg]+\)|[a-z]{3,20})$/i
+
+export function safeColor(value, fallback = 'none') {
+  const raw = String(value ?? '').trim()
+  return COLOR_RE.test(raw) ? raw : fallback
+}
+
+// Numbers likewise: geometry attributes must never carry arbitrary text.
+function num(value, fallback = 0) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
 // Build a complete inline <svg> string for a parsed diagram document. This is the
 // single render-to-SVG path (spec Part G8) reused by export, the saved thumbnail
 // and the home/trash/template tile previews. It dispatches on diagramType so
@@ -115,10 +132,74 @@ function sectionsSvg(doc) {
 // shapes/connectors over the canvas rect; the layered types render their own
 // geometry over their content bbox.
 function renderBody(doc) {
+  if (isUnifiedDocument(doc)) return unifiedBody(doc)
   if (doc.diagramType === 'mindmap' && doc.mindmap) return mindmapBody(doc)
   if (doc.diagramType === 'flowchart' && doc.flowchart) return flowchartBody(doc)
   if (doc.diagramType === 'whiteboard' && doc.whiteboard) return whiteboardBody(doc)
   return blockBody(doc)
+}
+
+// The unified canvas holds every layer at once, so its export has to compose them
+// the way DiagramCanvas draws them — block shapes and whiteboard ink in absolute
+// canvas coordinates, then the mind-map and flowchart frames translated to their
+// origins.
+//
+// Without this a unified document fell through to blockBody(), so export (PNG/PDF),
+// the saved thumbnail and the home/trash tile previews all showed ONLY block shapes:
+// whiteboard ink, sticky notes and both frames vanished, and the canvas-sized viewBox
+// would have cropped the frames even if they had been drawn. Every new diagram is a
+// unified document, so that was the common case, not an edge case.
+function unifiedBody(doc) {
+  // whiteboardBody already emits the shared block layer (connectors + shapes) AND
+  // the whiteboard ink over it, which is exactly the absolute-coordinate layer here.
+  const base = doc.whiteboard ? whiteboardBody(doc) : blockBody(doc)
+  const boxes = [parseViewBox(base.viewBox)]
+  let body = base.body
+
+  // Origins are persisted values reaching an SVG attribute, so they go through num()
+  // for the same reason colours go through safeColor(): this markup is injected into a
+  // viewer's DOM, and the document may have been authored by someone else.
+  const mindmap = doc.mindmap
+  if (mindmap?.nodes?.length) {
+    const ox = num(mindmap.origin?.x)
+    const oy = num(mindmap.origin?.y)
+    const { bbox } = layoutMindMap(mindmap)
+    body += `<g transform="translate(${ox} ${oy})">${mindmapBody(doc).body}</g>`
+    boxes.push({ x: ox, y: oy, w: bbox.w, h: bbox.h })
+  }
+
+  const flowchart = doc.flowchart
+  let labelled = false
+  if (flowchart?.nodes?.length) {
+    const ox = num(flowchart.origin?.x)
+    const oy = num(flowchart.origin?.y)
+    const bounds = flowchartContentBounds(flowchart)
+    body += `<g transform="translate(${ox} ${oy})">${flowchartBody(doc).body}</g>`
+    boxes.push({ x: ox + bounds.x, y: oy + bounds.y, w: bounds.w, h: bounds.h })
+    labelled = (flowchart.edges || []).some((edge) => edge.label)
+  }
+
+  // flowchartContentBounds covers nodes, not the labels drawn beside edge routes, so
+  // allow more margin when any edge carries one rather than cropping it. Measuring
+  // label text properly would need font metrics — not worth it until someone hits it.
+  return { viewBox: unionViewBox(boxes, labelled ? 96 : 40), body }
+}
+
+function parseViewBox(viewBox) {
+  const [x, y, w, h] = viewBox.split(' ').map(Number)
+  return { x, y, w, h }
+}
+
+// Smallest box covering every layer that has content, with a little breathing room so
+// frame edges aren't flush against the crop.
+function unionViewBox(boxes, pad = 40) {
+  const present = boxes.filter((b) => b && b.w > 0 && b.h > 0)
+  if (!present.length) return '0 0 1 1'
+  const minX = Math.min(...present.map((b) => b.x))
+  const minY = Math.min(...present.map((b) => b.y))
+  const maxX = Math.max(...present.map((b) => b.x + b.w))
+  const maxY = Math.max(...present.map((b) => b.y + b.h))
+  return `${minX - pad} ${minY - pad} ${maxX - minX + pad * 2} ${maxY - minY + pad * 2}`
 }
 
 function blockBody(doc) {
@@ -267,9 +348,13 @@ function whiteboardBody(doc) {
     .join('')
   const strokes = (model.strokes || []).map(whiteboardStroke).join('')
   const stickies = (model.stickyNotes || []).map(whiteboardSticky).join('')
+  // Lines and tables used to be omitted entirely here, so a board holding either
+  // exported and thumbnailed as though that content did not exist.
+  const lines = (model.lines || []).map(whiteboardLine).join('')
+  const tables = (model.tables || []).map(whiteboardTable).join('')
   return {
     viewBox: `${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}`,
-    body: connectors + shapes + strokes + stickies,
+    body: connectors + shapes + tables + lines + strokes + stickies,
   }
 }
 
@@ -289,6 +374,44 @@ function whiteboardSticky(note) {
   return rect + text
 }
 
+// Straight lines. Endpoint decorations (arrow / dot) are approximated by a dot at the
+// decorated end: the export is a flat SVG with no marker defs for these, and a missing
+// line reads far worse than a missing arrowhead.
+function whiteboardLine(line) {
+  const color = safeColor(line.color, '#171717')
+  const width = num(line.width, 2)
+  const [x1, y1, x2, y2] = [num(line.x1), num(line.y1), num(line.x2), num(line.y2)]
+  const stroke = `stroke="${color}" stroke-width="${width}" stroke-linecap="round"`
+  let out = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" ${stroke}/>`
+  const cap = (x, y) => `<circle cx="${x}" cy="${y}" r="${width * 1.6}" fill="${color}"/>`
+  if (line.start && line.start !== 'none') out += cap(x1, y1)
+  if (line.end && line.end !== 'none') out += cap(x2, y2)
+  return out
+}
+
+// Tables: the grid plus whatever text the cells hold. Size comes from cols*cellW /
+// rows*cellH (there are no w/h fields on the model).
+function whiteboardTable(table) {
+  const cols = table.cols || 0
+  const rows = table.rows || 0
+  const cellW = num(table.cellW, 120)
+  const cellH = num(table.cellH, 40)
+  const color = safeColor(table.color, '#171717')
+  let out = ''
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const x = num(table.x) + c * cellW
+      const y = num(table.y) + r * cellH
+      out += `<rect x="${x}" y="${y}" width="${cellW}" height="${cellH}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.45"/>`
+      const text = (table.cells || {})[`${r},${c}`] // key format matches setTableCell
+      if (text) {
+        out += `<text x="${x + 8}" y="${y + cellH / 2 + 5}" fill="${color}" font-size="13" font-family="Inter, sans-serif">${escapeText(text)}</text>`
+      }
+    }
+  }
+  return out
+}
+
 // True when a parsed document has nothing to preview, accounting for every type's
 // content (not just the shared shapes/connectors arrays).
 export function isDocumentEmpty(rawDocument) {
@@ -300,10 +423,31 @@ export function isDocumentEmpty(rawDocument) {
   if (doc.diagramType === 'flowchart' && doc.flowchart) {
     return !(doc.flowchart.nodes || []).length && !(doc.flowchart.edges || []).length
   }
-  if (doc.diagramType === 'whiteboard' && doc.whiteboard) {
-    return !(doc.whiteboard.strokes || []).length && !(doc.whiteboard.stickyNotes || []).length
+  if (doc.diagramType === 'whiteboard' && doc.whiteboard) return isWhiteboardBlank(doc.whiteboard)
+  // The unified canvas had NO branch here, so any unified document without block
+  // shapes was reported empty — a canvas holding only ink, or only a mind-map frame,
+  // showed "nothing to preview". It is empty only when every layer is.
+  if (isUnifiedDocument(doc)) {
+    return (
+      isWhiteboardBlank(doc.whiteboard) &&
+      !(doc.mindmap?.nodes || []).length &&
+      !(doc.flowchart?.nodes || []).length &&
+      !(doc.flowchart?.edges || []).length
+    )
   }
   return true
+}
+
+// Lines and tables count as content too; leaving them out reported a board holding
+// only a table as blank.
+function isWhiteboardBlank(model) {
+  if (!model) return true
+  return (
+    !(model.strokes || []).length &&
+    !(model.stickyNotes || []).length &&
+    !(model.lines || []).length &&
+    !(model.tables || []).length
+  )
 }
 
 // Rasterize a store's current document to a PNG data URL, throttled per store,
