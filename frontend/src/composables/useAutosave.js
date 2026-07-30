@@ -101,17 +101,33 @@ function scheduleSave(session, store, status, frozen) {
 
 // Push the pending document to the server, handling stale-revision conflicts and
 // connectivity failures. Held state is preserved so a later flush can retry.
-async function flush(session, saver, diagramResource, status, frozen) {
+// Exported for useAutosave.test.js: the mid-flight coalescing order below is
+// load-bearing and was silently broken once, so it is unit-tested directly rather
+// than only through the editor.
+export async function flush(session, saver, diagramResource, status, frozen) {
   if (frozen.value || session.inFlight) return
   if (!session.pendingDocument || !session.diagramName()) return
 
-  const document = session.pendingDocument
   session.inFlight = true
   try {
-    const result = await saveDocument(saver, session, diagramResource, document)
-    onSaveSuccess(session, diagramResource, status, document, result)
-  } catch (error) {
-    onSaveError(session, status, frozen, error)
+    // Coalescing LOOP, not a recursive re-entry. An edit made while a save is in
+    // flight leaves a newer pendingDocument behind, and it must reach the server
+    // without waiting for the user's next change — otherwise closing the tab loses
+    // it. Re-entering flush() from the success handler cannot do that: inFlight is
+    // still set, so the nested call returns at the guard above and the newer
+    // document is silently stranded. Looping here keeps inFlight held for the whole
+    // sequence (we genuinely are in flight) and needs no unbounded recursion.
+    while (session.pendingDocument && !frozen.value) {
+      const document = session.pendingDocument
+      try {
+        const result = await saveDocument(saver, session, diagramResource, document)
+        // Returns false once the pending document IS the one just saved.
+        if (!onSaveSuccess(session, diagramResource, status, document, result)) break
+      } catch (error) {
+        onSaveError(session, status, frozen, error)
+        break // leave pendingDocument in place for a reconnect / next-edit retry
+      }
+    }
   } finally {
     session.inFlight = false
   }
@@ -138,9 +154,12 @@ function onSaveSuccess(session, diagramResource, status, savedDocument, result) 
     status.value = 'saved'
     // Server has the latest — drop the local override so the next open trusts it.
     clearLocalDoc(session.diagramName())
-  } else {
-    session.flushNow()
+    return false
   }
+  // A newer edit landed mid-flight. Report it so flush()'s loop sends that document
+  // too; do NOT re-enter flush() from here (inFlight is still held, so a nested call
+  // would return at its guard and strand the newer document).
+  return true
 }
 
 // A stale revision freezes the editor for reload; a network failure starts the
