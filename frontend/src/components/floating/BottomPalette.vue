@@ -16,7 +16,6 @@ import { collapseAll } from '@/diagram/mindmapOperations.js'
 import { autoNumberFlow, isFlowNumbered } from '@/diagram/flowchartModel.js'
 import { tidyLayout, toggleDirection } from '@/diagram/flowchartLayout.js'
 import WhiteboardTools from './WhiteboardTools.vue'
-import CanvasSection from '@/components/palette-right/CanvasSection.vue'
 
 const editorUi = useEditorUi()
 const viewport = editorUi.viewport
@@ -52,29 +51,6 @@ function flowNumber() {
   store.updateFlowchartModel('Number steps', (m) => autoNumberFlow(m))
 }
 
-// Templates / Insert menu (canvas unification): drop a starter mind map or
-// flowchart frame onto the unified canvas (they have no single-click tool since
-// they auto-lay-out — you add them like a shape/template).
-//
-// A new frame lands in the visible viewport rather than at the canvas origin, so
-// it appears where the user is working instead of somewhere they have to pan off
-// and find (#30). Insert has no pointer position of its own, so the store places
-// the frame within the rect on screen.
-function insertMindmap(togglePopover) {
-  store.insertMindmapStarter(viewport.visibleRect())
-  togglePopover?.()
-}
-function insertFlowchart(togglePopover) {
-  store.insertFlowchartStarter(viewport.visibleRect())
-  togglePopover?.()
-}
-
-// Arm the section DRAW tool (T4/B6): the next press-drag on the canvas sizes the
-// frame (DiagramCanvas owns the drag-create); a plain click drops a default one.
-// Toggles off if it's already armed.
-function addSection() {
-  editorUi.setTool(editorUi.state.tool === 'section' ? 'select' : 'section')
-}
 const SHAPES = [
   { type: 'rectangle', icon: 'square', label: 'Rectangle' },
   { type: 'rounded', icon: 'square', label: 'Rounded rectangle' },
@@ -98,6 +74,24 @@ const LINES = [
   { type: 'elbow', icon: 'corner-down-right', label: 'Elbow connector' },
   { type: 'curved', icon: 'git-commit', label: 'Curved connector' },
 ]
+// Auto-layout frames (canvas unification): a starter mind map or flowchart
+// dropped on the unified canvas. They have no single-click tool since they
+// lay themselves out — you add them like a shape/template — so they sit in the
+// Shapes popover's last section instead of a separate Insert menu (#44).
+//
+// A new frame lands in the visible viewport rather than at the canvas origin, so
+// it appears where the user is working instead of somewhere they have to pan off
+// and find (#30). Insert has no pointer position of its own, so the store places
+// the frame within the rect on screen.
+const DIAGRAMS = [
+  { key: 'mindmap', icon: 'git-fork', label: 'Mind map', insert: () => store.insertMindmapStarter(viewport.visibleRect()) },
+  { key: 'flowchart', icon: 'workflow', label: 'Flowchart', insert: () => store.insertFlowchartStarter(viewport.visibleRect()) },
+]
+function insertDiagram(diagram, close) {
+  diagram.insert()
+  shapeQuery.value = ''
+  close?.()
+}
 // Filter shapes + lines by a search query (spec 2.1). Empty query shows all.
 const shapeQuery = ref('')
 const query = computed(() => shapeQuery.value.trim().toLowerCase())
@@ -107,6 +101,10 @@ const filteredShapes = computed(() =>
 const filteredLines = computed(() =>
   query.value ? LINES.filter((l) => l.label.toLowerCase().includes(query.value)) : LINES,
 )
+const filteredDiagrams = computed(() => {
+  if (!isUnified.value) return []
+  return query.value ? DIAGRAMS.filter((d) => d.label.toLowerCase().includes(query.value)) : DIAGRAMS
+})
 
 // Recently-used shapes/lines, shown as a row at the top of the popover (2.3).
 const byType = computed(() => Object.fromEntries([...SHAPES, ...LINES].map((s) => [s.type, s])))
@@ -194,12 +192,6 @@ function setGuides(state) {
       </button>
     </Tooltip>
 
-    <!-- Section (named grouping frame) — available in every diagram type. -->
-    <div class="mx-0.5 h-5 w-px bg-surface-gray-3" />
-    <Tooltip text="Draw section">
-      <button :class="[buttonBase, toggleClass(editorUi.state.tool === 'section')]" @click="addSection"><LucideIcon name="layout" class="h-4 w-4" /></button>
-    </Tooltip>
-
     <!-- Block creation tools: Shapes + Connectors popovers + Text. Shown for block
          AND the unified canvas. -->
     <template v-if="isBlock || isUnified">
@@ -268,7 +260,22 @@ function setGuides(state) {
                 </button>
               </Tooltip>
             </div>
-            <p v-if="!filteredShapes.length && !filteredLines.length" class="px-1 py-2 text-center text-xs text-ink-gray-4">
+            <!-- Auto-layout frames (#44): the old Insert menu, folded in here. -->
+            <div v-if="filteredDiagrams.length" class="mb-1 mt-2.5 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-4">Mind map &amp; flowchart</div>
+            <div v-if="filteredDiagrams.length" class="grid grid-cols-4 gap-1">
+              <Tooltip v-for="d in filteredDiagrams" :key="d.key" :text="d.label">
+                <button
+                  class="flex h-9 w-9 items-center justify-center rounded-md text-ink-gray-7 hover:bg-surface-gray-2"
+                  @click="insertDiagram(d, togglePopover)"
+                >
+                  <LucideIcon :name="d.icon" class="h-[18px] w-[18px]" />
+                </button>
+              </Tooltip>
+            </div>
+            <p
+              v-if="!filteredShapes.length && !filteredLines.length && !filteredDiagrams.length"
+              class="px-1 py-2 text-center text-xs text-ink-gray-4"
+            >
               No matches
             </p>
           </div>
@@ -284,17 +291,6 @@ function setGuides(state) {
           <LucideIcon name="image" class="h-4 w-4" />
         </button>
       </Tooltip>
-      <!-- Canvas settings (size / theme / grid) — moved here from the old right panel. -->
-      <Popover>
-        <template #target="{ togglePopover }">
-          <Tooltip text="Canvas settings">
-            <button :class="buttonBase" @click="togglePopover()"><LucideIcon name="settings" class="h-4 w-4" /></button>
-          </Tooltip>
-        </template>
-        <template #body-main>
-          <div class="max-h-[70vh] w-[264px] overflow-y-auto"><CanvasSection /></div>
-        </template>
-      </Popover>
     </template>
 
     <!-- Mind map: map-wide actions (per-node editing is in the floating toolbar). -->
@@ -324,42 +320,6 @@ function setGuides(state) {
       <Tooltip :text="flowNumbered ? 'Clear numbers' : 'Number steps'">
         <button :class="[buttonBase, toggleClass(flowNumbered)]" @click="flowNumber"><LucideIcon name="list" class="h-4 w-4" /></button>
       </Tooltip>
-    </template>
-
-    <!-- Whiteboard: full tool set + every control (no right panel). -->
-    <!-- Insert menu (unified canvas): add auto-layout frames like templates. -->
-    <template v-if="isUnified">
-      <div class="mx-0.5 h-5 w-px bg-surface-gray-3" />
-      <Popover>
-        <template #target="{ togglePopover }">
-          <Tooltip text="Insert">
-            <button :class="buttonBase" @click="togglePopover()">
-              <LucideIcon name="layout-template" class="h-4 w-4" />
-            </button>
-          </Tooltip>
-        </template>
-        <template #body-main="{ togglePopover }">
-          <div class="w-[168px] p-1.5">
-            <div class="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-4">
-              Insert
-            </div>
-            <button
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-ink-gray-8 hover:bg-surface-gray-2"
-              @click="insertMindmap(togglePopover)"
-            >
-              <LucideIcon name="git-fork" class="h-4 w-4 text-ink-gray-6" />
-              Mind map
-            </button>
-            <button
-              class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-ink-gray-8 hover:bg-surface-gray-2"
-              @click="insertFlowchart(togglePopover)"
-            >
-              <LucideIcon name="workflow" class="h-4 w-4 text-ink-gray-6" />
-              Flowchart
-            </button>
-          </div>
-        </template>
-      </Popover>
     </template>
 
     <!-- Whiteboard tools: full set for a whiteboard doc; on the unified canvas the
