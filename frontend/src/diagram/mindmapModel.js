@@ -99,14 +99,17 @@ export function isRoot(model, id) {
 }
 
 // Add a child under `parentId`, appended after existing children. Returns its id.
-// `side` ('left'|'right') pins a first-level branch to a side of the root so it's
+// `side` ('left'|'right') pins a first-level branch to a side of ITS root so it's
 // placed where the user clicked (the layout honours it); ignored for deeper nodes.
+// Read against isRoot, not model.rootId: on a map holding several trees (#48) the
+// side would otherwise be dropped for every root but the first, and the layout's
+// auto-alternation would put the branch on the opposite side from the "+" clicked.
 export function addChild(model, parentId, text = '', side = null) {
   const parent = nodeById(model, parentId)
   if (!parent) return null
   const siblings = childrenOf(model, parentId)
   const node = makeNode(parentId, text, siblings.length, parent.depth + 1)
-  if (side && parentId === model.rootId) node.side = side
+  if (side && isRoot(model, parentId)) node.side = side
   model.nodes.push(node)
   return node.id
 }

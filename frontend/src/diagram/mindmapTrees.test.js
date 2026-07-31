@@ -46,6 +46,26 @@ describe('a mind map holding several trees', () => {
     expect(rootOf(model, child).id).toBe(second)
   })
 
+  // The "+" affordance passes the side it was clicked on. Guarding that against
+  // model.rootId dropped it for every root but the first, so a branch added from
+  // the right "+" of a second map landed on the left as soon as auto-alternation
+  // took over.
+  it('honours the clicked side on every root, not just the first', () => {
+    const model = createEmptyMindMap()
+    seedTree(model, 'A')
+    const second = addTree(model, 'B root', { x: 0, y: 800 })
+    const right = addChild(model, second, 'to the right', 'right')
+    const alsoRight = addChild(model, second, 'also right', 'right')
+
+    expect(nodeById(model, right).side).toBe('right')
+    expect(nodeById(model, alsoRight).side).toBe('right')
+
+    const { positions } = layoutMindMap(model)
+    const rootCentre = positions[second].x + positions[second].w / 2
+    expect(positions[right].x).toBeGreaterThan(rootCentre)
+    expect(positions[alsoRight].x).toBeGreaterThan(rootCentre)
+  })
+
   it('deletes one tree without touching the others', () => {
     const model = createEmptyMindMap()
     const first = seedTree(model, 'A')
