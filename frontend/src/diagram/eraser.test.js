@@ -42,6 +42,32 @@ describe('eraseInkAt', () => {
     expect(Math.min(...right.points.map((p) => p.x))).toBeGreaterThanOrEqual(61)
   })
 
+  it('clips the tip of a stroke when only its last segment is caught', () => {
+    // Regression: the "untouched" shortcut used to compare point COUNTS, and
+    // clipping one end swaps the erased endpoint for a boundary point — same
+    // count, so the original stroke was restored and its tip never erased.
+    const model = { strokes: [makeStroke([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }], { width: 2 })], lines: [] }
+    expect(eraseInkAt(model, { x: 18, y: 0 }, 5)).toBe(true)
+    expect(model.strokes.length).toBe(1)
+    const kept = model.strokes[0].points
+    expect(Math.max(...kept.map((p) => p.x))).toBeLessThan(20)
+  })
+
+  it('clips the head of a stroke when only its first segment is caught', () => {
+    const model = { strokes: [makeStroke([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }], { width: 2 })], lines: [] }
+    expect(eraseInkAt(model, { x: 2, y: 0 }, 5)).toBe(true)
+    expect(Math.min(...model.strokes[0].points.map((p) => p.x))).toBeGreaterThan(0)
+  })
+
+  it('keeps a stroke the tip only grazes tangentially — nothing is under it', () => {
+    const stroke = horizontalStroke()
+    const model = { strokes: [stroke], lines: [] }
+    // Tip radius + half the stroke width exactly reaches the path: it touches at
+    // one point, so there is no ink to remove and the original object survives.
+    expect(eraseInkAt(model, { x: 50, y: 11 }, 10)).toBe(false)
+    expect(model.strokes[0]).toBe(stroke)
+  })
+
   it('removes a stroke that lies entirely under the tip', () => {
     const model = { strokes: [makeStroke([{ x: 0, y: 0 }, { x: 4, y: 0 }])], lines: [] }
     expect(eraseInkAt(model, { x: 2, y: 0 }, 30)).toBe(true)
@@ -129,6 +155,13 @@ describe('eraseObjectsAt', () => {
     doc.shapes = [{ ...shape, hidden: true }, { ...shape, id: 's2', locked: true }]
     expect(eraseObjectsAt(doc, { x: 250, y: 230 }, 6)).toEqual([])
     expect(doc.shapes.length).toBe(2)
+  })
+
+  it('does not add object lists an older document never had', () => {
+    const doc = { shapes: [], connectors: [], whiteboard: { strokes: [], stickyNotes: [] } }
+    expect(eraseObjectsAt(doc, { x: 0, y: 0 }, 10)).toEqual([])
+    expect('lines' in doc.whiteboard).toBe(false)
+    expect('tables' in doc.whiteboard).toBe(false)
   })
 
   it('reports nothing and keeps the arrays when the tip misses everything', () => {

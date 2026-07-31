@@ -54,33 +54,30 @@ export function eraseObjectsAt(state, point, radius) {
   const model = state.whiteboard || {}
   const removed = []
   // Connectors first: their endpoints resolve against the shapes list, which the
-  // next line rewrites.
-  state.connectors = dropTouched(state.connectors, 'connector', removed, (connector) =>
+  // next call rewrites.
+  dropTouched(state, 'connectors', 'connector', removed, (connector) =>
     touchesConnector(connector, point, radius, state.shapes),
   )
-  state.shapes = dropTouched(state.shapes, 'shape', removed, (shape) =>
-    isErasable(shape) && pointInShape(point, shape),
-  )
-  model.strokes = dropTouched(model.strokes, 'stroke', removed, (stroke) =>
-    touchesStroke(stroke, point, radius),
-  )
-  model.lines = dropTouched(model.lines, 'line', removed, (line) => touchesLine(line, point, radius))
-  model.tables = dropTouched(model.tables, 'table', removed, (table) => pointInRect(point, tableBox(table)))
-  model.stickyNotes = dropTouched(model.stickyNotes, 'sticky', removed, (note) => pointInRect(point, note))
+  dropTouched(state, 'shapes', 'shape', removed, (shape) => isErasable(shape) && pointInShape(point, shape))
+  dropTouched(model, 'strokes', 'stroke', removed, (stroke) => touchesStroke(stroke, point, radius))
+  dropTouched(model, 'lines', 'line', removed, (line) => touchesLine(line, point, radius))
+  dropTouched(model, 'tables', 'table', removed, (table) => pointInRect(point, tableBox(table)))
+  dropTouched(model, 'stickyNotes', 'sticky', removed, (note) => pointInRect(point, note))
   return removed
 }
 
-// Drop every element the tip touches from one list, recording { kind, id } for
-// the caller. Returns the SAME array when nothing was hit, so callers can assign
-// unconditionally without churning reactivity.
-function dropTouched(list, kind, removed, hits) {
-  const source = list || []
+// Drop every element the tip touches from one list on `owner`, recording
+// { kind, id } for the caller. The list is only re-assigned when something was
+// actually removed, so a miss neither churns reactivity nor adds an empty array
+// to a document that never had that list.
+function dropTouched(owner, key, kind, removed, hits) {
+  const list = owner[key] || []
   const kept = []
-  for (const item of source) {
+  for (const item of list) {
     if (hits(item)) removed.push({ kind, id: item.id })
     else kept.push(item)
   }
-  return kept.length === source.length ? source : kept
+  if (kept.length !== list.length) owner[key] = kept
 }
 
 // Hidden and locked shapes aren't grabbable, so the eraser doesn't take them
@@ -129,9 +126,13 @@ function eraseStrokes(strokes, point, radius) {
       next.push(stroke)
       continue
     }
-    const runs = splitStrokeByErase(stroke.points, point, reach)
-    // Untouched (single run covering the whole stroke) — keep the original.
-    if (runs.length === 1 && runs[0].length === stroke.points.length) {
+    const { runs, touched } = splitStrokeByErase(stroke.points, point, reach)
+    // Nothing of this stroke fell under the tip — keep the original object (and
+    // its id). This has to come from the split itself: comparing point COUNTS
+    // instead misses a clipped end segment, where the erased endpoint is replaced
+    // by a boundary point and the count comes back unchanged, so the tip of the
+    // stroke would silently survive.
+    if (!touched) {
       next.push(stroke)
       continue
     }
@@ -144,10 +145,14 @@ function eraseStrokes(strokes, point, radius) {
 }
 
 // Split a polyline into the runs that lie OUTSIDE a disk (eraser tip), cutting
-// segments where they cross the disk boundary. Returns an array of point-runs.
+// segments where they cross the disk boundary. Returns the point-runs plus
+// `touched`: whether any part of the path fell inside the disk. The caller cannot
+// infer that from the runs — clipping one end segment yields a single run of the
+// same length as the original path.
 function splitStrokeByErase(points, center, radius) {
   const r2 = radius * radius
   const runs = []
+  let touched = false
   let run = []
   const dist2 = (p) => (p.x - center.x) ** 2 + (p.y - center.y) ** 2
   const push = (p) => {
@@ -168,6 +173,7 @@ function splitStrokeByErase(points, center, radius) {
       const mid = (t0 + t1) / 2
       const pm = { x: a.x + (b.x - a.x) * mid, y: a.y + (b.y - a.y) * mid }
       if (dist2(pm) <= r2) {
+        touched = true
         cut() // this sub-segment is inside the tip → break the run
       } else {
         push({ x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 })
@@ -176,11 +182,14 @@ function splitStrokeByErase(points, center, radius) {
     }
   }
   cut()
-  return runs
+  return { runs, touched }
 }
 
-// The t-values in (0,1) where segment a→b crosses the circle of `radius` at
-// `center`, sorted. Solves |a + t(b-a) - c|² = r².
+// The t-values in (0,1) where segment a→b CROSSES the circle of `radius` at
+// `center`, sorted. Solves |a + t(b-a) - c|² = r². A tangent (disc === 0) is
+// deliberately not reported: the segment only grazes the circle at a single
+// point, so every other point of it is outside and there is no ink to cut — a
+// boundary there would just insert a duplicate vertex.
 function circleSegmentTs(a, b, center, radius) {
   const dx = b.x - a.x
   const dy = b.y - a.y
