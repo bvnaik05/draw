@@ -42,8 +42,20 @@ async function droppedShapeId(diagram, name) {
   return id
 }
 
-const zOf = (doc, id) => (doc.shapes || []).find((s) => s.id === id).zIndex
-const inkZ = (doc) => doc.whiteboard.strokes[0].zIndex
+// Both sides of every comparison, read off the persisted document. They fail
+// loudly rather than as a TypeError, because the seeded content they depend on
+// lives in a fixture this spec does not own.
+function zOf(doc, id) {
+  const shape = (doc.shapes || []).find((s) => s.id === id)
+  if (!shape) throw new Error(`shape ${id} is not in the saved document`)
+  return shape.zIndex
+}
+
+function inkZ(doc) {
+  const stroke = (doc.whiteboard?.strokes || [])[0]
+  if (!stroke) throw new Error('the seeded board has no stroke — this spec needs ink to stack against')
+  return stroke.zIndex
+}
 
 // Open the Arrange menu of the current selection and click one of its actions.
 async function arrange(page, action) {

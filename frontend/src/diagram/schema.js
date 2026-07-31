@@ -116,6 +116,14 @@ function migrateDocument(document) {
 // Documents saved before that painted them in a fixed order — always above the
 // shared shapes[], strokes then lines then tables then stickies — so hand them
 // zIndexes in exactly that order and existing boards keep rendering as they did.
+//
+// UNASSIGNED_Z is the whole point of the pass: the store allocates from the top
+// of the stack, so a live zIndex is always >= 1, and both an object saved before
+// the field existed and one built straight off a model factory read as 0. Those
+// are exactly the objects that need a place in the stack — an object left at 0
+// would paint under every shape, which is the bug this fixes, not a position
+// anyone chose.
+const UNASSIGNED_Z = 0
 const WB_LIST_KEY = { stroke: 'strokes', line: 'lines', table: 'tables', sticky: 'stickyNotes' }
 
 function backfillWhiteboardZIndex(document) {
@@ -124,7 +132,7 @@ function backfillWhiteboardZIndex(document) {
   let z = (document.shapes || []).reduce((max, shape) => Math.max(max, shape.zIndex || 0), 0)
   for (const kind of WHITEBOARD_KINDS) {
     for (const object of model[WB_LIST_KEY[kind]] || []) {
-      if (object.zIndex) z = Math.max(z, object.zIndex)
+      if ((object.zIndex || UNASSIGNED_Z) > UNASSIGNED_Z) z = Math.max(z, object.zIndex)
       else object.zIndex = (z += 1)
     }
   }

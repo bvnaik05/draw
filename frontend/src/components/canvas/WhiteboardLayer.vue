@@ -182,9 +182,11 @@ const laserDots = computed(() => {
         :selected="isSelected('table', item.object.id)"
       />
 
-      <!-- Sticky note (owns its drag/resize/edit/link). -->
+      <!-- Sticky note (owns its drag/resize/edit/link). Matched by kind, not by a
+           bare v-else: a kind added to WHITEBOARD_KINDS without a branch here
+           would otherwise render as a sticky note with the wrong props. -->
       <WhiteboardStickyNote
-        v-else
+        v-else-if="item.kind === 'sticky'"
         :note="item.object"
         :sketch="whiteboard.sketchStyle"
       />
