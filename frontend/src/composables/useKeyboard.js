@@ -99,32 +99,44 @@ function handleKeydown(event, store, editorUi, clipboard, transform) {
   }
   // The block type keeps the shared shape shortcuts (delete/escape/nudge). Other
   // types delegate fully to their per-mode handler above (and its no-op stub).
-  if (modeKeyboardFor(store) !== null) return
+  if (modeKeyboardFor(store, editorUi) !== null) return
   if (handlePlainKey(event, store, editorUi, transform)) event.preventDefault()
 }
 
-// The per-mode handler for the active diagram type (or null for block/unset).
-// The unified canvas has no type of its own (it resolves to block), but a mind
-// map / flowchart node on it is selected and edited in place (#45), so fall back
-// to the handler for whichever model owns the selection.
-function modeKeyboardFor(store) {
-  const strategy = getModeStrategy(store.state.diagramType)
-  return MODE_KEYBOARD_HANDLERS[strategy.keyboardMode] ?? selectedNodeHandler(store)
+// Which per-mode keyboard owns the keys right now, as a mode name — or null, which
+// means the shared block shortcuts below apply.
+//
+// A unified document has no type of its own (getModeStrategy falls back to BLOCK,
+// whose handler is null), so before #45 the per-type handlers were unreachable on
+// it: a mind-map node selected and its toolbar appeared, but Tab, Enter, the arrows
+// and Delete — the keys that are the ONLY way to grow a mind map — all did nothing.
+// #50 fixed that by reading `focusedFrame || diagramType`; #45 removes focus mode
+// altogether and edits both models in place, so the owner now follows whichever
+// model holds the SELECTION instead of a container the user had to enter first.
+export function keyboardOwner(store) {
+  const { keyboardMode } = getModeStrategy(store.state.diagramType)
+  if (MODE_KEYBOARD_HANDLERS[keyboardMode]) return keyboardMode
+  return selectedNodeOwner(store)
 }
 
 // Node ids are prefixed per model ('n…' mind map, 'f…' flowchart, 's…' shape),
 // so the owning model of a selected id is unambiguous.
-function selectedNodeHandler(store) {
+function selectedNodeOwner(store) {
   const id = (store.state.selection || [])[0]
   if (!id) return null
-  if (store.state.mindmap?.nodes?.some((node) => node.id === id)) return MODE_KEYBOARD_HANDLERS.mindmap
-  if (store.state.flowchart?.nodes?.some((node) => node.id === id)) return MODE_KEYBOARD_HANDLERS.flowchart
+  if (store.state.mindmap?.nodes?.some((node) => node.id === id)) return 'mindmap'
+  if (store.state.flowchart?.nodes?.some((node) => node.id === id)) return 'flowchart'
   return null
+}
+
+// The per-mode handler for whichever keyboard owns the keys (null for block/unset).
+function modeKeyboardFor(store) {
+  return MODE_KEYBOARD_HANDLERS[keyboardOwner(store)] ?? null
 }
 
 // Offer a non-modifier key to the active type's handler; returns true if consumed.
 function dispatchModeKey(event, store, editorUi) {
-  const handler = modeKeyboardFor(store)
+  const handler = modeKeyboardFor(store, editorUi)
   if (!handler) return false
   return handler(event, store, editorUi) === true
 }

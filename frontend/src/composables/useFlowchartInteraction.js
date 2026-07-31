@@ -11,7 +11,7 @@
 // Every point arrives already in canvas units (Part G4).
 
 import { reactive, onBeforeUnmount } from 'vue'
-import { registerModeInteraction } from '@/composables/useModeInteraction.js'
+import { registerModeInteraction, unregisterModeInteraction } from '@/composables/useModeInteraction.js'
 import {
   nodeSize,
   flowchartNodeById,
@@ -423,14 +423,14 @@ export function useFlowchartInteraction(store, editorUi, interactionRef) {
   // `cancel` is registered alongside the pointer handlers so the canvas can close
   // an open picker / pending connector when a press lands outside the flowchart —
   // on the unified canvas such a press never reaches onPointerDown (#45).
-  registerModeInteraction(interactionRef, 'flowchart', {
-    onPointerDown,
-    onPointerMove,
-    onPointerUp,
-    onDoubleClick,
-    cancel,
-  })
-  onBeforeUnmount(() => registerModeInteraction(interactionRef, 'flowchart', null))
+  //
+  // The set is held in a variable so the unmount hook detaches ONLY its own entry.
+  // Two components can hold this one key across a mount/unmount overlap, and a
+  // blind `register(…, null)` tears down whichever registered last — that race lost
+  // in-frame node drags before #50 fixed it. See unregisterModeInteraction.
+  const handlers = { onPointerDown, onPointerMove, onPointerUp, onDoubleClick, cancel }
+  registerModeInteraction(interactionRef, 'flowchart', handlers)
+  onBeforeUnmount(() => unregisterModeInteraction(interactionRef, 'flowchart', handlers))
 
   return { ui, selectedNode, openPicker, closePicker, cancel, chooseNodeType, createConnectedNode }
 }

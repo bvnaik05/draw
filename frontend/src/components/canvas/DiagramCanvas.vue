@@ -244,14 +244,9 @@ const clipboard = useClipboard(store)
 
 // Cmd/Ctrl+V: paste an OS-clipboard image at the viewport centre, else the
 // internal shape buffer (spec 2.6). Owns paste so the keyboard composable doesn't.
-useCanvasPaste({ imageInsert, clipboard, getCenter: () => viewportCenterPoint() })
-
-// Logical canvas point at the centre of the visible viewport (where a pasted
-// image lands, so it appears in view regardless of pan/zoom).
-function viewportCenterPoint() {
-  const { panX, panY, zoom } = viewport.state
-  return { x: (viewWidth.value / 2 - panX) / zoom, y: (viewHeight.value / 2 - panY) / zoom }
-}
+// The centre point lives on the viewport, so the palette's Insert can place a new
+// frame on the same anchor.
+useCanvasPaste({ imageInsert, clipboard, getCenter: () => viewport.centerPoint() })
 
 // Right-click context menu (suppresses the browser default). Items differ for a
 // shape vs empty canvas.
@@ -452,10 +447,17 @@ function syncMeasure() {
   viewport.setMeasure({ containerW: bounds.width, containerH: bounds.height })
 }
 
-// The document's canvas dimensions settle after the async load; re-open at 100%
-// (true size) when they do, rather than zooming to fit.
+// Re-open at 100% (true size) when a document lands after mount, or when the
+// canvas is resized to a different preset — not zoomed to fit.
+//
+// Each source is its own getter so Vue compares the values, not a wrapper array.
+// A single `() => [canvas.value.width, canvas.value.height]` getter returned a
+// fresh array whenever `state.canvas` was replaced — which undo/redo and remote
+// sync do wholesale, with identical dimensions — so every Ctrl+Z re-ran
+// openAtActualSize() and threw the user back to the default view before they
+// could see what was undone (#28).
 watch(
-  () => [canvas.value.width, canvas.value.height],
+  [() => store.state.loadCount, () => canvas.value.width, () => canvas.value.height],
   () => nextTick(openAtActualSize),
 )
 
@@ -951,6 +953,14 @@ const surfaceCursor = computed(() => {
             stroke-dasharray="6 4" style="cursor: move"
             @pointerdown.stop="startFrameDrag('flowchart', $event)"
           />
+          <!-- Deliberately NOT wrapped in .unified-frame-content. That wrapper made
+               the content non-interactive so a double-click could land on the
+               hit-rect and ENTER the frame (#50); #45 removes focus mode and edits
+               both models in place, so the nodes have to stay live. The hit-rect
+               above is painted first and therefore sits behind them: a press on the
+               object's empty space selects and moves the whole thing, a press on a
+               node edits that node. Re-adding the wrapper would make flowchart nodes
+               unreachable on the unified canvas. -->
           <FlowchartLayer :flowchart="store.state.flowchart" />
         </g>
 
