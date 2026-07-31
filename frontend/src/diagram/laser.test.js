@@ -27,7 +27,7 @@ describe('pruneTrail', () => {
 describe('trailSegments', () => {
   it('fades and thins each segment with the age of its newer end', () => {
     const now = 10_000
-    const segments = trailSegments(pruneTrail(trail(now), now), now)
+    const segments = trailSegments(trail(now), now)
 
     expect(segments).toHaveLength(1)
     expect(segments[0].from.x).toBe(10)
@@ -50,7 +50,25 @@ describe('trailSegments', () => {
     expect(older.opacity).toBeGreaterThan(0)
   })
 
-  it('skips segments whose newer end has already expired', () => {
+  it('drops expired points instead of drawing a segment from a stale position', () => {
+    // The caller is not required to prune first: an expired point must not survive
+    // as the `from` end of the next segment, or the trail would grow a leg back to
+    // where the pointer was a second ago.
+    const now = 10_000
+    const points = [
+      { x: 0, y: 0, at: now - LASER_FADE_MS * 2 }, // expired
+      { x: 10, y: 0, at: now - LASER_FADE_MS }, // expired
+      { x: 20, y: 0, at: now },
+      { x: 30, y: 0, at: now },
+    ]
+    const segments = trailSegments(points, now)
+
+    expect(segments).toHaveLength(1)
+    expect(segments[0].from.x).toBe(20)
+    expect(segments[0].to.x).toBe(30)
+  })
+
+  it('has no segments once every point has expired', () => {
     const now = 10_000
     const points = [
       { x: 0, y: 0, at: now - LASER_FADE_MS * 2 },

@@ -107,7 +107,9 @@ const voteBadges = computed(() => {
 // Laser trail rendered as a tapering, self-fading line behind the pointer (spec
 // C5, #41). Reading ui.laserClock makes this re-run on every animation frame the
 // composable ticks, so the trail keeps fading after the pointer stops. Pure
-// render of transient state — never persisted or exported.
+// render of transient state — never persisted or exported. trailSegments drops
+// expired points itself, so this does not depend on the rAF prune having run
+// before the clock tick that re-ran this computed.
 const laserSegments = computed(() => {
   const now = ui.laserClock.value || performance.now()
   return trailSegments(ui.laserTrail.value, now).map((segment, index) => ({
