@@ -80,6 +80,14 @@ const isWhiteboard = computed(() => activeType.value === 'whiteboard')
 const isUnified = computed(() => isUnifiedDocument(store.state))
 const showBlockLayer = computed(() => !rendersOwnLayer.value || isUnified.value)
 
+// When the whiteboard layer is on screen it paints the shapes itself, interleaved
+// with the board objects by zIndex (#27). The block layer must not paint them a
+// second time: two copies of every shape means duplicate pointer targets, and the
+// block copy sits under all board content whatever its zIndex says.
+const whiteboardOwnsShapes = computed(
+  () => (isWhiteboard.value || isUnified.value) && Boolean(store.state.whiteboard),
+)
+
 const mindmapLayout = computed(() =>
   (isMindmap.value || isUnified.value) && store.state.mindmap ? layoutMindMap(store.state.mindmap) : null,
 )
@@ -333,6 +341,10 @@ const themeStyle = computed(() => themeVarStyle(store.state.themePreset))
 const orderedShapes = computed(() =>
   [...store.state.shapes].filter(isVisible).sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)),
 )
+
+// Empty while the whiteboard layer owns the shapes — it paints them interleaved
+// with the board objects, so painting them here too would duplicate them (#27).
+const blockLayerShapes = computed(() => (whiteboardOwnsShapes.value ? [] : orderedShapes.value))
 
 // Block has no own-layer empty prompt (whiteboard/mind-map/flowchart do), so show
 // a faint centred hint on a blank block canvas, consistent with the others.
@@ -727,9 +739,20 @@ const DRAW_CURSOR =
 const PEN_CURSOR =
   "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path d='M3 21 L4.5 16 L16 4.5 L19.5 8 L8 19.5 Z' fill='white' stroke='black' stroke-width='1.4' stroke-linejoin='round'/><line x1='14.5' y1='6' x2='18' y2='9.5' stroke='black' stroke-width='1.4'/><path d='M3 21 L4.5 16 L8 19.5 Z' fill='black'/></svg>\") 3 21, crosshair"
 
-// Eraser tool: a block eraser; hotspot at its erasing corner (bottom-left).
-const ERASER_CURSOR =
-  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 26 26'><g transform='rotate(-40 11 15)'><rect x='4' y='10' width='16' height='10' rx='2' fill='white' stroke='black' stroke-width='1.5'/><line x1='12' y1='10' x2='12' y2='20' stroke='black' stroke-width='1.2'/></g></svg>\") 4 22, auto"
+// Eraser tool: a circle the size of the actual tip, centered on the pointer, so
+// the size picked in the eraser options is visible while erasing (#39). The tip
+// radius is in canvas units, so it scales with zoom; clamped to what a cursor
+// image may be (browsers drop oversized ones).
+function eraserCursor(radius, zoom) {
+  const diameter = Math.max(8, Math.min(96, radius * 2 * zoom))
+  const box = diameter + 4
+  const center = box / 2
+  return (
+    `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='${box}' height='${box}' ` +
+    `viewBox='0 0 ${box} ${box}'><circle cx='${center}' cy='${center}' r='${diameter / 2}' fill='white' ` +
+    `fill-opacity='0.35' stroke='black' stroke-width='1.5'/></svg>") ${center} ${center}, auto`
+  )
+}
 
 // Whiteboard placement/drawing tools show a crosshair so it's clear a click will
 // place/draw (S12: arming Text → crosshair, click starts the text box). Pen and
@@ -740,7 +763,7 @@ const surfaceCursor = computed(() => {
   if (tool === 'hand') return 'grab'
   if (tool === 'draw') return DRAW_CURSOR
   if (tool === 'pen') return PEN_CURSOR
-  if (tool === 'eraser') return ERASER_CURSOR
+  if (tool === 'eraser') return eraserCursor(whiteboardUi.state.eraserSize, viewport.state.zoom)
   if (CROSSHAIR_TOOLS.includes(tool)) return 'crosshair'
   return 'default'
 })
@@ -799,7 +822,7 @@ const surfaceCursor = computed(() => {
             :connector="connector"
           />
 
-          <ShapeView v-for="shape in orderedShapes" :key="shape.id" :shape="shape" />
+          <ShapeView v-for="shape in blockLayerShapes" :key="shape.id" :shape="shape" />
 
           <SmartGuidesLayer />
           <HoverArrows />

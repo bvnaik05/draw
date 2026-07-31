@@ -9,6 +9,7 @@
 import { reactive, ref, readonly } from 'vue'
 import { PEN_COLORS, PEN_WIDTHS, STICKY_COLORS } from '@/diagram/whiteboardColors.js'
 import { pruneTrail } from '@/diagram/laser.js'
+import { ERASER_SIZES } from '@/diagram/eraser.js'
 
 let singleton = null
 
@@ -22,6 +23,10 @@ function createWhiteboardUi() {
     penColor: PEN_COLORS[0],
     penWidth: PEN_WIDTHS[1],
     stickyColor: STICKY_COLORS[0],
+    // Eraser (#39): 'ink' rubs out only what the tip covers, 'object' deletes the
+    // whole element under it. `eraserSize` is the tip radius in canvas units.
+    eraserMode: 'ink',
+    eraserSize: ERASER_SIZES[1],
     // Default endpoint styles for new lines ('none' | 'arrow' | 'dot').
     lineStart: 'none',
     lineEnd: 'arrow',
