@@ -39,7 +39,7 @@ The app already ships a working **block-diagram** editor. These new types are **
 - **Mind Map is pure auto-layout.** Node positions are computed; dragging only re-parents or reorders.
 - **Flowchart allows manual placement + one-click "Tidy up."** New nodes auto-place with clean spacing and column/lane snapping; user can move them; Tidy re-flows.
 - **Flowchart connectors route orthogonally** (elbow) with arrowheads, re-route as nodes move — no obstacle-avoidance (overlapping routes offset slightly).
-- **Whiteboard pen is vector with stroke-level erase.** Smoothed vector paths; eraser removes whole strokes.
+- **Whiteboard pen is vector; the eraser has two modes.** Smoothed vector paths; the ink eraser rubs out only what its tip sweeps over (splitting a stroke into the surviving sub-paths), the object eraser removes the whole element under the tip.
 
 ---
 
@@ -197,7 +197,7 @@ Large, freely auto-expanding; fit-to-view, 100%, small **minimap**.
 ### C3. Element types
 - **Text** — double-click anywhere creates a text box (headline interaction).
 - **Freehand pen** — smoothed vector strokes; Espresso color + thickness; **highlighter** variant.
-- **Eraser** — deletes whole strokes (path hit-test).
+- **Eraser** — two modes and three tip sizes (#39). *Erase* rubs ink out along the swept tip (a straight line, which has no partial form, goes whole); *erase by object* deletes the whole element under the tip — stroke, line, table, sticky, shape or connector.
 - **Sticky notes** — Espresso colors, auto-contrast text; resizable/draggable; Tab drops adjacent note. Colors are picked from the palette; there is no number-key shortcut (removed — the block keyboard used 1–9 to recolor a shape, and both meanings cannot hold on the unified canvas).
 - **Shapes & connectors** — full base set.
 - **Hyperlinks** — any object links to a URL or another Frappe Draw diagram.
@@ -267,7 +267,7 @@ Each step: read spec → plan → implement → write & run automated tests → 
 **Whiteboard**
 - W1. Free expanding canvas + double-click text + tool palette.
 - W2. Vector pen + highlighter + thickness/color.
-- W3. Stroke-level eraser.
+- W3. Ink + object eraser, sized tip.
 - W4. Sticky notes (Tab-to-next, number-key colors).
 - W5. Hand-drawn style toggle + laser pointer.
 - W6. Hyperlinks + minimap + palette + empty state.

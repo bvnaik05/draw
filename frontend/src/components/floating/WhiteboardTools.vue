@@ -12,6 +12,8 @@ import { useEditorUi } from '@/stores/useEditorUi.js'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
 import { CHALK_COLORS, STICKY_COLORS, PEN_WIDTHS } from '@/diagram/whiteboardColors.js'
+import { ERASER_SIZES } from '@/diagram/eraser.js'
+import { isWhiteboardEmpty } from '@/diagram/whiteboardModel.js'
 import LineOptions from './LineOptions.vue'
 import TableOptions from './TableOptions.vue'
 import { useImageInsert } from '@/composables/useImageInsert.js'
@@ -39,16 +41,28 @@ const TOOLS = [
   { tool: 'laser', icon: 'zap', label: 'Laser pointer' },
 ]
 // Tools that expose options in the disclosure popover.
-const OPTION_TOOLS = ['pen', 'highlighter', 'sticky', 'line', 'table']
+const OPTION_TOOLS = ['pen', 'highlighter', 'eraser', 'sticky', 'line', 'table']
+
+// Eraser modes (#39). 'ink' is the classic whiteboard eraser — it takes only what
+// the tip covers; 'object' takes the whole element under it, the only way to erase
+// a table, sticky, shape or connector.
+const ERASER_MODES = [
+  { key: 'ink', icon: 'eraser', label: 'Erase' },
+  { key: 'object', icon: 'square-x', label: 'Erase by object' },
+]
 
 const activeTool = computed(() => editorUi.state.tool)
-// The eraser is only useful once there's ink to erase — hide it until the board
-// has at least one stroke (keep it while it's the active tool so it can't vanish
-// mid-erase).
-const hasInk = computed(() => (store.state.whiteboard?.strokes?.length || 0) > 0)
+// The eraser is only useful once there's something to erase — hide it until the
+// board has content (keep it while it's the active tool so it can't vanish
+// mid-erase). Object mode erases shapes and stickies too, not just ink, so the
+// whole-board emptiness test is the right gate.
+const hasContent = computed(() => {
+  const model = store.state.whiteboard
+  return Boolean(model) && !isWhiteboardEmpty(model, store.state.shapes)
+})
 const visibleTools = computed(() =>
   TOOLS.filter((t) => !props.exclude.includes(t.tool)).filter(
-    (t) => t.tool !== 'eraser' || hasInk.value || activeTool.value === 'eraser',
+    (t) => t.tool !== 'eraser' || hasContent.value || activeTool.value === 'eraser',
   ),
 )
 const showImageInsert = computed(() => !props.exclude.includes('image'))
@@ -56,6 +70,13 @@ const activeHasOptions = computed(() => OPTION_TOOLS.includes(activeTool.value))
 const optionsLabel = computed(() => `${capitalize(activeTool.value)} options`)
 function capitalize(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : ''
+}
+
+// The biggest tip is wider than the swatch row, so the preview dot is capped —
+// the canvas cursor is what shows the true tip size.
+function eraserDotStyle(size) {
+  const dot = Math.min(size, 18)
+  return { width: `${dot}px`, height: `${dot}px` }
 }
 
 const buttonBase =
@@ -130,6 +151,36 @@ function applyTableDefault(patch) {
             @click="ui.state.penWidth = w"
           >
             <span class="rounded-full bg-surface-gray-10" :style="{ width: w + 'px', height: w + 'px' }" />
+          </button>
+        </div>
+      </div>
+
+      <!-- Eraser: mode + tip size (#39). The canvas cursor shows the real tip. -->
+      <div v-else-if="activeTool === 'eraser'" class="w-48 p-2">
+        <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-5">Mode</div>
+        <div class="mb-2 flex flex-col gap-1">
+          <button
+            v-for="m in ERASER_MODES"
+            :key="m.key"
+            class="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-surface-gray-2"
+            :class="ui.state.eraserMode === m.key ? 'bg-surface-gray-2 text-ink-gray-9' : 'text-ink-gray-7'"
+            @click="ui.state.eraserMode = m.key"
+          >
+            <LucideIcon :name="m.icon" class="h-4 w-4 text-ink-gray-6" />
+            {{ m.label }}
+            <LucideIcon v-if="ui.state.eraserMode === m.key" name="check" class="ml-auto h-4 w-4 text-ink-gray-9" />
+          </button>
+        </div>
+        <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-5">Size</div>
+        <div class="flex gap-2">
+          <button
+            v-for="size in ERASER_SIZES"
+            :key="size"
+            class="flex h-7 flex-1 items-center justify-center rounded-md"
+            :class="ui.state.eraserSize === size ? 'bg-surface-gray-3' : 'bg-surface-gray-1 hover:bg-surface-gray-2'"
+            @click="ui.state.eraserSize = size"
+          >
+            <span class="rounded-full bg-surface-gray-10" :style="eraserDotStyle(size)" />
           </button>
         </div>
       </div>
