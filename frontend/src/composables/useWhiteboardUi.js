@@ -8,6 +8,7 @@
 
 import { reactive, ref, readonly } from 'vue'
 import { PEN_COLORS, PEN_WIDTHS, STICKY_COLORS } from '@/diagram/whiteboardColors.js'
+import { pruneTrail } from '@/diagram/laser.js'
 
 let singleton = null
 
@@ -44,18 +45,27 @@ function createWhiteboardUi() {
   })
   // Transient laser trail: timestamped points that fade out (never persisted).
   const laserTrail = ref([])
+  // Animation clock for the trail: bumped once per frame while the trail lives,
+  // so the render layer's opacities are recomputed even when no point expired.
+  const laserClock = ref(0)
   // The stroke being drawn right now (pen/highlighter), rendered live by the
   // layer until pointer-up simplifies + commits it. Null when not drawing.
   const liveStroke = ref(null)
   // The line being dragged right now (preview), or null.
   const liveLine = ref(null)
-  const api = { state, laserTrail: readonly(laserTrail), liveStroke, liveLine }
+  const api = {
+    state,
+    laserTrail: readonly(laserTrail),
+    laserClock: readonly(laserClock),
+    liveStroke,
+    liveLine,
+  }
   // Ask a sticky to open its inline editor (consumed + cleared by the component).
   api.requestStickyEdit = (id) => {
     state.stickyEditRequest = id
   }
   attachSelection(api, state)
-  attachLaser(api, laserTrail)
+  attachLaser(api, laserTrail, laserClock)
   return api
 }
 
@@ -100,17 +110,18 @@ function attachSelection(api, state) {
   }
 }
 
-// Laser points carry a birth timestamp; the render layer culls anything older
-// than LASER_FADE_MS and a rAF loop keeps the trail shrinking after the pointer
-// stops (spec C5 self-fading trail).
-const LASER_FADE_MS = 650
-
-function attachLaser(api, laserTrail) {
+// Laser points carry a birth timestamp; a rAF loop drops the expired ones and
+// ticks `laserClock` so the render layer re-computes opacities every frame — the
+// trail keeps fading after the pointer stops (spec C5 self-fading trail, #41).
+function attachLaser(api, laserTrail, laserClock) {
   let raf = null
   api.pushLaserPoint = (point) => {
-    // A single dot that follows the pointer — no fading trail (S8). Keep only the
-    // latest point; the prune loop clears it shortly after the pointer stops.
-    laserTrail.value = [{ ...point, at: performance.now() }]
+    const at = performance.now()
+    // Accumulate: the pointer leaves a short trail of timestamped points behind
+    // it, each fading out on its own. Old points are dropped here as well as in
+    // the loop so a fast drag can never grow the trail past the fade window.
+    laserTrail.value = [...pruneTrail(laserTrail.value, at), { x: point.x, y: point.y, at }]
+    laserClock.value = at
     schedulePrune()
   }
   api.clearLaser = () => {
@@ -122,16 +133,11 @@ function attachLaser(api, laserTrail) {
     if (raf) return
     raf = requestAnimationFrame(() => {
       raf = null
-      const next = prune(laserTrail.value)
+      const now = performance.now()
+      const next = pruneTrail(laserTrail.value, now)
       if (next.length !== laserTrail.value.length) laserTrail.value = next
+      laserClock.value = now
       if (next.length) schedulePrune()
     })
   }
 }
-
-function prune(points) {
-  const cutoff = performance.now() - LASER_FADE_MS
-  return points.filter((point) => point.at >= cutoff)
-}
-
-export { LASER_FADE_MS }
