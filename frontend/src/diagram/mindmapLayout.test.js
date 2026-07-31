@@ -118,6 +118,10 @@ describe('mindmapLayout', () => {
     }
     // A zero origin is the identity, so an unmoved map costs nothing to render.
     expect(offsetPositions(positions, { x: 0, y: 0 })).toBe(positions)
+    // A malformed coordinate falls back to 0 instead of NaN-ing every box.
+    expect(offsetPositions(positions, { x: NaN, y: 40 })).toEqual(
+      offsetPositions(positions, { x: 0, y: 40 }),
+    )
   })
 
   it('builds a bezier branch path that starts at the parent and ends at the child', () => {

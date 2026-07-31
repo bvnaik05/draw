@@ -46,13 +46,22 @@ export function useMindmapInteraction(store, viewport, positionsRef) {
       releaseDrag?.()
       onDragEnd(event, session)
     }
+    // A cancelled pointer (a touch scroll taking the gesture over) abandons the
+    // drag instead of dropping the node: the re-parent would use whatever the
+    // last move computed, and the listeners would otherwise stay attached.
+    const onCancel = () => {
+      releaseDrag?.()
+      resetDrag()
+    }
     releaseDrag = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
       releaseDrag = null
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
   onScopeDispose(() => releaseDrag?.())
 

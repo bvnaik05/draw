@@ -147,6 +147,7 @@ function startFrameDrag(kind, event) {
   Object.assign(frameDrag, { kind, dx: 0, dy: 0, startX: p.x, startY: p.y })
   window.addEventListener('pointermove', onFrameDragMove)
   window.addEventListener('pointerup', onFrameDragUp)
+  window.addEventListener('pointercancel', abortFrameDrag)
 }
 function onFrameDragMove(event) {
   const p = selection.toLogicalFor(event, surface.value, viewport)
@@ -158,9 +159,18 @@ function onFrameDragUp() {
   if (frameDrag.kind) store.moveFrame(frameDrag.kind, frameDrag.dx, frameDrag.dy)
   Object.assign(frameDrag, { kind: null, dx: 0, dy: 0 })
 }
+// A cancelled pointer (a touch scroll taking the gesture over, a lost capture)
+// abandons the move instead of committing it. Without this the window listeners
+// stay attached with frameDrag.kind set, so the next stray pointerup anywhere
+// would write a stale origin to the document.
+function abortFrameDrag() {
+  releaseFrameDrag()
+  Object.assign(frameDrag, { kind: null, dx: 0, dy: 0 })
+}
 function releaseFrameDrag() {
   window.removeEventListener('pointermove', onFrameDragMove)
   window.removeEventListener('pointerup', onFrameDragUp)
+  window.removeEventListener('pointercancel', abortFrameDrag)
 }
 onBeforeUnmount(releaseFrameDrag)
 
@@ -702,7 +712,9 @@ function onSurfacePointerUp(event) {
 }
 
 // A cancelled pointer (browser gesture takeover, lost capture) must end whatever
-// the press started, or the next move would be read as a continuing drag.
+// the press started, or the next move would be read as a continuing drag. A frame
+// move binds its own window-level pointercancel (abortFrameDrag), which also
+// covers cancels that never reach the surface.
 function onSurfacePointerCancel() {
   cancelSectionDraft()
   flowchartGesture.value = false
