@@ -420,10 +420,15 @@ export function useFlowchartInteraction(store, editorUi, interactionRef) {
     return branch?.label || ''
   }
 
-  // Held so the unmount hook can detach ONLY its own entry — entering a flowchart
-  // frame mounts the focus-mode layer before the frame's one unmounts, and both use
-  // this key. See unregisterModeInteraction.
-  const handlers = { onPointerDown, onPointerMove, onPointerUp, onDoubleClick }
+  // `cancel` is registered alongside the pointer handlers so the canvas can close
+  // an open picker / pending connector when a press lands outside the flowchart —
+  // on the unified canvas such a press never reaches onPointerDown (#45).
+  //
+  // The set is held in a variable so the unmount hook detaches ONLY its own entry.
+  // Two components can hold this one key across a mount/unmount overlap, and a
+  // blind `register(…, null)` tears down whichever registered last — that race lost
+  // in-frame node drags before #50 fixed it. See unregisterModeInteraction.
+  const handlers = { onPointerDown, onPointerMove, onPointerUp, onDoubleClick, cancel }
   registerModeInteraction(interactionRef, 'flowchart', handlers)
   onBeforeUnmount(() => unregisterModeInteraction(interactionRef, 'flowchart', handlers))
 

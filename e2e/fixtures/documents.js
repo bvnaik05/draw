@@ -172,7 +172,7 @@ export const documents = {
   // inside them can be clicked. `framesInView` seeds the same content at origins
   // within the window, for any test that has to interact with a frame.
   // page.mouse silently ignores out-of-window coordinates, so getting this wrong
-  // yields a test that passes while doing nothing at all — see enterFrame().
+  // yields a test that passes while doing nothing at all — see boxInWindow().
   unified: (opts = {}) => ({
     ...baseDocument('unified'),
     shapes: opts.empty ? [] : [rect('s1', 120, 140), rect('s2', 700, 460)],

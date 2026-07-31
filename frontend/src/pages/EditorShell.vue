@@ -6,13 +6,13 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { loadDiagram } from '@/data/diagrams.js'
 import { folders } from '@/data/folders.js'
-import { parseDiagramDocument } from '@/diagram/schema.js'
+import { parseDiagramDocument, isUnifiedDocument } from '@/diagram/schema.js'
 import { createDiagramStore, provideDiagramStore } from '@/stores/useDiagramStore.js'
 import { createEditorUi, provideEditorUi } from '@/stores/useEditorUi.js'
 import { provideModeStrategy, getModeStrategy } from '@/stores/useModeStrategy.js'
 import { resetMindmapUi } from '@/stores/mindmapUi.js'
 import { provideModeInteraction } from '@/composables/useModeInteraction.js'
-import { useKeyboard } from '@/composables/useKeyboard.js'
+import { useKeyboard, keyboardOwner } from '@/composables/useKeyboard.js'
 import { useClipboard } from '@/composables/useClipboard.js'
 import { useAutosave } from '@/composables/useAutosave.js'
 import { useThumbnail } from '@/composables/useThumbnail.js'
@@ -20,7 +20,6 @@ import { useCollaboration } from '@/composables/useCollaboration.js'
 import { useAppSettings } from '@/composables/useAppSettings.js'
 import TopToolbar from '@/components/toolbar/TopToolbar.vue'
 import DiagramCanvas from '@/components/canvas/DiagramCanvas.vue'
-import LucideIcon from '@/icons/LucideIcon.vue'
 import Minimap from '@/components/canvas/Minimap.vue'
 import WhiteboardMinimap from '@/components/canvas/WhiteboardMinimap.vue'
 import MindMapOverlay from '@/components/canvas/MindMapOverlay.vue'
@@ -48,14 +47,28 @@ resetMindmapUi()
 provideDiagramStore(store)
 provideEditorUi(editorUi)
 
-// Active mode module for this diagram's type (spec diagram-types §0/G1). On the
-// unified canvas, entering a frame (editorUi.state.focusedFrame) overrides the
-// strategy to that sub-model's type, so the whole editor becomes its single-type
-// editor (full node editing/keyboard/toolbar) until "Back to canvas".
-const modeStrategy = computed(() =>
-  getModeStrategy(editorUi.state.focusedFrame || store.state.diagramType),
-)
+// Active mode module for this diagram's type (spec diagram-types §0/G1). The
+// unified canvas keeps its own strategy throughout: a mind map / flowchart on it
+// is an ordinary canvas object edited in place, not a container the editor
+// switches into (#45).
+const modeStrategy = computed(() => getModeStrategy(store.state.diagramType))
 provideModeStrategy(modeStrategy)
+
+// Which type's editing CHROME to mount — the node toolbars and selection editors.
+//
+// This is not always the strategy's type. A unified document resolves to the BLOCK
+// strategy, so gating the chrome on `modeStrategy.type` alone left a mind map or
+// flowchart edited in place on the unified canvas with no toolbar at all: focus mode
+// used to override the whole strategy, and removing it (#45) took the chrome with it.
+//
+// On the unified canvas the chrome therefore follows whichever model holds the
+// SELECTION — the same rule the keyboard uses, so the toolbar you see and the keys
+// that work can never disagree. Mounting the overlays unconditionally instead would
+// drop their single-type empty-state prompts onto the unified canvas.
+const chromeType = computed(() => {
+  if (!isUnifiedDocument(store.state)) return modeStrategy.value.type
+  return keyboardOwner(store) || 'block'
+})
 
 // Surface-interaction delegation seam (spec diagram-types Part G1/G4). The active
 // type's interaction composable registers its handler object into this ref via
@@ -145,26 +158,16 @@ onMounted(() => {
 
     <div class="flex min-h-0 flex-1">
       <main class="relative min-h-0 min-w-0 flex-1">
-        <!-- Focus-mode bar: shown while editing a frame on the unified canvas. -->
-        <button
-          v-if="editorUi.state.focusedFrame"
-          class="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-outline-gray-2 bg-surface-base px-3 py-1.5 text-[13px] font-medium text-ink-gray-8 shadow-md hover:bg-surface-gray-2"
-          @click="editorUi.setFocusedFrame(null)"
-        >
-          <LucideIcon name="arrow-left" class="h-4 w-4" />
-          Back to canvas
-          <span class="text-ink-gray-5">· editing {{ editorUi.state.focusedFrame }}</span>
-        </button>
         <DiagramCanvas />
         <Minimap />
         <WhiteboardMinimap v-if="modeStrategy.type === 'whiteboard'" />
-        <MindMapOverlay v-if="modeStrategy.type === 'mindmap'" />
-        <FlowchartOverlay v-if="modeStrategy.type === 'flowchart'" />
+        <MindMapOverlay v-if="chromeType === 'mindmap'" />
+        <FlowchartOverlay v-if="chromeType === 'flowchart'" />
         <!-- Also on the whiteboard: text/image are block shapes, so their format
              menu (font, size, colour…) is the block editor, shown when one is
              selected (S13/S14/U1). WhiteboardSelectionEditor handles board objects. -->
-        <BlockSelectionEditor v-if="modeStrategy.type === 'block' || modeStrategy.type === 'whiteboard'" />
-        <FlowchartSelectionEditor v-if="modeStrategy.type === 'flowchart'" />
+        <BlockSelectionEditor v-if="chromeType === 'block' || chromeType === 'whiteboard'" />
+        <FlowchartSelectionEditor v-if="chromeType === 'flowchart'" />
         <WhiteboardSelectionEditor v-if="modeStrategy.type === 'whiteboard'" />
         <CollaboratorCursors :collaborators="collab.collaborators.value" :set-cursor="collab.setCursor" />
         <ViewportControls />

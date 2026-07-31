@@ -103,24 +103,35 @@ function handleKeydown(event, store, editorUi, clipboard, transform) {
   if (handlePlainKey(event, store, editorUi, transform)) event.preventDefault()
 }
 
-// The type whose keyboard is live. On the unified canvas, entering a frame makes the
-// editor that sub-model's single-type editor — EditorShell resolves its whole mode
-// strategy as `focusedFrame || diagramType`, and the keyboard has to agree.
+// Which per-mode keyboard owns the keys right now, as a mode name — or null, which
+// means the shared block shortcuts below apply.
 //
-// It did not. This read `store.state.diagramType` alone, and there is no 'unified'
-// strategy (getModeStrategy falls back to BLOCK), so on every unified document the
-// per-type handlers were unreachable: inside a mind-map frame the nodes selected and
-// the toolbar appeared, but Tab, Enter, the arrows and Delete all did nothing — the
-// keys that are the ONLY way to grow a mind map. Same for a flowchart frame. Since
-// new diagrams are unified, that was the common case.
-export function effectiveKeyboardMode(store, editorUi) {
-  return editorUi?.state?.focusedFrame || store.state.diagramType
+// A unified document has no type of its own (getModeStrategy falls back to BLOCK,
+// whose handler is null), so before #45 the per-type handlers were unreachable on
+// it: a mind-map node selected and its toolbar appeared, but Tab, Enter, the arrows
+// and Delete — the keys that are the ONLY way to grow a mind map — all did nothing.
+// #50 fixed that by reading `focusedFrame || diagramType`; #45 removes focus mode
+// altogether and edits both models in place, so the owner now follows whichever
+// model holds the SELECTION instead of a container the user had to enter first.
+export function keyboardOwner(store) {
+  const { keyboardMode } = getModeStrategy(store.state.diagramType)
+  if (MODE_KEYBOARD_HANDLERS[keyboardMode]) return keyboardMode
+  return selectedNodeOwner(store)
 }
 
-// The per-mode handler for the type whose keyboard is live (or null for block/unset).
-function modeKeyboardFor(store, editorUi) {
-  const strategy = getModeStrategy(effectiveKeyboardMode(store, editorUi))
-  return MODE_KEYBOARD_HANDLERS[strategy.keyboardMode] ?? null
+// Node ids are prefixed per model ('n…' mind map, 'f…' flowchart, 's…' shape),
+// so the owning model of a selected id is unambiguous.
+function selectedNodeOwner(store) {
+  const id = (store.state.selection || [])[0]
+  if (!id) return null
+  if (store.state.mindmap?.nodes?.some((node) => node.id === id)) return 'mindmap'
+  if (store.state.flowchart?.nodes?.some((node) => node.id === id)) return 'flowchart'
+  return null
+}
+
+// The per-mode handler for whichever keyboard owns the keys (null for block/unset).
+function modeKeyboardFor(store) {
+  return MODE_KEYBOARD_HANDLERS[keyboardOwner(store)] ?? null
 }
 
 // Offer a non-modifier key to the active type's handler; returns true if consumed.

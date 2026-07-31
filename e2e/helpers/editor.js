@@ -87,8 +87,7 @@ export function toolByIcon(page, name) {
 // intercepts pointer events". Dispatch a real mouse click at the label's centre.
 export async function clickNode(page, label) {
   const el = page.locator('.fd-mm-label', { hasText: label }).first()
-  const box = await el.boundingBox()
-  if (!box) throw new Error(`mind-map node "${label}" not found`)
+  const box = await boxInWindow(page, el, `mind-map node "${label}"`)
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
 }
 
@@ -176,35 +175,50 @@ export async function clickMinimap(page, dx, dy) {
   await page.mouse.click(box.x + dx, box.y + dy)
 }
 
-// --- unified-canvas frames ---------------------------------------------------
+// --- unified-canvas mind-map / flowchart objects ------------------------------
 
-// The focus-mode indicator: EditorShell renders one button reading
-// "Back to canvas · editing <frame>" while editorUi.state.focusedFrame is set.
-//
-// Match the BUTTON, never getByText(/editing/i). The `diagram` fixture names each
-// document after the test that created it, so that pattern happily matched the test
-// title in the editor header — an assertion that passed whatever the app did.
-export function backToCanvas(page) {
-  return page.getByRole('button', { name: /back to canvas/i })
-}
+// A mind map or flowchart on the unified canvas is an ordinary canvas object whose
+// content is live: nodes are clicked, dragged and edited IN PLACE (#45). There is no
+// focus mode to enter and no "Back to canvas" breadcrumb — an earlier design had
+// both, and entering a frame re-framed the camera, which is the jump #45 removed.
 
-// Enter in-frame editing by double-clicking a node inside a frame, and wait for the
-// indicator so later keystrokes are not delivered mid-transition.
+// An element's on-screen box, failing loudly when it lies outside the window.
 //
-// Throws if the node is outside the window: frames are seeded at their own origin and
-// a document whose frame sits below the fold silently swallows every interaction —
-// page.mouse ignores out-of-window coordinates. Use the `framesInView` fixture.
-export async function enterFrame(page, label) {
-  const target = page.locator('.fd-mm-label', { hasText: label }).first()
-  const box = await target.boundingBox()
-  if (!box) throw new Error(`node "${label}" is not rendered`)
+// page.mouse silently IGNORES out-of-window coordinates, so content seeded below the
+// fold swallows every interaction and the test still passes. That defect shipped once
+// already: the suite ran at a different viewport than configured and the seeded
+// mind map sat under the fold. Seed with the `framesInView` fixture.
+export async function boxInWindow(page, locator, what) {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error(`${what} is not rendered`)
   const { width, height } = page.viewportSize()
-  if (box.y + box.height > height || box.x + box.width > width) {
+  const outside = box.x < 0 || box.y < 0 || box.x + box.width > width || box.y + box.height > height
+  if (outside) {
     throw new Error(
-      `node "${label}" is outside the ${width}x${height} window (at ${Math.round(box.x)},` +
-        `${Math.round(box.y)}) — seed the frames in view rather than clicking into the void`,
+      `${what} is outside the ${width}x${height} window (at ${Math.round(box.x)},` +
+        `${Math.round(box.y)}) — seed the content in view rather than interacting with the void`,
     )
   }
-  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2)
-  await expect(backToCanvas(page)).toBeVisible({ timeout: 10_000 })
+  return box
+}
+
+export function mindmapNode(page, label) {
+  return page.locator('.fd-mm-label', { hasText: label }).first()
+}
+
+// A flowchart node has no .fd-mm-label; it is found by its text.
+export function flowchartNode(page, label) {
+  return page.getByText(label, { exact: true }).first()
+}
+
+// Drag a node by a delta, in place. Returns the box it started from.
+export async function dragNode(page, locator, what, dx, dy) {
+  const box = await boxInWindow(page, locator, what)
+  const cx = box.x + box.width / 2
+  const cy = box.y + box.height / 2
+  await page.mouse.move(cx, cy)
+  await page.mouse.down()
+  await page.mouse.move(cx + dx, cy + dy, { steps: 12 })
+  await page.mouse.up()
+  return box
 }

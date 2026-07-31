@@ -135,6 +135,23 @@ function place(model, node, attachX, centerY, dir, sizes, metrics, positions) {
   }
 }
 
+// Shift a laid-out map to sit at `origin` on the shared canvas. The mind map is
+// auto-laid-out around its own zero point; on the unified canvas it is an
+// ordinary canvas object, so folding its origin into the positions keeps node
+// hit-testing and dragging in plain canvas units (no per-object transform maths).
+// A non-finite origin coordinate falls back to 0 rather than propagating NaN
+// through every box (which would drop the whole map out of the render).
+export function offsetPositions(positions, origin) {
+  const dx = Number.isFinite(origin?.x) ? origin.x : 0
+  const dy = Number.isFinite(origin?.y) ? origin.y : 0
+  if (!positions || (dx === 0 && dy === 0)) return positions
+  const shifted = {}
+  for (const id in positions) {
+    shifted[id] = { ...positions[id], x: positions[id].x + dx, y: positions[id].y + dy }
+  }
+  return shifted
+}
+
 // True when a node is hidden because one of its ancestors is collapsed. The node
 // itself being collapsed does not hide it (only its descendants). Used by the
 // renderer so collapsed subtrees draw nothing (and the layout gave them no space).

@@ -40,6 +40,10 @@ import '@/composables/useMindmapKeys.js'
 const props = defineProps({
   mindmap: { type: Object, required: true },
   positions: { type: Object, required: true },
+  // The full-canvas marquee backdrop below only makes sense when the mind map
+  // owns the whole canvas. On the unified canvas it is one object among many, so
+  // the backdrop would swallow every press outside it (#45).
+  marqueeBackdrop: { type: Boolean, default: true },
 })
 
 const store = useDiagramStore()
@@ -212,7 +216,7 @@ function addSibling(event, nodeId, side = null) {
 // Add buttons show ONLY while the node (and the zone around its branch end,
 // see hoverPad) is hovered, or it's the lone selection — never always-on.
 function showAdd(node) {
-  if (node.collapsed || interaction.drag.active) return false
+  if (node.collapsed || interaction.drag.active || !nodesInteractive()) return false
   const singleSelected = store.state.selection.length === 1 && isSelected(node.id)
   return singleSelected || hoveredId.value === node.id
 }
@@ -271,10 +275,19 @@ function surfaceRect(event) {
 // model (N5).
 const pressSelectedId = ref(null)
 
+// Only the select tool drives the map's own affordances — nodes, cross-links,
+// the hover pad, the +/collapse handles. On the unified canvas the mind map
+// shares the surface with the whiteboard/draw tools, and a pen stroke or a
+// dragged shape over the map must reach the canvas, not grab a node (#45).
+function nodesInteractive() {
+  return editorUi.state.tool === 'select'
+}
+
 // Pointer down on a node: cross-link mode wires two nodes; an additive modifier
 // toggles the node in the shared selection (bulk-select, no drag); otherwise
 // select + begin a possible drag-to-reparent (the composable thresholds it).
 function onNodePointerDown(event, id) {
+  if (!nodesInteractive()) return
   event.stopPropagation()
   if (mindmapUi.pendingLinkSource) return finishLink(id)
   if (isAdditiveEvent(event)) return store.toggleInSelection(id)
@@ -292,6 +305,7 @@ function finishLink(id) {
 // then Delete — or the × that appears at its midpoint. Without this a link could
 // be created and never undone except through undo history.
 function onCrosslinkPointerDown(event, id) {
+  if (!nodesInteractive()) return
   event.stopPropagation()
   // Don't steal the click while the user is picking a cross-link target.
   if (mindmapUi.pendingLinkSource) return
@@ -312,6 +326,7 @@ function isCrosslinkSelected(id) {
 // drops the text cursor in. A drag (reparent) is not a click, so it never edits.
 // Double-click (startEdit) still selects+edits immediately.
 function onNodeClick(event, id) {
+  if (!nodesInteractive()) return
   event.stopPropagation()
   if (isAdditiveEvent(event)) return
   if (interaction.gesture.moved) return
@@ -468,6 +483,7 @@ function nodePoly(node, b) {
          so their own clicks/drags are unaffected. Sized huge so it always spans
          the viewport at any pan/zoom. -->
     <rect
+      v-if="marqueeBackdrop"
       x="-200000"
       y="-200000"
       width="400000"
@@ -543,7 +559,7 @@ function nodePoly(node, b) {
            Only active while this node is the hovered one (else it would swallow
            empty-canvas marquee presses near other nodes). -->
       <rect
-        v-if="hoveredId === node.id"
+        v-if="hoveredId === node.id && nodesInteractive()"
         :x="hoverPad(node, box).x" :y="hoverPad(node, box).y"
         :width="hoverPad(node, box).w" :height="hoverPad(node, box).h"
         fill="transparent"
@@ -678,7 +694,7 @@ function nodePoly(node, b) {
       <!-- Collapse/expand toggle + hidden-descendant count badge (M4), at the
            node's branch end (mirrored for left-hand branches). -->
       <g
-        v-if="hasChildren(node.id)"
+        v-if="hasChildren(node.id) && nodesInteractive()"
         :transform="`translate(${branchSideOf(node, box) === 'right' ? box.w + 2 : -2} ${box.h / 2})`"
         style="cursor: pointer"
         @click="toggleCollapse($event, node.id)"
