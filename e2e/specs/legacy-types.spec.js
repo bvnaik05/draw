@@ -1,6 +1,7 @@
 import { test, expect, watchForErrors } from '../helpers/fixtures.js'
 import {
   SURFACE,
+  POPOVER,
   toolByIcon,
   buttonByIcon,
   openShapesPopover,
@@ -238,6 +239,34 @@ test.describe('whiteboard', () => {
     await expect
       .poll(inkLength, { message: 'eraser removed no ink from the stroke', timeout: 20_000 })
       .toBeLessThan(before)
+  })
+
+  test('erase by object removes the whole stroke in one pass', async ({ page, diagram }) => {
+    const name = await diagram.open('whiteboard') // seeded with one zigzag stroke
+    expect((await diagram.saved(name)).whiteboard.strokes.length).toBeGreaterThan(0)
+
+    const strokePath = page.locator(`${SURFACE} path[stroke-linecap]`).first()
+    const box = await strokePath.boundingBox()
+
+    await toolByIcon(page, 'eraser').click()
+    // Switch the eraser into object mode from its options disclosure (#39).
+    await toolByIcon(page, 'sliders').click()
+    await page.locator(POPOVER).getByText('Erase by object').click()
+    await page.keyboard.press('Escape')
+
+    await page.mouse.move(box.x + 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.up()
+
+    // Object mode takes the element, not the ink under the tip: one crossing
+    // clears the stroke instead of leaving fragments behind.
+    await expect
+      .poll(async () => (await diagram.saved(name)).whiteboard.strokes.length, {
+        message: 'erase by object left the stroke behind',
+        timeout: 20_000,
+      })
+      .toBe(0)
   })
 
   test('a sticky note can be placed', async ({ page, diagram }) => {
