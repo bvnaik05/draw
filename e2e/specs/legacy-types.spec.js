@@ -249,10 +249,24 @@ test.describe('whiteboard', () => {
     const box = await strokePath.boundingBox()
 
     await toolByIcon(page, 'eraser').click()
-    // Switch the eraser into object mode from its options disclosure (#39).
+    // Switch the eraser into object mode from its options disclosure (#39). The
+    // mode buttons deliberately leave the popover open (like the pen's colour and
+    // width), so close it by toggling its own button. NOT with Escape: Escape is
+    // universal and resets the tool to select before any per-mode handling, so it
+    // disarms the eraser and the drag below silently becomes a marquee.
     await toolByIcon(page, 'sliders').click()
-    await page.locator(POPOVER).getByText('Erase by object').click()
-    await page.keyboard.press('Escape')
+    const objectMode = page.locator(POPOVER).getByRole('button', { name: 'Erase by object' })
+    await objectMode.waitFor({ state: 'visible' })
+    await objectMode.click()
+    // Dismiss by clicking the eraser tool itself: an outside click closes the
+    // popover, and re-arming the tool that is already active changes nothing.
+    await toolByIcon(page, 'eraser').click()
+    await expect(objectMode).toBeHidden()
+    // Guard the precondition: if the tool were disarmed, the assertion below would
+    // blame the eraser for a gesture that never reached it. The active tool button
+    // carries the class on its own, so anchor the match — `hover:bg-surface-gray-2`
+    // sits in the base class of every palette button.
+    await expect(toolByIcon(page, 'eraser')).toHaveClass(/(^|\s)bg-surface-gray-2(\s|$)/)
 
     await page.mouse.move(box.x + 2, box.y + box.height / 2)
     await page.mouse.down()
