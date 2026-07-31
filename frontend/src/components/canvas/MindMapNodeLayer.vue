@@ -18,7 +18,7 @@ import {
   LINE_H,
 } from '@/diagram/mindmapLayout.js'
 import { resolveNodeColor, nodeFill, readableInk } from '@/diagram/mindmapColors.js'
-import { isRoot, subtreeIds } from '@/diagram/mindmapModel.js'
+import { isRoot, subtreeIds, rootOf } from '@/diagram/mindmapModel.js'
 import { toggleNodeCollapsed, pasteOutline, linkNodes, unlinkNodes } from '@/diagram/mindmapOperations.js'
 import { looksLikeOutline } from '@/diagram/mindmapPaste.js'
 import { useMindmapInteraction } from '@/composables/useMindmapInteraction.js'
@@ -170,8 +170,10 @@ const ADD_R = 11
 const ADD_OFFSET = 28 // gap from the node edge to the "+" centre (clears the collapse "−")
 const hoveredId = ref(null)
 
-function rootCenterX() {
-  const root = box(props.mindmap.rootId)
+// The centre of the node's OWN root — a map can hold several trees (#48), so the
+// side a node sits on is read against the root it hangs from, not the first one.
+function rootCenterX(node) {
+  const root = box(rootOf(props.mindmap, node.id)?.id)
   return root ? root.x + root.w / 2 : 0
 }
 
@@ -180,14 +182,14 @@ function rootCenterX() {
 // left-hand branch they sit at the node's LEFT end, mirroring the right.
 function branchSideOf(node, b) {
   if (isRoot(props.mindmap, node.id)) return 'right'
-  return b.x + b.w / 2 >= rootCenterX() ? 'right' : 'left'
+  return b.x + b.w / 2 >= rootCenterX(node) ? 'right' : 'left'
 }
 
 // The branch side(s) a node grows on: the root grows both ways; any other node
 // grows on the side it already sits relative to the root.
 function addSidesFor(node, b) {
   if (isRoot(props.mindmap, node.id)) return ['right', 'left']
-  return [b.x + b.w / 2 >= rootCenterX() ? 'right' : 'left']
+  return [b.x + b.w / 2 >= rootCenterX(node) ? 'right' : 'left']
 }
 
 // Circular add-button geometry per side, in node-local coordinates.

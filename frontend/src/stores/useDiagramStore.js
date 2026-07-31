@@ -9,8 +9,8 @@ import { createHistory } from '@/stores/history.js'
 import { clone } from '@/utils/clone.js'
 import { findThemePreset, DEFAULT_THEME_PRESET } from '@/diagram/theme.js'
 import { createDiagramDocument, SCHEMA_VERSION, DEFAULT_DIAGRAM_TYPE } from '@/diagram/schema.js'
-import { addChild, addSibling, addRootNode } from '@/diagram/mindmapModel.js'
-import { layoutMindMap } from '@/diagram/mindmapLayout.js'
+import { addChild, addSibling, addRootNode, addTree, nodeById } from '@/diagram/mindmapModel.js'
+import { layoutMindMap, mindmapTreeRects } from '@/diagram/mindmapLayout.js'
 import {
   addFlowchartNode,
   addFlowchartEdge,
@@ -117,6 +117,36 @@ function otherFrameRect(state, kind) {
   return frameRect(m.origin || { x: 0, y: 0 }, layoutMindMap(m).bbox)
 }
 
+// Where each mind-map tree sits on the shared canvas: the map's origin plus the
+// tree's own offset within it (#48).
+function treeRectsOnCanvas(model) {
+  const origin = model.origin || { x: 0, y: 0 }
+  return mindmapTreeRects(model, layoutMindMap(model).positions).map((rect) => ({
+    ...rect,
+    x: rect.x + origin.x,
+    y: rect.y + origin.y,
+  }))
+}
+
+// What a newly inserted mind-map tree has to sit clear of: every tree already on
+// the map, plus the flowchart. One enclosing rect — placement only ever needs
+// somewhere free, not the exact shape of what is taken.
+function occupiedRect(state, trees, exceptRootId) {
+  let rect = otherFrameRect(state, 'mindmap')
+  for (const tree of trees) {
+    if (tree.rootId !== exceptRootId) rect = union(rect, tree)
+  }
+  return rect
+}
+
+function union(a, b) {
+  if (!a) return b
+  if (!b) return a
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }
+}
+
 // One axis of a rect placed inside the view: kept within its bounds, or centred on
 // it when the rect is the larger of the two.
 function insideAxis(pos, size, min, extent) {
@@ -192,38 +222,49 @@ function attachMindMap(store, state, history) {
       const node = state.mindmap?.nodes.find((n) => n.id === id)
       if (node) applyPatch(node, patch)
     })
-  // Templates/Insert (canvas unification): drop a starter mind map into the frame
-  // as one undoable unit. Seeds root + two branches when empty; otherwise adds a
-  // branch to the root so repeat inserts keep growing it.
+  // Templates/Insert (canvas unification): drop a starter mind map on the canvas
+  // as one undoable unit — always a NEW independent tree (root + two branches).
   //
-  // `view` is the optional logical canvas rect on screen, to place a NEW frame in
-  // (#30). Only the seeding branch uses it — once the frame exists it stays where
-  // the user put it, so growing it must never move it. The layout is run inside the
-  // commit to get the seeded tree's real size; it is pure and already derived on
-  // every render, so this costs nothing extra.
+  // Inserting used to graft "New idea" onto the existing root instead, because a
+  // document held a single map (#48): a second Add mind map silently edited the
+  // first one. Every tree now stands on its own and existing trees are never
+  // touched by an insert.
+  //
+  // `view` is the optional logical canvas rect on screen, to place the new tree in
+  // (#30). The first tree carries the whole map's origin (so a single-tree map
+  // still saves exactly as before); later trees carry their own offset. The layout
+  // is run inside the commit to get the seeded tree's real size; it is pure and
+  // already derived on every render, so this costs nothing extra.
   store.insertMindmapStarter = (view = null) =>
     history.commit('Insert mind map', () => {
       const m = state.mindmap
       if (!m) return
-      if (!m.rootId || !m.nodes.length) {
-        const root = addRootNode(m, 'Central idea')
-        addChild(m, root, 'Idea 1', 'right')
-        addChild(m, root, 'Idea 2', 'left')
-        if (view) {
-          m.origin = frameOriginInView(layoutMindMap(m).bbox, view, otherFrameRect(state, 'mindmap'))
-        }
-      } else {
-        addChild(m, m.rootId, 'New idea')
+      const first = !m.nodes.length
+      const root = addTree(m, 'Central idea')
+      addChild(m, root, 'Idea 1', 'right')
+      addChild(m, root, 'Idea 2', 'left')
+      if (!view) return
+      if (first) {
+        m.origin = frameOriginInView(layoutMindMap(m).bbox, view, otherFrameRect(state, 'mindmap'))
+        return
+      }
+      // The tree is laid out at a zero offset first, so the origin that puts it in
+      // the view is just the move from where it landed to where it should sit.
+      const trees = treeRectsOnCanvas(m)
+      const rect = trees.find((tree) => tree.rootId === root)
+      if (rect) {
+        nodeById(m, root).origin = frameOriginInView(rect, view, occupiedRect(state, trees, root))
       }
     })
-  // Move a frame (mind map / flowchart) on the unified canvas by a delta, as one
-  // undoable unit — repositions the frame's origin (its top-left on the canvas).
-  store.moveFrame = (kind, dx, dy) => {
-    const m = kind === 'flowchart' ? state.flowchart : state.mindmap
-    if (!m || (!dx && !dy)) return
-    history.commit('Move frame', () => {
-      const o = m.origin || { x: 0, y: 0 }
-      m.origin = { x: o.x + dx, y: o.y + dy }
+  // Move one mind-map tree on the unified canvas by a delta, as one undoable unit
+  // — repositions that tree's own offset, leaving every other tree alone (#48).
+  store.moveMindmapTree = (rootId, dx, dy) => {
+    if (!state.mindmap || (!dx && !dy)) return
+    const root = nodeById(state.mindmap, rootId)
+    if (!root) return
+    history.commit('Move mind map', () => {
+      const o = root.origin || { x: 0, y: 0 }
+      root.origin = { x: o.x + dx, y: o.y + dy }
     })
   }
 }
@@ -283,28 +324,42 @@ function attachFlowchart(store, state, history) {
     if (!state.flowchart) return
     history.commit(label, () => mutatorFn(state.flowchart))
   }
-  // Templates/Insert (canvas unification): drop a starter flowchart into the frame
-  // as one undoable unit — two connected nodes when empty, else append a step.
+  // Templates/Insert (canvas unification): drop a starter flowchart on the canvas
+  // as one undoable unit — always a NEW chart of two connected nodes.
   //
-  // `view` places a NEW frame in that logical on-screen rect (#30); appending a step
-  // to an existing chart leaves the frame where it is.
+  // A repeat insert used to append a step to the last node AND wire an edge to it,
+  // so a second Add flowchart extended the chart already there instead of making
+  // its own (#48). The new chart is now placed clear of the existing content with
+  // no edge tying the two together; its nodes are individually draggable, so it
+  // needs no origin of its own.
+  //
+  // `view` places the FIRST chart in that logical on-screen rect (#30); it carries
+  // the frame origin, which later charts must not move.
   store.insertFlowchartStarter = (view = null) =>
     history.commit('Insert flowchart', () => {
       const m = state.flowchart
       if (!m) return
-      if (!m.nodes.length) {
-        const a = addFlowchartNode(m, 'terminator', 'Start', 0, 0)
-        const b = addFlowchartNode(m, 'process', 'Step', 0, 150)
-        addFlowchartEdge(m, a, b)
-        if (view) {
-          m.origin = frameOriginInView(flowchartContentBounds(m), view, otherFrameRect(state, 'flowchart'))
-        }
-      } else {
-        const last = m.nodes[m.nodes.length - 1]
-        const next = addFlowchartNode(m, 'process', 'Step', last.x, (last.y || 0) + 150)
-        addFlowchartEdge(m, last.id, next)
+      const first = !m.nodes.length
+      const bounds = first ? null : flowchartContentBounds(m)
+      const x = bounds ? bounds.x : 0
+      const y = bounds ? bounds.y + bounds.h + FRAME_GAP : 0
+      const a = addFlowchartNode(m, 'terminator', 'Start', x, y)
+      const b = addFlowchartNode(m, 'process', 'Step', x, y + 150)
+      addFlowchartEdge(m, a, b)
+      if (first && view) {
+        m.origin = frameOriginInView(flowchartContentBounds(m), view, otherFrameRect(state, 'flowchart'))
       }
     })
+  // Move the flowchart frame on the unified canvas by a delta, as one undoable
+  // unit — repositions its origin (its top-left on the canvas).
+  store.moveFlowchartFrame = (dx, dy) => {
+    const m = state.flowchart
+    if (!m || (!dx && !dy)) return
+    history.commit('Move flowchart', () => {
+      const o = m.origin || { x: 0, y: 0 }
+      m.origin = { x: o.x + dx, y: o.y + dy }
+    })
+  }
 }
 
 // Whiteboard mutations (spec diagram-types Part C). Strokes are simplified by the

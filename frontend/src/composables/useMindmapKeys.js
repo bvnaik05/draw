@@ -8,7 +8,7 @@
 
 import { registerModeKeyboardHandler } from '@/composables/useKeyboard.js'
 import { navigate } from '@/diagram/mindmapNavigation.js'
-import { isRoot } from '@/diagram/mindmapModel.js'
+import { isRoot, rootNodes } from '@/diagram/mindmapModel.js'
 import { deleteNodes, promoteNode, reorderNode, unlinkNodes } from '@/diagram/mindmapOperations.js'
 import { selectedNodeId, selectNode, beginEdit, mindmapUi } from '@/stores/mindmapUi.js'
 
@@ -76,15 +76,15 @@ function handleArrow(store, model, id, event) {
 
 // Delete/Backspace removes EVERY selected node (single or multi — N11) as one
 // undoable unit; nodes with children are confirmed first and removed as subtrees.
-// The root is never deleted (offer Clear map in the palette). Reads the shared
-// selection array directly, since selectedNodeId() is null during a multi-select.
+// Deleting a root removes its whole tree, confirmed. Reads the shared selection
+// array directly, since selectedNodeId() is null during a multi-select.
 export function requestDelete(store) {
   const model = store.state.mindmap
   const selection = store.state.selection || []
   if (!selection.length) return false
-  // Deleting the root clears the entire map (confirmed), returning to blank.
-  if (selection.some((nid) => isRoot(model, nid))) {
-    mindmapUi.confirmDelete = { clearAll: true, label: 'Delete the entire mind map? This removes every node.' }
+  const roots = selection.filter((nid) => isRoot(model, nid))
+  if (roots.length) {
+    mindmapUi.confirmDelete = confirmForRoots(model, roots)
     return true
   }
   const ids = selection.filter((nid) => !isRoot(model, nid))
@@ -104,6 +104,19 @@ export function requestDelete(store) {
   selectNode(store, first?.parentId || null)
   deleteNodes(store, ids)
   return true
+}
+
+// A map can hold several independent trees (#48): deleting the root of one drops
+// just that mind map, while deleting the last one left clears the map back to
+// blank (the state the "Add your first idea" prompt belongs to).
+function confirmForRoots(model, roots) {
+  if (rootNodes(model).length <= roots.length) {
+    return { clearAll: true, label: 'Delete the entire mind map? This removes every node.' }
+  }
+  const label = roots.length > 1
+    ? `Delete ${roots.length} mind maps? This removes every node in them.`
+    : 'Delete this mind map? This removes every node in it.'
+  return { trees: roots, label }
 }
 
 // Select a freshly created node and put it straight into text-edit (A5: new

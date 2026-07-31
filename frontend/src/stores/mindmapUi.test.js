@@ -9,7 +9,8 @@ import {
   focusedNodeId,
   resetMindmapUi,
 } from './mindmapUi.js'
-import { linkNodes, deleteNodes } from '@/diagram/mindmapOperations.js'
+import { linkNodes, deleteNodes, deleteTrees } from '@/diagram/mindmapOperations.js'
+import { rootNodes, nodeById } from '@/diagram/mindmapModel.js'
 import { mindmapKeydown } from '@/composables/useMindmapKeys.js'
 
 // Cross-link selection + focus mode: both existed in the model but had no way to
@@ -206,5 +207,54 @@ describe('focusedNodeId guards a stale focus', () => {
     selectNode(store, b)
     toggleFocus(store)
     expect(focusedNodeId(store.state.mindmap)).toBe(b)
+  })
+})
+
+// #48: a unified canvas can hold several independent mind maps in one model, so
+// Delete on a root has to remove THAT map — while a lone map still clears back to
+// the blank "add your first idea" state, as it always did.
+describe('deleting one of several mind maps', () => {
+  function unifiedWithTwoMaps() {
+    const store = createDiagramStore(createDiagramDocument(undefined, 'unified'))
+    store.insertMindmapStarter()
+    store.insertMindmapStarter()
+    const [first, second] = rootNodes(store.state.mindmap).map((n) => n.id)
+    return { store, first, second }
+  }
+
+  it('Delete on a root asks to remove that map alone', () => {
+    const { store, first, second } = unifiedWithTwoMaps()
+    selectNode(store, second)
+
+    expect(mindmapKeydown({ key: 'Delete' }, store)).toBe(true)
+    expect(mindmapUi.confirmDelete.trees).toEqual([second])
+    expect(mindmapUi.confirmDelete.clearAll).toBeUndefined()
+
+    deleteTrees(store, mindmapUi.confirmDelete.trees)
+    expect(rootNodes(store.state.mindmap).map((n) => n.id)).toEqual([first])
+    expect(store.state.mindmap.nodes).toHaveLength(3)
+  })
+
+  it('still clears the whole map when it holds only one', () => {
+    const store = createDiagramStore(createDiagramDocument(undefined, 'unified'))
+    store.insertMindmapStarter()
+    selectNode(store, store.state.mindmap.rootId)
+
+    expect(mindmapKeydown({ key: 'Delete' }, store)).toBe(true)
+    expect(mindmapUi.confirmDelete.clearAll).toBe(true)
+  })
+
+  it('moves one map without moving the other', () => {
+    const { store, first, second } = unifiedWithTwoMaps()
+    const before = nodeById(store.state.mindmap, first).origin
+
+    store.moveMindmapTree(second, 120, -80)
+
+    const moved = nodeById(store.state.mindmap, second).origin
+    expect(nodeById(store.state.mindmap, first).origin).toEqual(before)
+    expect(moved).toEqual({ x: 120, y: -80 })
+    // One undo step, like every other frame move.
+    store.undo()
+    expect(nodeById(store.state.mindmap, second).origin).toEqual({ x: 0, y: 0 })
   })
 })

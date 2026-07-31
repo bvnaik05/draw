@@ -1,9 +1,17 @@
 // Mind-map tree model — pure data + mutations (spec diagram-types Part A11).
-// A mind map is one root plus nodes each having one parent (parentId) and an
-// `order` among siblings. IDs are stable (factories nextId), never array index
-// (Part G2). Layout positions are derived elsewhere (mindmapLayout.js), never
-// stored here. Mutations operate in place and return the new/affected id so the
-// store can wrap them in commit() for undo (Part G6).
+// A mind map holds one or more trees: every node has one parent (parentId) and an
+// `order` among siblings, and a node with no parent is a root. IDs are stable
+// (factories nextId), never array index (Part G2). Layout positions are derived
+// elsewhere (mindmapLayout.js), never stored here. Mutations operate in place and
+// return the new/affected id so the store can wrap them in commit() for undo
+// (Part G6).
+//
+// Several trees (#48): inserting a mind map onto a canvas that already has one
+// used to graft a branch onto the existing root, because a document carried a
+// single map. A map is now a set of independent trees, each with its own root
+// carrying an `origin` (its offset within the map). `model.rootId` stays as the
+// FIRST root so single-tree documents — every one saved before this — read back
+// exactly as before.
 
 import { nextId } from './factories.js'
 
@@ -39,10 +47,37 @@ export function createEmptyMindMap() {
 // Create the root of an empty map (no-op if one already exists). Returns its id.
 export function addRootNode(model, text = '') {
   if (model.rootId && nodeById(model, model.rootId)) return model.rootId
-  const root = makeNode(null, text, 0, 0)
+  return addTree(model, text)
+}
+
+// Start a NEW independent tree on the map (#48). `origin` is its offset within
+// the map; the first tree keeps {0,0}, so a single-tree map lays out unchanged.
+// Returns the new root's id.
+export function addTree(model, text = '', origin = { x: 0, y: 0 }) {
+  const root = makeNode(null, text, rootNodes(model).length, 0)
+  root.origin = { ...origin }
   model.nodes.push(root)
-  model.rootId = root.id
+  if (!model.rootId || !nodeById(model, model.rootId)) model.rootId = root.id
   return root.id
+}
+
+// Every root on the map, in insertion order.
+export function rootNodes(model) {
+  return (model?.nodes || []).filter((node) => !node.parentId).sort((a, b) => a.order - b.order)
+}
+
+// The root of the tree `id` belongs to (itself when it is a root), or null.
+export function rootOf(model, id) {
+  let node = nodeById(model, id)
+  while (node?.parentId) node = nodeById(model, node.parentId)
+  return node || null
+}
+
+// A root's offset within the map (trees added later sit clear of the first one).
+export function treeOrigin(root) {
+  const x = Number.isFinite(root?.origin?.x) ? root.origin.x : 0
+  const y = Number.isFinite(root?.origin?.y) ? root.origin.y : 0
+  return { x, y }
 }
 
 export function nodeById(model, id) {
@@ -56,8 +91,11 @@ export function childrenOf(model, parentId) {
     .sort((a, b) => a.order - b.order)
 }
 
+// A root is any node without a parent — every tree on the map has one (#48), not
+// just the one model.rootId points at.
 export function isRoot(model, id) {
-  return model.rootId === id
+  const node = nodeById(model, id)
+  return !!node && !node.parentId
 }
 
 // Add a child under `parentId`, appended after existing children. Returns its id.
@@ -132,13 +170,29 @@ export function deleteSubtree(model, id) {
   if (isRoot(model, id)) return []
   const node = nodeById(model, id)
   if (!node) return []
+  const ids = removeSubtree(model, id)
+  renumberChildren(model, node.parentId)
+  return ids
+}
+
+// Delete a whole tree — its root and every descendant. Unlike deleteSubtree this
+// IS allowed on a root, because a map holds several independent trees (#48) and
+// each one has to be removable on its own. Returns the deleted ids.
+export function deleteTree(model, rootId) {
+  if (!isRoot(model, rootId)) return []
+  const ids = removeSubtree(model, rootId)
+  if (model.rootId === rootId) model.rootId = rootNodes(model)[0]?.id || null
+  return ids
+}
+
+// Drop a node's subtree (and any cross-link touching it) from the model.
+function removeSubtree(model, id) {
   const ids = subtreeIds(model, id)
   const removed = new Set(ids)
   model.nodes = model.nodes.filter((candidate) => !removed.has(candidate.id))
   model.crosslinks = model.crosslinks.filter(
     (link) => !removed.has(link.fromId) && !removed.has(link.toId),
   )
-  renumberChildren(model, node.parentId)
   return ids
 }
 
@@ -192,14 +246,14 @@ function reattach(model, node, newParentId, order) {
   refreshDepths(model)
 }
 
-// Recompute every node's depth from the root down (cheap, O(n)).
+// Recompute every node's depth from each root down (cheap, O(n)).
 export function refreshDepths(model) {
   const setDepth = (id, depth) => {
     const node = nodeById(model, id)
     if (node) node.depth = depth
     for (const child of childrenOf(model, id)) setDepth(child.id, depth + 1)
   }
-  setDepth(model.rootId, 0)
+  for (const root of rootNodes(model)) setDepth(root.id, 0)
 }
 
 // Toggle a node's collapsed flag (collapsed subtrees occupy zero layout space).

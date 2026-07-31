@@ -15,7 +15,8 @@ import { useModeStrategy } from '@/stores/useModeStrategy.js'
 import { themeVarStyle } from '@/diagram/theme.js'
 import { axisAlignedBBox, anchorPoint, pointInShape } from '@/diagram/geometry.js'
 import { isVisible, isInteractable } from '@/diagram/shapeFlags.js'
-import { layoutMindMap, offsetPositions } from '@/diagram/mindmapLayout.js'
+import { layoutMindMap, offsetPositions, mindmapTreeRects } from '@/diagram/mindmapLayout.js'
+import { subtreeIds } from '@/diagram/mindmapModel.js'
 import { flowchartContentBounds } from '@/diagram/flowchartLayout.js'
 import { whiteboardContentBounds } from '@/diagram/whiteboardLayout.js'
 import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
@@ -103,33 +104,42 @@ const fcOrigin = computed(() => store.state.flowchart?.origin || { x: 0, y: 0 })
 // the current viewport (#45). A hit-rect behind the content covers the object's
 // padded bbox, so pressing its empty space selects the whole object and dragging
 // it repositions the origin as one undo step.
+//
+// A map holds one object PER TREE (#48): several independent mind maps can sit on
+// the canvas, so each gets its own hit-rect and moves on its own. The flowchart
+// stays one object — its nodes are individually draggable already.
 const FRAME_PAD = 12
-const selectedFrame = ref(null) // 'mindmap' | 'flowchart' | null
-const frameDrag = reactive({ kind: null, dx: 0, dy: 0, startX: 0, startY: 0 })
+const selectedFrame = ref(null) // { kind: 'mindmap' | 'flowchart', id } | null
+const frameDrag = reactive({ kind: null, id: null, dx: 0, dy: 0, startX: 0, startY: 0 })
+
+function isFrameSelected(kind, id = null) {
+  return selectedFrame.value?.kind === kind && selectedFrame.value?.id === id
+}
 
 // The mind map is auto-laid-out around its own origin, so on the unified canvas
 // we fold the frame origin into the layout instead of rendering under a
 // translate: node hit-testing and drag-to-reparent then work directly in canvas
-// units, with no per-frame coordinate conversion (useMindmapInteraction).
+// units, with no per-frame coordinate conversion (useMindmapInteraction). The
+// live drag delta is folded in for the dragged TREE only, leaving the rest put.
 const mmPositions = computed(() => {
   const positions = mindmapLayout.value?.positions
-  if (!positions) return null
-  return isUnified.value ? offsetPositions(positions, mmOrigin.value) : positions
+  if (!positions || !isUnified.value) return positions || null
+  const placed = offsetPositions(positions, mmOrigin.value)
+  if (frameDrag.kind !== 'mindmap') return placed
+  const dragged = new Set(subtreeIds(store.state.mindmap, frameDrag.id))
+  const moved = { ...placed }
+  for (const id of dragged) {
+    if (moved[id]) moved[id] = { ...moved[id], x: moved[id].x + frameDrag.dx, y: moved[id].y + frameDrag.dy }
+  }
+  return moved
 })
 
 // Padded content bbox for each object: mind-map coords already include the origin
 // (mmPositions); flowchart node coords stay local to its origin translate.
-const mmBox = computed(() => {
+const mmBoxes = computed(() => {
   const positions = mmPositions.value
-  if (!positions || !store.state.mindmap?.nodes.length) return null
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const id in positions) {
-    const p = positions[id]
-    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y)
-    maxX = Math.max(maxX, p.x + p.w); maxY = Math.max(maxY, p.y + p.h)
-  }
-  if (!Number.isFinite(minX)) return null
-  return { x: minX - FRAME_PAD, y: minY - FRAME_PAD, w: maxX - minX + FRAME_PAD * 2, h: maxY - minY + FRAME_PAD * 2 }
+  if (!positions || !store.state.mindmap?.nodes.length) return []
+  return mindmapTreeRects(store.state.mindmap, positions, FRAME_PAD)
 })
 const fcBox = computed(() => {
   if (!store.state.flowchart?.nodes.length) return null
@@ -137,21 +147,18 @@ const fcBox = computed(() => {
   return { x: b.x - FRAME_PAD, y: b.y - FRAME_PAD, w: b.w + FRAME_PAD * 2, h: b.h + FRAME_PAD * 2 }
 })
 
-// Render transforms with the live drag delta folded in, so the object follows the
-// cursor. The mind map already carries its origin in mmPositions, so it only
-// needs the delta; the flowchart is translated by its origin as well.
-const renderedMmOffset = computed(() => offsetForDrag('mindmap', { x: 0, y: 0 }))
-const renderedFcOrigin = computed(() => offsetForDrag('flowchart', fcOrigin.value))
-function offsetForDrag(kind, origin) {
-  if (frameDrag.kind !== kind) return origin
-  return { x: origin.x + frameDrag.dx, y: origin.y + frameDrag.dy }
-}
+// The flowchart's render transform with the live drag delta folded in, so the
+// object follows the cursor (the mind map carries both in mmPositions).
+const renderedFcOrigin = computed(() => {
+  if (frameDrag.kind !== 'flowchart') return fcOrigin.value
+  return { x: fcOrigin.value.x + frameDrag.dx, y: fcOrigin.value.y + frameDrag.dy }
+})
 
-function startFrameDrag(kind, event) {
+function startFrameDrag(kind, id, event) {
   if (event.button !== 0) return
-  selectedFrame.value = kind
+  selectedFrame.value = { kind, id }
   const p = selection.toLogicalFor(event, surface.value, viewport)
-  Object.assign(frameDrag, { kind, dx: 0, dy: 0, startX: p.x, startY: p.y })
+  Object.assign(frameDrag, { kind, id, dx: 0, dy: 0, startX: p.x, startY: p.y })
   window.addEventListener('pointermove', onFrameDragMove)
   window.addEventListener('pointerup', onFrameDragUp)
   window.addEventListener('pointercancel', abortFrameDrag)
@@ -163,8 +170,9 @@ function onFrameDragMove(event) {
 }
 function onFrameDragUp() {
   releaseFrameDrag()
-  if (frameDrag.kind) store.moveFrame(frameDrag.kind, frameDrag.dx, frameDrag.dy)
-  Object.assign(frameDrag, { kind: null, dx: 0, dy: 0 })
+  if (frameDrag.kind === 'mindmap') store.moveMindmapTree(frameDrag.id, frameDrag.dx, frameDrag.dy)
+  else if (frameDrag.kind === 'flowchart') store.moveFlowchartFrame(frameDrag.dx, frameDrag.dy)
+  Object.assign(frameDrag, { kind: null, id: null, dx: 0, dy: 0 })
 }
 // A cancelled pointer (a touch scroll taking the gesture over, a lost capture)
 // abandons the move instead of committing it. Without this the window listeners
@@ -172,7 +180,7 @@ function onFrameDragUp() {
 // would write a stale origin to the document.
 function abortFrameDrag() {
   releaseFrameDrag()
-  Object.assign(frameDrag, { kind: null, dx: 0, dy: 0 })
+  Object.assign(frameDrag, { kind: null, id: null, dx: 0, dy: 0 })
 }
 function releaseFrameDrag() {
   window.removeEventListener('pointermove', onFrameDragMove)
@@ -869,15 +877,17 @@ const surfaceCursor = computed(() => {
              hit-rect BEHIND it so pressing the object's empty space selects and
              moves the whole thing. The mind map's origin is baked into
              mmPositions, so its group only carries the live drag delta. -->
-        <g v-if="isUnified && mmPositions && store.state.mindmap.nodes.length && mmBox"
-          :transform="`translate(${renderedMmOffset.x} ${renderedMmOffset.y})`">
+        <g v-if="isUnified && mmPositions && store.state.mindmap.nodes.length">
+          <!-- One hit-rect per tree: a map can hold several independent mind maps
+               (#48), and each has to select and move on its own. -->
           <rect
-            :x="mmBox.x" :y="mmBox.y" :width="mmBox.w" :height="mmBox.h" rx="10"
-            :fill="selectedFrame === 'mindmap' ? 'rgba(0,110,219,0.04)' : 'transparent'"
-            :stroke="selectedFrame === 'mindmap' ? '#006EDB' : 'transparent'"
-            :stroke-width="selectedFrame === 'mindmap' ? 1.5 : 0"
+            v-for="tree in mmBoxes" :key="tree.rootId"
+            :x="tree.x" :y="tree.y" :width="tree.w" :height="tree.h" rx="10"
+            :fill="isFrameSelected('mindmap', tree.rootId) ? 'rgba(0,110,219,0.04)' : 'transparent'"
+            :stroke="isFrameSelected('mindmap', tree.rootId) ? '#006EDB' : 'transparent'"
+            :stroke-width="isFrameSelected('mindmap', tree.rootId) ? 1.5 : 0"
             stroke-dasharray="6 4" style="cursor: move"
-            @pointerdown.stop="startFrameDrag('mindmap', $event)"
+            @pointerdown.stop="startFrameDrag('mindmap', tree.rootId, $event)"
           />
           <MindMapNodeLayer
             :mindmap="store.state.mindmap"
@@ -889,11 +899,11 @@ const surfaceCursor = computed(() => {
           :transform="`translate(${renderedFcOrigin.x} ${renderedFcOrigin.y})`">
           <rect
             :x="fcBox.x" :y="fcBox.y" :width="fcBox.w" :height="fcBox.h" rx="10"
-            :fill="selectedFrame === 'flowchart' ? 'rgba(0,110,219,0.04)' : 'transparent'"
-            :stroke="selectedFrame === 'flowchart' ? '#006EDB' : 'transparent'"
-            :stroke-width="selectedFrame === 'flowchart' ? 1.5 : 0"
+            :fill="isFrameSelected('flowchart') ? 'rgba(0,110,219,0.04)' : 'transparent'"
+            :stroke="isFrameSelected('flowchart') ? '#006EDB' : 'transparent'"
+            :stroke-width="isFrameSelected('flowchart') ? 1.5 : 0"
             stroke-dasharray="6 4" style="cursor: move"
-            @pointerdown.stop="startFrameDrag('flowchart', $event)"
+            @pointerdown.stop="startFrameDrag('flowchart', null, $event)"
           />
           <!-- Deliberately NOT wrapped in .unified-frame-content. That wrapper made
                the content non-interactive so a double-click could land on the

@@ -3,7 +3,7 @@
 // depth); any node may override via node.color; theme presets reassign the
 // branch palette. Pure helpers so coloring stays unit-testable.
 
-import { childrenOf, parentOf, isRoot } from './mindmapModel.js'
+import { childrenOf, parentOf, isRoot, rootOf } from './mindmapModel.js'
 
 // Curated Espresso branch hues (match the FillBorder swatch family).
 const BRANCH_PALETTES = {
@@ -22,10 +22,11 @@ export function branchPalette(themePreset) {
 }
 
 // The first-level branch that a node belongs to (itself if first-level, the root
-// for the root, walking up otherwise). Returns the branch node, or null.
+// for the root, walking up otherwise). Returns the branch node, or null. "First
+// level" is relative to the node's OWN tree — a map can hold several (#48).
 function branchAncestor(model, id) {
   let node = model.nodes.find((candidate) => candidate.id === id)
-  while (node && node.parentId && node.parentId !== model.rootId) {
+  while (node && node.parentId && !isRoot(model, node.parentId)) {
     node = parentOf(model, node.id)
   }
   return node || null
@@ -61,9 +62,11 @@ function inheritedOverride(model, node) {
   return null
 }
 
-// Position of a first-level branch among the root's children (drives its hue).
+// Position of a first-level branch among its own root's children (drives its hue).
 function firstLevelIndex(model, branchId) {
-  return childrenOf(model, model.rootId).findIndex((child) => child.id === branchId)
+  const root = rootOf(model, branchId)
+  if (!root) return 0
+  return childrenOf(model, root.id).findIndex((child) => child.id === branchId)
 }
 
 // A soft pill fill derived from the branch color (very light tint).
