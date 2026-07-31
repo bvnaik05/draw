@@ -17,7 +17,8 @@ import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { isUnifiedDocument } from '@/diagram/schema.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import { useWhiteboardInteraction } from '@/composables/useWhiteboardInteraction.js'
-import { useWhiteboardUi, LASER_FADE_MS } from '@/composables/useWhiteboardUi.js'
+import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
+import { trailSegments, LASER_COLOR, LASER_HEAD_RADIUS, LASER_FADE_MS } from '@/diagram/laser.js'
 import { roughenSegment } from '@/diagram/sketch.js'
 import { pointsToPath } from '@/diagram/svgPath.js'
 import { HIGHLIGHTER_OPACITY } from '@/diagram/whiteboardColors.js'
@@ -118,14 +119,30 @@ const voteBadges = computed(() => {
   return out
 })
 
-// Laser trail rendered as fading dots (spec C5). Newer points are more opaque;
-// the dot shrinks with age. Pure render of transient state — never exported.
-const laserDots = computed(() => {
-  const now = performance.now()
-  return ui.laserTrail.value.map((point) => {
-    const age = (now - point.at) / LASER_FADE_MS
-    return { x: point.x, y: point.y, opacity: Math.max(0, 1 - age) }
-  })
+// Laser trail rendered as a tapering, self-fading line behind the pointer (spec
+// C5, #41). Reading ui.laserClock makes this re-run on every animation frame the
+// composable ticks, so the trail keeps fading after the pointer stops. Pure
+// render of transient state — never persisted or exported. trailSegments drops
+// expired points itself, so this does not depend on the rAF prune having run
+// before the clock tick that re-ran this computed.
+const laserSegments = computed(() => {
+  const now = ui.laserClock.value || performance.now()
+  return trailSegments(ui.laserTrail.value, now).map((segment, index) => ({
+    key: index,
+    d: pointsToPath([segment.from, segment.to]),
+    opacity: segment.opacity,
+    width: segment.width,
+  }))
+})
+
+// The bright head of the pointer: the newest point, fading on the same clock as
+// the trail so a resting pointer dims out instead of blinking off.
+const laserHead = computed(() => {
+  const points = ui.laserTrail.value
+  if (!points.length) return null
+  const now = ui.laserClock.value || performance.now()
+  const point = points[points.length - 1]
+  return { x: point.x, y: point.y, opacity: Math.max(0, 1 - (now - point.at) / LASER_FADE_MS) }
 })
 </script>
 
@@ -223,16 +240,30 @@ const laserDots = computed(() => {
         style="font-family: Inter, sans-serif">👎 {{ badge.down }}</text>
     </g>
 
-    <!-- Self-fading laser trail (transient; never persisted or exported). -->
-    <circle
-      v-for="(dot, index) in laserDots"
-      :key="index"
-      :cx="dot.x"
-      :cy="dot.y"
-      :r="5"
-      fill="#E03636"
-      :fill-opacity="dot.opacity * 0.8"
-    />
+    <!-- Self-fading laser trail (transient; never persisted or exported). It takes
+         no pointer events: the trail sits under the cursor and would otherwise eat
+         the very moves that draw it. -->
+    <g style="pointer-events: none">
+      <path
+        v-for="segment in laserSegments"
+        :key="segment.key"
+        :d="segment.d"
+        fill="none"
+        :stroke="LASER_COLOR"
+        :stroke-width="segment.width"
+        :stroke-opacity="segment.opacity * 0.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+      <circle
+        v-if="laserHead"
+        :cx="laserHead.x"
+        :cy="laserHead.y"
+        :r="LASER_HEAD_RADIUS"
+        :fill="LASER_COLOR"
+        :fill-opacity="laserHead.opacity * 0.9"
+      />
+    </g>
 
     <!-- Live rubber-band marquee while dragging empty canvas (logical units). -->
     <rect
