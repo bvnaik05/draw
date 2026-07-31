@@ -5,42 +5,60 @@ import { describe, it, expect, vi } from 'vitest'
 // here, so stub the module boundary rather than booting an editor.
 vi.mock('frappe-ui', () => ({ call: () => Promise.resolve({}), toast: { error() {}, success() {} } }))
 
-const { effectiveKeyboardMode } = await import('./useKeyboard.js')
+const { keyboardOwner } = await import('./useKeyboard.js')
 const { getModeStrategy } = await import('@/stores/useModeStrategy.js')
+// Registers the mind-map handler as a side effect of import, exactly as the app
+// does. Without this the mindmap slot is still null and a mind-map document would
+// resolve to no owner — the test would pass for the wrong reason.
+await import('./useMindmapKeys.js')
 
-// The keyboard has to agree with the rest of the editor about which type is live.
-// EditorShell resolves its mode strategy as `focusedFrame || diagramType`; the
-// keyboard dispatcher read `diagramType` ALONE, and since there is no 'unified'
-// strategy (getModeStrategy falls back to block) every per-type handler was
-// unreachable on a unified document — inside a mind-map frame, nodes selected and
-// the toolbar appeared but Tab / Enter / arrows / Delete all did nothing, and those
-// keys are the only way to grow a mind map.
-const store = (diagramType) => ({ state: { diagramType } })
-const ui = (focusedFrame) => ({ state: { focusedFrame } })
+// Which per-type keyboard is live has to agree with what the user is looking at.
+// A unified document has no type of its own — getModeStrategy falls back to block,
+// whose handler is null — so on the unified canvas the owner comes from whichever
+// model holds the selection. Before that fallback existed, every per-type handler
+// was unreachable there: a mind-map node selected and its toolbar appeared, but
+// Tab / Enter / arrows / Delete did nothing, and those keys are the only way to
+// grow a mind map.
+const doc = (diagramType, extra = {}) => ({
+  state: { diagramType, selection: [], mindmap: null, flowchart: null, ...extra },
+})
 
-describe('effectiveKeyboardMode', () => {
-  it('is the document type when no frame is focused', () => {
-    expect(effectiveKeyboardMode(store('mindmap'), ui(null))).toBe('mindmap')
-    expect(effectiveKeyboardMode(store('whiteboard'), ui(null))).toBe('whiteboard')
-    expect(effectiveKeyboardMode(store('unified'), ui(null))).toBe('unified')
+const MINDMAP = { nodes: [{ id: 'n1' }, { id: 'n2' }] }
+const FLOWCHART = { nodes: [{ id: 'f1' }] }
+
+describe('keyboardOwner', () => {
+  it('is the document type for a single-type document', () => {
+    expect(keyboardOwner(doc('mindmap', { mindmap: MINDMAP }))).toBe('mindmap')
+    expect(keyboardOwner(doc('flowchart', { flowchart: FLOWCHART }))).toBe('flowchart')
+    expect(keyboardOwner(doc('whiteboard'))).toBe('whiteboard')
   })
 
-  it('is the focused frame on a unified document', () => {
-    expect(effectiveKeyboardMode(store('unified'), ui('mindmap'))).toBe('mindmap')
-    expect(effectiveKeyboardMode(store('unified'), ui('flowchart'))).toBe('flowchart')
+  it('is null for a block document, so the shared shape shortcuts apply', () => {
+    expect(keyboardOwner(doc('block', { selection: ['s1'] }))).toBeNull()
   })
 
-  it('tolerates a missing editorUi', () => {
-    expect(effectiveKeyboardMode(store('block'), undefined)).toBe('block')
+  // The regression this fallback exists for, stated as the invariant that was
+  // violated: on a unified document the keys must follow the selected node.
+  it('follows the selected node on a unified document', () => {
+    const withBoth = { mindmap: MINDMAP, flowchart: FLOWCHART }
+    expect(keyboardOwner(doc('unified', { ...withBoth, selection: ['n2'] }))).toBe('mindmap')
+    expect(keyboardOwner(doc('unified', { ...withBoth, selection: ['f1'] }))).toBe('flowchart')
   })
 
-  // The regression itself, stated as the invariant that was violated: a focused frame
-  // must resolve to that sub-model's keyboard strategy, not to block's.
-  it('resolves a focused frame to the sub-model strategy, not the block fallback', () => {
-    const focused = getModeStrategy(effectiveKeyboardMode(store('unified'), ui('mindmap')))
-    expect(focused.keyboardMode).toBe('mindmap')
+  it('is null on a unified document with nothing selected, or a plain shape selected', () => {
+    const withBoth = { mindmap: MINDMAP, flowchart: FLOWCHART }
+    expect(keyboardOwner(doc('unified', withBoth))).toBeNull()
+    expect(keyboardOwner(doc('unified', { ...withBoth, selection: ['s1'] }))).toBeNull()
+  })
 
-    // What the old code did, kept explicit so the difference is visible.
+  it('tolerates a unified document whose sub-models are absent or empty', () => {
+    expect(keyboardOwner(doc('unified', { selection: ['n1'] }))).toBeNull()
+    expect(keyboardOwner(doc('unified', { mindmap: { nodes: [] }, selection: ['n1'] }))).toBeNull()
+  })
+
+  // Kept explicit: 'unified' resolves to the BLOCK strategy, which is why the
+  // selection fallback is needed at all rather than a 'unified' keyboardMode.
+  it('resolves the unified type to the block strategy', () => {
     expect(getModeStrategy('unified').keyboardMode).toBe('block')
   })
 })

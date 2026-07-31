@@ -6,13 +6,13 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { loadDiagram } from '@/data/diagrams.js'
 import { folders } from '@/data/folders.js'
-import { parseDiagramDocument } from '@/diagram/schema.js'
+import { parseDiagramDocument, isUnifiedDocument } from '@/diagram/schema.js'
 import { createDiagramStore, provideDiagramStore } from '@/stores/useDiagramStore.js'
 import { createEditorUi, provideEditorUi } from '@/stores/useEditorUi.js'
 import { provideModeStrategy, getModeStrategy } from '@/stores/useModeStrategy.js'
 import { resetMindmapUi } from '@/stores/mindmapUi.js'
 import { provideModeInteraction } from '@/composables/useModeInteraction.js'
-import { useKeyboard } from '@/composables/useKeyboard.js'
+import { useKeyboard, keyboardOwner } from '@/composables/useKeyboard.js'
 import { useClipboard } from '@/composables/useClipboard.js'
 import { useAutosave } from '@/composables/useAutosave.js'
 import { useThumbnail } from '@/composables/useThumbnail.js'
@@ -53,6 +53,22 @@ provideEditorUi(editorUi)
 // switches into (#45).
 const modeStrategy = computed(() => getModeStrategy(store.state.diagramType))
 provideModeStrategy(modeStrategy)
+
+// Which type's editing CHROME to mount — the node toolbars and selection editors.
+//
+// This is not always the strategy's type. A unified document resolves to the BLOCK
+// strategy, so gating the chrome on `modeStrategy.type` alone left a mind map or
+// flowchart edited in place on the unified canvas with no toolbar at all: focus mode
+// used to override the whole strategy, and removing it (#45) took the chrome with it.
+//
+// On the unified canvas the chrome therefore follows whichever model holds the
+// SELECTION — the same rule the keyboard uses, so the toolbar you see and the keys
+// that work can never disagree. Mounting the overlays unconditionally instead would
+// drop their single-type empty-state prompts onto the unified canvas.
+const chromeType = computed(() => {
+  if (!isUnifiedDocument(store.state)) return modeStrategy.value.type
+  return keyboardOwner(store) || 'block'
+})
 
 // Surface-interaction delegation seam (spec diagram-types Part G1/G4). The active
 // type's interaction composable registers its handler object into this ref via
@@ -145,13 +161,13 @@ onMounted(() => {
         <DiagramCanvas />
         <Minimap />
         <WhiteboardMinimap v-if="modeStrategy.type === 'whiteboard'" />
-        <MindMapOverlay v-if="modeStrategy.type === 'mindmap'" />
-        <FlowchartOverlay v-if="modeStrategy.type === 'flowchart'" />
+        <MindMapOverlay v-if="chromeType === 'mindmap'" />
+        <FlowchartOverlay v-if="chromeType === 'flowchart'" />
         <!-- Also on the whiteboard: text/image are block shapes, so their format
              menu (font, size, colour…) is the block editor, shown when one is
              selected (S13/S14/U1). WhiteboardSelectionEditor handles board objects. -->
-        <BlockSelectionEditor v-if="modeStrategy.type === 'block' || modeStrategy.type === 'whiteboard'" />
-        <FlowchartSelectionEditor v-if="modeStrategy.type === 'flowchart'" />
+        <BlockSelectionEditor v-if="chromeType === 'block' || chromeType === 'whiteboard'" />
+        <FlowchartSelectionEditor v-if="chromeType === 'flowchart'" />
         <WhiteboardSelectionEditor v-if="modeStrategy.type === 'whiteboard'" />
         <CollaboratorCursors :collaborators="collab.collaborators.value" :set-cursor="collab.setCursor" />
         <ViewportControls />
