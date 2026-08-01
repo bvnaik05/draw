@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createDiagramStore } from './useDiagramStore.js'
 import { createDiagramDocument } from '@/diagram/schema.js'
-import { layoutMindMap } from '@/diagram/mindmapLayout.js'
+import { layoutMindMap, mindmapTreeRects } from '@/diagram/mindmapLayout.js'
+import { subtreeIds, nodeById } from '@/diagram/mindmapModel.js'
 import { flowchartContentBounds } from '@/diagram/flowchartLayout.js'
 
 // #30: inserting a mind map or flowchart placed it at the document's fixed
@@ -24,6 +25,15 @@ const flowchartRect = (state) => {
   const bbox = flowchartContentBounds(state.flowchart)
   const o = state.flowchart.origin
   return { x: o.x + bbox.x, y: o.y + bbox.y, w: bbox.w, h: bbox.h }
+}
+// Each independent tree on the map (#48): its node ids/texts and where it sits.
+const trees = (state) => {
+  const { positions } = layoutMindMap(state.mindmap)
+  const o = state.mindmap.origin
+  return mindmapTreeRects(state.mindmap, positions).map((rect) => ({
+    nodes: subtreeIds(state.mindmap, rect.rootId).map((id) => nodeById(state.mindmap, id).text),
+    rect: { x: rect.x + o.x, y: rect.y + o.y, w: rect.w, h: rect.h },
+  }))
 }
 const centreOf = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 })
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
@@ -57,15 +67,33 @@ describe('insertMindmapStarter places a new frame in the visible rect', () => {
     expect(store.state.mindmap.origin).toEqual(defaultOrigin)
   })
 
-  it('does not move an existing frame when a repeat insert grows it', () => {
+  // #48: a repeat insert used to graft "New idea" onto the existing root, so the
+  // second Add mind map edited the first map instead of making one of its own.
+  it('adds a SECOND independent tree, leaving the first one alone', () => {
     const store = unified()
     store.insertMindmapStarter(viewAround(4000, 2500))
     const placed = { ...store.state.mindmap.origin }
+    const before = trees(store.state)
 
     store.insertMindmapStarter(viewAround(-1000, -1000))
 
+    const after = trees(store.state)
+    expect(after.length).toBe(2)
+    expect(store.state.mindmap.nodes.length).toBe(6) // two roots + two branches each
+    // The first tree keeps its nodes AND its place on the canvas.
+    expect(after[0]).toEqual(before[0])
     expect(store.state.mindmap.origin).toEqual(placed)
-    expect(store.state.mindmap.nodes.length).toBe(4) // root + 2 + the added idea
+  })
+
+  it('places the second tree in the view it was inserted into, clear of the first', () => {
+    const store = unified()
+    const view = viewAround(4000, 2500)
+    store.insertMindmapStarter(view)
+    store.insertMindmapStarter(view)
+
+    const [first, second] = trees(store.state).map((t) => t.rect)
+    expect(overlaps(first, second)).toBe(false)
+    expectInsideView(second, view)
   })
 
   it('is one undo step, origin included', () => {
@@ -99,15 +127,25 @@ describe('insertFlowchartStarter places a new frame in the visible rect', () => 
     expect(store.state.flowchart.origin).toEqual(defaultOrigin)
   })
 
-  it('does not move an existing frame when a repeat insert appends a step', () => {
+  // #48: a repeat insert used to append a step to the last node and wire an edge
+  // to it, extending the chart already there instead of starting a new one.
+  it('adds a SECOND independent chart, unconnected to the first', () => {
     const store = unified()
     store.insertFlowchartStarter(viewAround(-800, 3200))
     const placed = { ...store.state.flowchart.origin }
+    const before = store.state.flowchart.nodes.map((n) => ({ ...n }))
 
     store.insertFlowchartStarter(viewAround(0, 0))
 
-    expect(store.state.flowchart.origin).toEqual(placed)
-    expect(store.state.flowchart.nodes.length).toBe(3)
+    const fc = store.state.flowchart
+    expect(fc.nodes.length).toBe(4)
+    expect(fc.edges.length).toBe(2) // one per chart, none between them
+    // The first chart's nodes are untouched, and the frame stays where it was.
+    expect(fc.nodes.slice(0, 2)).toEqual(before)
+    expect(fc.origin).toEqual(placed)
+    // The new chart sits below the old one, not on top of it.
+    const added = fc.nodes.slice(2)
+    expect(Math.min(...added.map((n) => n.y))).toBeGreaterThan(Math.max(...before.map((n) => n.y)))
   })
 })
 

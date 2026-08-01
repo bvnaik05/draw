@@ -2,7 +2,7 @@
 // outline (spec 13.5). Pure functions.
 
 import { orderedFlowNodes, stripStepNumber } from './flowchartModel.js'
-import { childrenOf } from './mindmapModel.js'
+import { childrenOf, rootNodes } from './mindmapModel.js'
 
 // A Markdown outline for the document, dispatched by type.
 export function outlineMarkdown(doc) {
@@ -12,7 +12,8 @@ export function outlineMarkdown(doc) {
   return listOutline((doc.shapes || []).map((s) => s.text?.content).filter(Boolean))
 }
 
-// Indented bullets following the tree, depth = nesting.
+// Indented bullets following the tree, depth = nesting. Every tree on the map is
+// listed, one after another (a map can hold several — #48).
 function mindmapOutline(mm) {
   const lines = []
   const walk = (id, depth) => {
@@ -21,7 +22,7 @@ function mindmapOutline(mm) {
     lines.push(`${'  '.repeat(depth)}- ${node.text || ''}`.trimEnd())
     for (const child of childrenOf(mm, id)) walk(child.id, depth + 1)
   }
-  walk(mm.rootId, 0)
+  for (const root of rootNodes(mm)) walk(root.id, 0)
   return lines.join('\n') + '\n'
 }
 

@@ -111,9 +111,20 @@ mindmap: {
 ```
 Positions derived at render time (optionally cached for thumbnails).
 
+On the **unified canvas** a `mindmap` holds one or more INDEPENDENT trees (#48):
+every parentless node is a root and carries its own `origin` (its offset within the
+map), so each Insert > Mind map adds a whole new map rather than a branch on the one
+already there. `rootId` names the FIRST root, which is what a single-tree document —
+every one saved before this — already had; the first tree's origin stays `{0,0}` and
+the map's own `origin` continues to place it. Layout anchors on the first tree, so
+adding or dragging a tree never shifts the others. Each tree is its own canvas object:
+its own select/move hit-rect, and deleting its root deletes just that map.
+
 ### A12. Edge cases & glitches to avoid
 - Block re-parenting a node into its own descendant (cycle prevention).
-- Disallow deleting the root (offer "clear map" with confirm).
+- Disallow deleting the root (offer "clear map" with confirm) — except when the map
+  holds several trees, where deleting a root removes that one map (confirmed) and the
+  last one left still clears the map.
 - Long text wraps, never overflows the pill.
 - Collapse/expand + re-layout animations must not fight auto-save (debounce until settled).
 - Deep/wide trees stay at 60fps.
@@ -144,6 +155,10 @@ Designed default style; theme presets apply coordinated colors.
 - Selecting/hovering a node reveals **"+" handles on its outgoing edge(s)** (bottom in TB).
 - Clicking "+" opens a compact **node-type picker**; choosing creates that node one level down, **auto-connects** with arrowed elbow, **auto-positions** in column/lane.
 - **Decision** exposes **multiple labeled "+" outputs** (default "Yes"/"No", editable; more addable). Branches auto-balance symmetrically.
+- On the **unified canvas**, Insert > Flowchart always seeds a NEW chart — a Start/Step
+  pair with no edge to what is already there, placed below the existing content (#48).
+  Charts share the model's single `origin`; their nodes carry free x/y and are dragged
+  individually, so a chart needs no origin of its own.
 
 ### B5. Keyboard flow-building
 Node selected: **Enter**→Process, **D**→Decision, **T**→Terminator, **I**→Input/Output (Mermaid speed, zero syntax).

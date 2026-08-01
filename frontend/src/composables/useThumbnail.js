@@ -191,7 +191,7 @@ function unifiedBody(doc) {
     const oy = num(mindmap.origin?.y)
     const { bbox } = layoutMindMap(mindmap)
     body += `<g transform="translate(${ox} ${oy})">${mindmapBody(doc).body}</g>`
-    boxes.push({ x: ox, y: oy, w: bbox.w, h: bbox.h })
+    boxes.push({ x: ox + bbox.x, y: oy + bbox.y, w: bbox.w, h: bbox.h })
   }
 
   const flowchart = doc.flowchart
@@ -247,7 +247,9 @@ function mindmapBody(doc) {
     .map((node) => mindmapLink(model, node, positions, preset))
     .join('')
   const nodes = visible.map((node) => mindmapNode(model, node, positions[node.id], preset)).join('')
-  return { viewBox: `0 0 ${bbox.w} ${bbox.h}`, body: links + nodes }
+  // bbox is anchored on the FIRST tree, so a map holding several (#48) can reach
+  // above/left of it — the viewBox has to start at the bbox, not at zero.
+  return { viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`, body: links + nodes }
 }
 
 // The node's background in its chosen shape (mirrors MindMapNodeLayer). fill and

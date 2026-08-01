@@ -5,7 +5,7 @@
 // never stored (Part G6). Built simplest-correct: a one-sided placer, applied
 // rightward and (mirrored) leftward, with the root centred between the sides.
 
-import { childrenOf, nodeById, subtreeIds } from './mindmapModel.js'
+import { childrenOf, nodeById, subtreeIds, rootNodes, treeOrigin } from './mindmapModel.js'
 import { wrapLineCount, charsPerLine } from './textMetrics.js'
 import { unionBounds } from './geometry.js'
 
@@ -47,21 +47,66 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
+// Lay out every tree on the map (#48), each around its own root and shifted by
+// that root's origin, into ONE positions map keyed by node id — so every consumer
+// (renderer, minimap, thumbnail, export) keeps reading a flat id → box map.
 export function layoutMindMap(model) {
-  if (!model || !model.rootId) return { positions: {}, bbox: { w: 0, h: 0 } }
+  const roots = rootNodes(model)
+  if (!roots.length) return { positions: {}, bbox: { x: 0, y: 0, w: 0, h: 0 } }
   const sizes = sizeNodes(model)
   const metrics = makeSubtreeMetrics(model, sizes)
   const positions = {}
-  placeRoot(model, sizes, metrics, positions)
-  return normalise(positions)
+  // The anchor is the first tree's layout BEFORE its own origin is applied, so it
+  // is fixed for a given set of nodes: moving ANY tree — the first one included —
+  // then moves only that tree (#48).
+  let anchor = null
+  for (const root of roots) {
+    const tree = {}
+    placeRoot(model, root, sizes, metrics, tree)
+    if (!anchor) anchor = bounds(Object.values(tree))
+    const origin = treeOrigin(root)
+    for (const id in tree) {
+      positions[id] = { ...tree[id], x: tree[id].x + origin.x, y: tree[id].y + origin.y }
+    }
+  }
+  return normalise(positions, anchor)
 }
 
 function sizeNodes(model) {
   const sizes = {}
   for (const node of model.nodes) {
-    sizes[node.id] = measureNodeSize(node, node.id === model.rootId)
+    // Read the node's own parent rather than isRoot()'s id lookup — this runs for
+    // every node of every layout pass, and the answer is right here.
+    sizes[node.id] = measureNodeSize(node, !node.parentId)
   }
   return sizes
+}
+
+// The laid-out boxes of one tree (collapsed descendants get no position, so they
+// are simply absent).
+function treeBoxes(model, positions, root) {
+  return subtreeIds(model, root.id)
+    .map((id) => positions[id])
+    .filter(Boolean)
+}
+
+// The padded rect each tree occupies, in the same coordinates as `positions` —
+// the canvas draws one select/move hit-rect per tree from these (#48).
+export function mindmapTreeRects(model, positions, pad = 0) {
+  const rects = []
+  for (const root of rootNodes(model)) {
+    const boxes = treeBoxes(model, positions, root)
+    if (!boxes.length) continue
+    const b = bounds(boxes)
+    rects.push({
+      rootId: root.id,
+      x: b.minX - pad,
+      y: b.minY - pad,
+      w: b.maxX - b.minX + pad * 2,
+      h: b.maxY - b.minY + pad * 2,
+    })
+  }
+  return rects
 }
 
 // Memoised subtree heights + the stacked-band height of a sibling group.
@@ -86,14 +131,14 @@ function makeSubtreeMetrics(model, sizes) {
 
 // Root centred at the origin; first-level branches split left/right (alternating
 // by order for a deterministic, roughly balanced split), each side mirrored.
-function placeRoot(model, sizes, metrics, positions) {
-  const rootSize = sizes[model.rootId]
-  positions[model.rootId] = { x: -rootSize.w / 2, y: -rootSize.h / 2, ...rootSize }
+function placeRoot(model, root, sizes, metrics, positions) {
+  const rootSize = sizes[root.id]
+  positions[root.id] = { x: -rootSize.w / 2, y: -rootSize.h / 2, ...rootSize }
 
   // Split first-level branches into sides. A branch with an explicit `side`
   // (set when it was added from a specific "+" ) goes there; the rest alternate
   // for a balanced default.
-  const branches = childrenOf(model, model.rootId)
+  const branches = childrenOf(model, root.id)
   const right = []
   const left = []
   let autoIndex = 0
@@ -189,14 +234,41 @@ function edgePoint(box, side) {
   return { x: side > 0 ? box.x + box.w : box.x, y: box.y + box.h / 2 }
 }
 
-// Shift all positions so the content's top-left is at (0,0) plus a margin, and
-// report the bounding-box size for fit-to-view.
-function normalise(positions) {
-  const bounds = unionBounds(Object.values(positions))
-  if (!bounds) return { positions, bbox: { w: 0, h: 0 } }
+// Shift all positions so the FIRST tree's top-left sits at the margin, and report
+// the bounding box of everything relative to that same anchor (x/y are 0 for a
+// single tree, and negative for a tree placed above/left of the first one).
+//
+// Anchoring on the first tree rather than on the union is what keeps trees
+// independent (#48): adding or dragging one tree leaves every other tree's
+// coordinates untouched, where a union anchor would slide them all sideways.
+function normalise(positions, anchor) {
+  const boxes = Object.values(positions)
+  if (!boxes.length) return { positions, bbox: { x: 0, y: 0, w: 0, h: 0 } }
+  const dx = PAD - anchor.minX
+  const dy = PAD - anchor.minY
   const shifted = {}
   for (const [id, box] of Object.entries(positions)) {
-    shifted[id] = { ...box, x: box.x - bounds.x + PAD, y: box.y - bounds.y + PAD }
+    shifted[id] = { ...box, x: box.x + dx, y: box.y + dy }
   }
-  return { positions: shifted, bbox: { w: bounds.w + PAD * 2, h: bounds.h + PAD * 2 } }
+  const b = bounds(Object.values(shifted))
+  return {
+    positions: shifted,
+    bbox: {
+      x: b.minX - PAD,
+      y: b.minY - PAD,
+      w: b.maxX - b.minX + PAD * 2,
+      h: b.maxY - b.minY + PAD * 2,
+    },
+  }
+}
+
+// Min/max extent of a non-empty list of boxes, in the {minX,minY,maxX,maxY} shape
+// this module's placement math reads. Delegates to unionBounds so the no-spread
+// stability fix (B7 — Math.min/max(...array) overflows the argument limit on a huge
+// map) lives in one place; callers here always pass a non-empty list.
+function bounds(boxes) {
+  const b = unionBounds(boxes)
+  return b
+    ? { minX: b.x, minY: b.y, maxX: b.x + b.w, maxY: b.y + b.h }
+    : { minX: 0, minY: 0, maxX: 0, maxY: 0 }
 }

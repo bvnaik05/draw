@@ -7,6 +7,7 @@
 
 import {
   deleteSubtree,
+  deleteTree,
   promote,
   reparent,
   reorderSibling,
@@ -35,6 +36,16 @@ export function deleteNodes(store, ids) {
   if (!ids?.length) return
   commitMindmap(store, 'Delete nodes', (model) => {
     for (const id of ids) deleteSubtree(model, id)
+  })
+}
+
+// Delete whole trees (roots included) as ONE undoable unit — how one of several
+// independent mind maps on the canvas is removed (#48). Deleting the last one
+// leaves an empty map, which is what clearMindmap produces.
+export function deleteTrees(store, rootIds) {
+  if (!rootIds?.length) return
+  commitMindmap(store, 'Delete mind map', (model) => {
+    for (const id of rootIds) deleteTree(model, id)
   })
 }
 

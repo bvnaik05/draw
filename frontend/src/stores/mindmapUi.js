@@ -10,7 +10,9 @@ export const mindmapUi = reactive({
   editingId: null, // node currently in text-edit mode (or null)
   focusId: null, // focus mode: only this node's branch is shown (or null)
   pendingLinkSource: null, // first endpoint while creating a cross-link (or null)
-  confirmDelete: null, // { ids: string[], label } awaiting an in-product confirm, or null
+  // A delete awaiting an in-product confirm, or null. One of { ids, label } (nodes
+  // with sub-branches), { trees, label } (whole mind maps, #48) or { clearAll, label }.
+  confirmDelete: null,
   // A cross-link is not a node, so it can't live in store.state.selection (which
   // holds node ids). It gets its own single-selection slot so Delete can target it.
   selectedCrosslinkId: null,

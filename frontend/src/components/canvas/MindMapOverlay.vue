@@ -15,11 +15,11 @@ import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import { useCanvasToolbarStyle } from '@/composables/useCanvasToolbarStyle.js'
 import { layoutMindMap } from '@/diagram/mindmapLayout.js'
-import { isRoot } from '@/diagram/mindmapModel.js'
+import { isRoot, rootNodes } from '@/diagram/mindmapModel.js'
 import { unionBounds } from '@/diagram/geometry.js'
 import { resolveNodeColor, nodeFill } from '@/diagram/mindmapColors.js'
 import { SWATCH_PALETTE } from '@/diagram/palette.js'
-import { deleteNodes, clearMindmap } from '@/diagram/mindmapOperations.js'
+import { deleteNodes, deleteTrees, clearMindmap } from '@/diagram/mindmapOperations.js'
 import {
   mindmapUi,
   selectedNodeId,
@@ -83,7 +83,11 @@ const borderPreview = computed(() => {
   if (!n) return '#7C7C7C'
   return n.border || resolveNodeColor(model.value, n, store.state.themePreset)
 })
-const canDelete = computed(() => selectedNodes.value.some((n) => !isRoot(model.value, n.id)))
+// A root is deletable once the map holds more than one tree — deleting it then
+// removes just that mind map (#48), not the whole canvas of them.
+const canDelete = computed(
+  () => selectedNodes.value.some((n) => !isRoot(model.value, n.id)) || rootNodes(model.value).length > 1,
+)
 
 // Combined bounding box of the selected nodes (a single node's own box when one
 // is selected), so the toolbar hovers above the whole group.
@@ -172,6 +176,10 @@ function confirmDeleteNodes() {
   if (!pending) return
   if (pending.clearAll) {
     clearMindmap(store)
+    selectNode(store, null)
+  } else if (pending.trees) {
+    // One of several independent maps on the canvas (#48) — drop that tree only.
+    deleteTrees(store, pending.trees)
     selectNode(store, null)
   } else {
     const first = model.value?.nodes.find((n) => n.id === pending.ids[0])

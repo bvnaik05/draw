@@ -3,7 +3,7 @@
 // there is nowhere to go. Layout-independent: navigation follows the tree, not
 // pixel positions, which keeps it deterministic and unit-testable.
 
-import { childrenOf, parentOf, nodeById, isRoot } from './mindmapModel.js'
+import { childrenOf, parentOf, nodeById, isRoot, rootOf } from './mindmapModel.js'
 
 // Direction is one of 'up' | 'down' | 'left' | 'right'. Left/right respect the
 // balanced two-sided layout: for a left-side node, "left" goes to its children
@@ -47,7 +47,7 @@ function parentTarget(model, node) {
 // with the on-screen position. The root (and its absence) defaults to the right.
 function isOnLeftSide(model, node) {
   let current = node
-  while (current && current.parentId && current.parentId !== model.rootId) {
+  while (current && current.parentId && !isRoot(model, current.parentId)) {
     current = parentOf(model, current.id)
   }
   if (!current || isRoot(model, current.id)) return false
@@ -55,10 +55,13 @@ function isOnLeftSide(model, node) {
 }
 
 // The side placeRoot assigns a first-level branch: explicit side honoured, the
-// rest alternate right/left by their order among the auto branches only.
+// rest alternate right/left by their order among the auto branches only. Sides
+// are read within the branch's own tree — a map can hold several (#48).
 function branchSide(model, branchId) {
+  const root = rootOf(model, branchId)
+  if (!root) return 'right'
   let autoIndex = 0
-  for (const branch of childrenOf(model, model.rootId)) {
+  for (const branch of childrenOf(model, root.id)) {
     let side
     if (branch.side === 'right' || branch.side === 'left') side = branch.side
     else side = autoIndex++ % 2 === 0 ? 'right' : 'left'

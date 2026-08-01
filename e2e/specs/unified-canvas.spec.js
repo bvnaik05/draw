@@ -232,10 +232,17 @@ test.describe('unified canvas: frames', () => {
   // therefore guaranteed to miss every node. Asserted on the persisted origin — the
   // object visibly following the cursor while nothing saves is exactly this app's
   // characteristic failure.
+  // A mind map moves PER TREE: several independent maps can sit on the canvas
+  // (#48), so the origin that moves is the dragged tree's own root, not the map's.
+  const originOf = (doc, kind) =>
+    kind === 'mindmap'
+      ? doc.mindmap.nodes.find((n) => !n.parentId).origin || { x: 0, y: 0 }
+      : doc.flowchart.origin
+
   for (const kind of ['mindmap', 'flowchart']) {
     test(`dragging a ${kind} object's margin moves it, and the move persists`, async ({ page, diagram }) => {
       const name = await diagram.open('unified', { framesInView: true })
-      const before = (await diagram.saved(name))[kind].origin
+      const before = originOf(await diagram.saved(name), kind)
 
       // Both objects draw the same dashed hit-rect; they render mind map first.
       const rect = page.locator('rect[stroke-dasharray="6 4"]').nth(kind === 'mindmap' ? 0 : 1)
@@ -255,7 +262,7 @@ test.describe('unified canvas: frames', () => {
 
       await expect
         .poll(async () => {
-          const after = (await diagram.saved(name))[kind].origin
+          const after = originOf(await diagram.saved(name), kind)
           return after.x !== before.x || after.y !== before.y
         }, {
           message: `dragging the ${kind} object did not persist a new origin`,
@@ -264,6 +271,52 @@ test.describe('unified canvas: frames', () => {
         .toBe(true)
     })
   }
+
+  // #48: inserting a second mind map / flowchart used to edit the one already on
+  // the canvas — a branch grafted onto the existing root, a step wired onto the
+  // last flowchart node — instead of adding an independent diagram beside it.
+  test('a second mind map is its own tree, not a branch of the first', async ({ page, diagram }) => {
+    const name = await diagram.open('unified', { empty: true })
+
+    await insertFrame(page, 'git-fork')
+    await expect
+      .poll(async () => (await diagram.saved(name)).mindmap.nodes.length, { timeout: 20_000 })
+      .toBe(3)
+    await insertFrame(page, 'git-fork')
+
+    await expect
+      .poll(async () => {
+        const nodes = (await diagram.saved(name)).mindmap.nodes
+        return nodes.filter((n) => !n.parentId).length
+      }, {
+        message: 'the second Add mind map grew the existing map instead of adding its own',
+        timeout: 20_000,
+      })
+      .toBe(2)
+    // Two full starters — neither one grafted onto the other.
+    expect((await diagram.saved(name)).mindmap.nodes).toHaveLength(6)
+    await expect(page.locator('rect[stroke-dasharray="6 4"]')).toHaveCount(2)
+  })
+
+  test('a second flowchart is its own chart, unconnected to the first', async ({ page, diagram }) => {
+    const name = await diagram.open('unified', { empty: true })
+
+    await insertFrame(page, 'workflow')
+    await expect
+      .poll(async () => (await diagram.saved(name)).flowchart.nodes.length, { timeout: 20_000 })
+      .toBe(2)
+    await insertFrame(page, 'workflow')
+
+    await expect
+      .poll(async () => {
+        const fc = (await diagram.saved(name)).flowchart
+        return { nodes: fc.nodes.length, edges: fc.edges.length }
+      }, {
+        message: 'the second Add flowchart extended the existing chart instead of adding its own',
+        timeout: 20_000,
+      })
+      .toEqual({ nodes: 4, edges: 2 }) // one edge per chart, none between them
+  })
 })
 
 test.describe('unified canvas: navigator', () => {
