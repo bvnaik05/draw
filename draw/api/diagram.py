@@ -91,6 +91,22 @@ def _get_readable_diagram(name: str) -> "frappe.model.document.Document":
 	raise frappe.PermissionError(_("You need access to view this diagram"))
 
 
+@frappe.whitelist()
+def get_revision(name: str) -> int:
+	"""Current stored revision of a diagram the caller may read.
+
+	Signed-in only, unlike get_diagram(): the one caller is the editor's save path,
+	and a guest never saves. The read gate below is the same one either way.
+
+	The editor calls this after a save was rejected as stale so it can retry with a
+	fresh revision. Deliberately NOT get_diagram(): re-reading the whole document
+	would overwrite the editor's own state, which in a collaborative session is
+	already the merged one (see useAutosave's stale-revision recovery).
+	"""
+	diagram = _get_readable_diagram(name)
+	return cint(diagram.revision)
+
+
 @frappe.whitelist(allow_guest=True)
 def get_public_diagram(name: str) -> dict:
 	"""Return a diagram for the read-only viewer (SPEC §9).

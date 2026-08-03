@@ -1,8 +1,9 @@
 // Debounced autosave (SPEC §8): saves the diagram document ~1.5s after the last
-// change via the whitelisted save_diagram method, revision-checked for two-tab
-// conflicts. Exposes a `status` ref ('saved' | 'saving' | 'error') and a
-// `frozen` ref consumed by EditorShell / SaveIndicator. Unsaved state is held in
-// memory and flushed on reconnect; connectivity loss freezes after ~5s.
+// change via the whitelisted save_diagram method, revision-checked for concurrent
+// writes. Exposes a `status` ref ('saved' | 'saving' | 'error') and a `frozen` ref,
+// both rendered by EditorShell → TopToolbar → SaveIndicator. Unsaved state is held
+// in memory and flushed on reconnect; connectivity loss freezes after ~5s. A
+// revision race against a connected co-editor is retried instead of freezing.
 
 import { ref, watch, onUnmounted } from 'vue'
 import { createResource } from 'frappe-ui'
@@ -10,12 +11,22 @@ import { putLocalDoc, getLocalDoc, clearLocalDoc } from '@/utils/localCache.js'
 
 const DEBOUNCE_MS = 1500
 const OFFLINE_FREEZE_MS = 5000
+const MAX_STALE_RETRIES = 3
 const LOCAL_DEBOUNCE_MS = 400 // persist to IndexedDB sooner than the server save
 
-export function useAutosave(store, diagramResource, getCrdtState = () => null) {
+export function useAutosave(
+  store,
+  diagramResource,
+  getCrdtState = () => null,
+  hasPeers = () => false,
+) {
   const status = ref('saved')
   const frozen = ref(null)
   const session = createSaveSession(store, diagramResource, status, frozen)
+  // Whether a co-editor is connected to the same Yjs room. A stale revision
+  // between two peers of that room is a save race, not a conflict — see
+  // recoverFromStaleRevision().
+  session.hasPeers = hasPeers
   // Persist the collaborative CRDT binary beside the JSON so the offline cache and
   // the server share one lineage (see useCollaboration). A getter, so the doc's
   // latest state is read at save time, not captured once.
@@ -77,6 +88,7 @@ async function maybeRestoreLocal(session, store, diagramResource, revision) {
 // last known server revision, and the offline-freeze timer.
 function createSaveSession(store, diagramResource, status, frozen) {
   const saver = createResource({ url: 'draw.api.diagram.save_diagram' })
+  const revisionReader = createResource({ url: 'draw.api.diagram.get_revision' })
   const session = {
     debounceTimer: null,
     offlineTimer: null,
@@ -86,10 +98,14 @@ function createSaveSession(store, diagramResource, status, frozen) {
     // reload). Tracked structurally so the reconnect handler doesn't have to
     // string-match the user-facing message.
     frozenReason: null,
+    // Stale-revision retries spent inside the current flush (reset per flush), so
+    // a race we keep losing stops re-sending instead of hammering the server.
+    staleRetries: 0,
   }
 
   session.revision = () => diagramResource.doc?.revision || 0
   session.diagramName = () => diagramResource.doc?.name
+  session.refreshRevision = () => refreshRevision(revisionReader, session, diagramResource)
 
   session.scheduleSave = () => scheduleSave(session, store, status, frozen)
   session.flushNow = () => flush(session, saver, diagramResource, status, frozen)
@@ -138,6 +154,10 @@ export async function flush(session, saver, diagramResource, status, frozen) {
   if (!session.pendingDocument || !session.diagramName()) return
 
   session.inFlight = true
+  // The retry budget is per flush: it exists to stop a hot loop inside this call,
+  // not to spend a session-long allowance that, once exhausted, would leave every
+  // later save failing against a revision nothing refreshes any more.
+  session.staleRetries = 0
   try {
     // Coalescing LOOP, not a recursive re-entry. An edit made while a save is in
     // flight leaves a newer pendingDocument behind, and it must reach the server
@@ -153,7 +173,15 @@ export async function flush(session, saver, diagramResource, status, frozen) {
         // Returns false once the pending document IS the one just saved.
         if (!onSaveSuccess(session, diagramResource, status, document, result)) break
       } catch (error) {
-        onSaveError(session, status, frozen, error)
+        // Read the peer state ONCE and hand the same answer to both decisions. A
+        // peer joining or leaving between the retry check and the freeze check
+        // would otherwise freeze a session that had just retried, or skip the
+        // freeze for a conflict that was decided as peerless.
+        const peered = Boolean(session.hasPeers?.())
+        // A lost revision race against a co-editor is recoverable: refresh the
+        // revision and send the same document again, rather than freezing.
+        if (await recoverFromStaleRevision(session, error, peered)) continue
+        onSaveError(session, status, frozen, error, peered)
         break // leave pendingDocument in place for a reconnect / next-edit retry
       }
     }
@@ -199,14 +227,59 @@ function onSaveSuccess(session, diagramResource, status, savedDocument, result) 
 
 // A stale revision freezes the editor for reload; a network failure starts the
 // 5s offline-freeze countdown while keeping the unsaved document in memory.
-function onSaveError(session, status, frozen, error) {
+function onSaveError(session, status, frozen, error, peered = false) {
   status.value = 'error'
   if (isStaleRevision(error)) {
+    // Only a conflict with a session we are NOT connected to freezes: it holds
+    // edits we do not have, so saving over them would lose them. A peer of our own
+    // Yjs room does not, so a race it wins just leaves this save pending for the
+    // next edit to retry — freezing there is what silently dropped everything the
+    // user drew afterwards (GitHub #171).
+    if (peered) return
     frozen.value = 'This diagram was changed elsewhere — reload.'
     session.frozenReason = 'stale'
     return
   }
   startOfflineFreeze(session, frozen)
+}
+
+// A stale revision between two peers of the SAME Yjs room is not a conflict: both
+// sides already hold the merged state, one of them simply saved first. Re-read the
+// revision and send the same document again. Freezing there (GitHub #171) killed
+// the losing peer's autosave for the rest of the page's life, so every shape they
+// drew afterwards was silently dropped.
+//
+// With no peer connected the second writer is a genuine other session whose edits
+// are NOT in our document, so this declines and the freeze stands. A refresh that
+// fails (offline, access revoked) declines too, rather than retrying blind.
+//
+// LIMIT OF `peered`: it says a peer is connected, NOT that the writer we lost to is
+// that peer. With asymmetric WebRTC (A and C in the room, B's transport blocked), B
+// can advance the revision while A retries past it, and B's edits are then overwritten
+// — where the old code would have frozen A. The invariant "we already hold their
+// edits" only holds while every concurrent writer is a connected room peer. Tightening
+// it means merging the server's crdt_state before the retry rather than trusting the
+// room, which is a larger change than this fix; the freeze it replaces dropped a
+// peer's own work unconditionally, on every ordinary collaborative session.
+async function recoverFromStaleRevision(session, error, peered) {
+  if (!isStaleRevision(error)) return false
+  if (!peered) return false
+  if (session.staleRetries >= MAX_STALE_RETRIES) return false
+  session.staleRetries += 1
+  return session.refreshRevision()
+}
+
+// Re-read the stored revision so the next save passes the freshness check. The
+// document is deliberately not re-read: ours is the merged one.
+async function refreshRevision(reader, session, diagramResource) {
+  try {
+    const revision = await reader.submit({ name: session.diagramName() })
+    if (revision == null || !diagramResource.doc) return false
+    diagramResource.doc.revision = revision
+    return true
+  } catch (error) {
+    return false
+  }
 }
 
 function isStaleRevision(error) {

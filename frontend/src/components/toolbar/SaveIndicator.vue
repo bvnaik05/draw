@@ -3,14 +3,23 @@
 // autosave status: green check "Saved" at rest, a spinning loader "Saving…"
 // during the ~1.5s debounce, and a red warning if a save fails. Green check is
 // the only functional color here; everything else is neutral chrome.
+//
+// `message` is autosave's freeze reason ("changed elsewhere — reload", "you're
+// offline"). It wins over the status label: a frozen editor still accepts every
+// edit, so "Save failed" alone left the user with no idea their work had stopped
+// being kept, or what to do about it (GitHub #171).
 import { computed } from 'vue'
 import LucideIcon from '@/icons/LucideIcon.vue'
 
 const props = defineProps({
   status: { type: String, default: 'saved' },
+  message: { type: String, default: '' },
 })
 
 const meta = computed(() => {
+  if (props.message) {
+    return { label: props.message, icon: 'alert-circle', tone: 'text-red-600', spin: false }
+  }
   if (props.status === 'saving') {
     return { label: 'Saving…', icon: 'loader', tone: 'text-ink-gray-5', spin: true }
   }
@@ -28,6 +37,6 @@ const meta = computed(() => {
       class="h-3.5 w-3.5"
       :class="[meta.tone, { 'animate-spin': meta.spin }]"
     />
-    <span>{{ meta.label }}</span>
+    <span class="max-w-64 truncate" :title="meta.label">{{ meta.label }}</span>
   </div>
 </template>

@@ -167,6 +167,126 @@ describe('flush', () => {
   })
 })
 
+// Regression tests for the stale-revision recovery (GitHub #171).
+//
+// Both peers of a Yjs room run their own autosave loop, so whichever saves second
+// loses the revision race and gets a 417. Freezing there stopped that peer from
+// ever saving again for the life of the page — the canvas stayed fully editable,
+// so everything drawn afterwards was silently dropped. A race against a connected
+// peer holds no edits we don't already have, so it is retried; a conflict with no
+// peer connected is a genuine second session and still freezes.
+const STALE_ERROR = { exc_type: 'StaleRevisionError' }
+
+function staleHarness({ peers = true, staleCalls = 1, refreshOk = true } = {}) {
+  const payloads = []
+  const diagramResource = { doc: { name: 'diagram-1', revision: 1 } }
+  const session = {
+    pendingDocument: null,
+    inFlight: false,
+    staleRetries: 0,
+    revision: () => diagramResource.doc.revision,
+    diagramName: () => 'diagram-1',
+    hasPeers: vi.fn(() => peers),
+    refreshRevision: vi.fn(async () => {
+      if (!refreshOk) return false
+      diagramResource.doc.revision += 1 // the peer's save moved it on
+      return true
+    }),
+  }
+  const saver = {
+    submit: vi.fn(async (payload) => {
+      payloads.push(payload)
+      if (payloads.length <= staleCalls) throw STALE_ERROR
+      return { revision: diagramResource.doc.revision + 1 }
+    }),
+  }
+  const status = ref('saving')
+  const frozen = ref(null)
+  session.flushNow = () => flush(session, saver, diagramResource, status, frozen)
+  return { session, diagramResource, status, frozen, payloads, saver }
+}
+
+describe('flush on a stale revision', () => {
+  it('retries the same document with a refreshed revision while a peer is connected', async () => {
+    const h = staleHarness()
+    h.session.pendingDocument = { shapes: ['a'] }
+
+    await h.session.flushNow()
+
+    expect(h.payloads.map((p) => p.revision), 'the retry reused the stale revision').toEqual([1, 2])
+    expect(JSON.parse(h.payloads[1].document)).toEqual({ shapes: ['a'] })
+    expect(h.frozen.value, 'a peer save race must not freeze the session').toBeNull()
+    expect(h.status.value).toBe('saved')
+    expect(h.session.pendingDocument).toBeNull()
+  })
+
+  it('freezes when no peer is connected — that is a real second session', async () => {
+    const h = staleHarness({ peers: false })
+    h.session.pendingDocument = { shapes: ['a'] }
+
+    await h.session.flushNow()
+
+    expect(h.saver.submit).toHaveBeenCalledTimes(1)
+    expect(h.session.refreshRevision).not.toHaveBeenCalled()
+    expect(h.frozen.value).toBe('This diagram was changed elsewhere — reload.')
+    expect(h.session.frozenReason).toBe('stale')
+    expect(h.status.value).toBe('error')
+  })
+
+  it('does not retry blind when the revision re-read fails', async () => {
+    const h = staleHarness({ refreshOk: false })
+    h.session.pendingDocument = { shapes: ['a'] }
+
+    await h.session.flushNow()
+
+    // Re-sending at the same revision would just fail again; wait for the next edit.
+    expect(h.saver.submit).toHaveBeenCalledTimes(1)
+    expect(h.status.value).toBe('error')
+    expect(h.session.pendingDocument).toEqual({ shapes: ['a'] })
+  })
+
+  it('stops retrying within one flush, but never freezes while a peer is connected', async () => {
+    const h = staleHarness({ staleCalls: Infinity })
+    h.session.pendingDocument = { shapes: ['a'] }
+
+    await h.session.flushNow()
+
+    expect(h.saver.submit, 'the first save plus three retries').toHaveBeenCalledTimes(4)
+    expect(h.frozen.value, 'a frozen session never saves again — that is the bug').toBeNull()
+    expect(h.status.value).toBe('error')
+    expect(h.session.pendingDocument).toEqual({ shapes: ['a'] })
+  })
+
+  it('decides retry-or-freeze from ONE peer reading per failed save', async () => {
+    // Two independent readings (one for the retry, one for the freeze) let a peer
+    // leaving in between freeze a session that had just retried, and a peer joining
+    // in between swallow a freeze that should have fired.
+    const h = staleHarness({ staleCalls: Infinity })
+    h.session.pendingDocument = { shapes: ['a'] }
+
+    await h.session.flushNow()
+
+    expect(h.saver.submit).toHaveBeenCalledTimes(4)
+    expect(h.session.hasPeers, 'peer state was read twice for one save').toHaveBeenCalledTimes(4)
+  })
+
+  it('spends a FRESH retry budget on the next flush, so an edit can still recover', async () => {
+    // The budget is per flush on purpose: a session-long allowance, once spent,
+    // leaves every later save failing against a revision nothing refreshes.
+    const h = staleHarness({ staleCalls: 5 })
+    h.session.pendingDocument = { shapes: ['a'] }
+
+    await h.session.flushNow() // 4 attempts, all stale
+    expect(h.session.pendingDocument).toEqual({ shapes: ['a'] })
+
+    await h.session.flushNow() // the user's next edit flushes again
+
+    expect(h.saver.submit).toHaveBeenCalledTimes(6)
+    expect(h.status.value, 'the 6th attempt was accepted').toBe('saved')
+    expect(h.session.pendingDocument).toBeNull()
+  })
+})
+
 // Regression tests for the offline-freeze recovery (finding D3).
 //
 // An offline save failure freezes the editor after ~5s. The 'online' handler exists
