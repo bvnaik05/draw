@@ -107,7 +107,14 @@ const collab = useCollaboration(
   () => diagram.doc?.crdt_state || null,
   () => diagram.doc?.document || null,
 )
-const autosave = useAutosave(store, diagram, collab.snapshot)
+// The peer getter lets autosave tell a save race against a co-editor (retry — we
+// hold their edits already, via Yjs) from a genuine second session (freeze).
+const autosave = useAutosave(
+  store,
+  diagram,
+  collab.snapshot,
+  () => collab.collaborators.value.length > 0,
+)
 const thumbnail = useThumbnail(store, diagram)
 useKeyboard(store, editorUi)
 useClipboard(store)
@@ -163,6 +170,7 @@ onMounted(() => {
     <TopToolbar
       :title="diagram.doc?.title || 'Untitled diagram'"
       :save-status="autosave.status.value"
+      :save-message="autosave.frozen.value || ''"
       @update:title="rename"
     />
 

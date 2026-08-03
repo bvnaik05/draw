@@ -18,6 +18,8 @@ import PresenceAvatars from './PresenceAvatars.vue'
 defineProps({
   title: { type: String, default: 'Untitled diagram' },
   saveStatus: { type: String, default: 'saved' },
+  // Autosave's freeze reason, when it is frozen — shown in place of the status.
+  saveMessage: { type: String, default: '' },
 })
 const emit = defineEmits(['update:title'])
 
@@ -51,7 +53,7 @@ function goHome() {
     <!-- Current diagram — the editable last crumb. -->
     <TitleEditor ref="titleEditor" :title="title" @update:title="emit('update:title', $event)" />
 
-    <SaveIndicator :status="saveStatus" />
+    <SaveIndicator :status="saveStatus" :message="saveMessage" />
 
     <div class="ml-auto flex items-center gap-2">
       <ExportMenu />

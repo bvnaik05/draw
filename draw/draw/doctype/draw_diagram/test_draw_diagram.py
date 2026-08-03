@@ -797,6 +797,29 @@ class TestDrawDiagram(IntegrationTestCase):
 		# Re-using the now-stale revision is the conflict case.
 		self.assertRaises(StaleRevisionError, save_diagram, doc.name, body, stale_rev)
 
+	def test_get_revision_lets_a_rejected_save_retry(self):
+		# Two peers of one collaborative session each autosave, so one of them loses the
+		# revision race every time. It recovers by re-reading the revision and sending
+		# the SAME document again — freezing instead killed that peer's autosave for the
+		# rest of the session (GitHub #171). get_revision is the read that unblocks it;
+		# it deliberately returns only the number, never the stored document, which
+		# would clobber the peer's already-merged state.
+		from draw.api.diagram import StaleRevisionError, get_revision, save_diagram
+
+		doc = self._make("block", {"schemaVersion": 1, "diagramType": "block"})
+		stale_rev = frappe.db.get_value("Draw Diagram", doc.name, "revision")
+		body = json.dumps({"schemaVersion": 1, "diagramType": "block", "shapes": [{"id": "s1"}]})
+
+		save_diagram(doc.name, body, stale_rev)  # the peer's save moves the revision on
+		self.assertRaises(StaleRevisionError, save_diagram, doc.name, body, stale_rev)
+
+		fresh_rev = get_revision(doc.name)
+		self.assertGreater(fresh_rev, stale_rev)
+		# The retry at the refreshed revision is accepted, and our document is stored.
+		save_diagram(doc.name, body, fresh_rev)
+		stored = frappe.db.get_value("Draw Diagram", doc.name, "document")
+		self.assertEqual(json.loads(stored), json.loads(body))
+
 	# ----- collaborative CRDT state (Writer-style shared lineage) -----
 
 	def test_save_diagram_persists_crdt_state(self):
