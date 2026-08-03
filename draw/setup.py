@@ -22,6 +22,41 @@ def ensure_setup(*args, **kwargs) -> None:
 	frappe.clear_cache()
 
 
+def grant_draw_user_role(user: str) -> None:
+	"""Give `user` the owner-scoped Draw User role so they can use Draw without an
+	operator having to fall back to System Manager — for whom `query_conditions`
+	returns "" (full access), which is the leak behind GitHub #73.
+
+	Called lazily from the Draw SPA boot (draw/www/draw.py) for whoever opens
+	Draw, and by the back-fill patch for existing System Users. It is deliberately
+	NOT wired to User `after_insert`: that fires for every app's signups and would
+	promote unrelated Website / portal users on a multi-app bench to desk (System)
+	users.
+
+	Guarded end to end: skips Guest / Administrator / disabled / existing holders /
+	System Managers, and never raises (so it can't break a page load). Saves with
+	`ignore_permissions` because the caller is usually the unprivileged user
+	themselves, who may not edit their own roles. The role is created by
+	`ensure_setup` (after_install / after_migrate), so it always exists by the time
+	this runs; granting an existing role is a no-op.
+	"""
+	try:
+		if user in ("Guest", "Administrator"):
+			return
+		if not frappe.db.get_value("User", user, "enabled"):
+			return
+		roles = set(frappe.get_roles(user))
+		# System Managers already see everything, so the owner-scoped role is
+		# pointless for them; and re-granting an existing role is wasted work.
+		if ROLE in roles or "System Manager" in roles:
+			return
+		user_doc = frappe.get_doc("User", user)
+		user_doc.append_roles(ROLE)
+		user_doc.save(ignore_permissions=True)
+	except Exception:
+		frappe.log_error(title=f"Draw: could not grant {ROLE} role")
+
+
 def _ensure_role() -> None:
 	"""Create the Draw User role idempotently (desk-enabled, normal users get it)."""
 	if frappe.db.exists("Role", ROLE):

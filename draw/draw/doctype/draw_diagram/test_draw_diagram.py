@@ -42,8 +42,9 @@ class TestDrawDiagram(IntegrationTestCase):
 	# ----- Writer-style sharing (view / comment / edit) -----
 
 	def _user(self, email):
-		# Deliberately NO Draw-specific role — this proves DocShare alone grants
-		# access to a shared diagram, independent of any role permission.
+		# A real, enabled user with NO Draw-specific role (the role is granted only
+		# when a user actually opens Draw). The sharing tests below thus prove that
+		# DocShare alone grants access to a shared diagram, independent of any role.
 		if not frappe.db.exists("User", email):
 			frappe.get_doc(
 				{
@@ -55,6 +56,23 @@ class TestDrawDiagram(IntegrationTestCase):
 			).insert(ignore_permissions=True)
 			self.addCleanup(lambda: frappe.delete_doc("User", email, force=True, ignore_permissions=True))
 		return email
+
+	def _private_diagram_owned_by(self, user, title="Private diagram"):
+		# A private (not public, not shared) diagram owned by `user`. The insert runs
+		# in the Administrator test session, and Document.set_user_and_timestamp
+		# stamps owner = session.user (overriding any owner passed in), so pin the
+		# intended owner in the db afterwards — the list query keys off owner.
+		doc = frappe.get_doc(
+			{
+				"doctype": "Draw Diagram",
+				"title": title,
+				"diagram_type": "block",
+				"document": json.dumps({"schemaVersion": 1, "diagramType": "block"}),
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("Draw Diagram", doc.name, "owner", user)
+		self.addCleanup(lambda: frappe.delete_doc("Draw Diagram", doc.name, force=True, ignore_permissions=True))
+		return doc
 
 	def test_share_edit_grants_read_write_comment(self):
 		from draw.api.share import get_diagram_shares, share_diagram
@@ -489,6 +507,126 @@ class TestDrawDiagram(IntegrationTestCase):
 
 			# Not readable → not even the existence of a collab room is disclosed.
 			self.assertRaises(frappe.PermissionError, get_collab_room, doc.name)
+		finally:
+			frappe.set_user("Administrator")
+
+	# ----- lazy grant of the Draw User role on Draw access (GitHub #73) -----
+
+	def test_opening_draw_grants_the_role_to_a_user_who_lacks_it(self):
+		# The root-cause fix: a real user who opens the Draw SPA is lazily given the
+		# Draw User role, so an operator is never forced to use System Manager (whose
+		# unrestricted list query is the #73 leak).
+		from draw.www.draw import get_context
+
+		user = self._user("draw-boot-73@example.com")
+		self.assertNotIn("Draw User", frappe.get_roles(user))
+
+		frappe.set_user(user)
+		try:
+			get_context(frappe._dict())  # simulate the user opening /draw
+		finally:
+			frappe.set_user("Administrator")
+
+		self.assertIn("Draw User", frappe.get_roles(user))
+
+	def test_merely_creating_a_user_does_not_grant_the_role(self):
+		# The broad User after_insert grant was removed: creating a user (e.g. a
+		# Website / portal user of another app on this bench) must NOT get Draw User.
+		# Only opening Draw grants it, so unrelated users are never promoted to desk.
+		user = self._user("draw-never-opened-73@example.com")
+		self.assertNotIn("Draw User", frappe.get_roles(user))
+
+	def test_system_accounts_are_never_granted_the_role(self):
+		# Administrator (already all-powerful) and Guest must never get an explicit
+		# Draw User grant. Checked at the Has Role row level, because get_roles()
+		# reports every role for Administrator regardless.
+		from draw.setup import grant_draw_user_role
+
+		for account in ("Administrator", "Guest"):
+			grant_draw_user_role(account)
+			self.assertFalse(
+				frappe.db.exists("Has Role", {"parent": account, "role": "Draw User"}),
+				f"{account} must never be granted the Draw User role",
+			)
+
+	def test_disabled_user_is_not_granted_the_role(self):
+		# A disabled login cannot use Draw, so the grant guard skips it.
+		from draw.setup import grant_draw_user_role
+
+		email = "draw-disabled-grant@example.com"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "disabled",
+					"enabled": 0,
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True)
+			self.addCleanup(lambda: frappe.delete_doc("User", email, force=True, ignore_permissions=True))
+
+		grant_draw_user_role(email)
+		self.assertNotIn("Draw User", frappe.get_roles(email))
+
+	def test_backfill_grants_system_users_only_and_is_idempotent(self):
+		# The back-fill covers users that pre-date the lazy grant, but ONLY existing
+		# System users — never Website / portal users — and must be safe on every
+		# migrate.
+		from draw.patches.v0_0.grant_draw_user_role import execute
+
+		system_user = self._user("draw-backfill-sys-73@example.com")
+		frappe.db.set_value("User", system_user, "user_type", "System User")
+		website_user = self._user("draw-backfill-web-73@example.com")  # stays Website User
+		self.assertNotIn("Draw User", frappe.get_roles(system_user))
+		self.assertNotIn("Draw User", frappe.get_roles(website_user))
+
+		execute()
+		self.assertIn("Draw User", frappe.get_roles(system_user))
+		self.assertNotIn(
+			"Draw User",
+			frappe.get_roles(website_user),
+			"the back-fill must never touch Website / portal users",
+		)
+		self.assertEqual(frappe.db.count("Has Role", {"parent": system_user, "role": "Draw User"}), 1)
+
+		execute()  # a second run must not duplicate the grant
+		self.assertEqual(frappe.db.count("Has Role", {"parent": system_user, "role": "Draw User"}), 1)
+
+	def test_two_draw_users_cannot_see_each_others_private_diagrams(self):
+		# #73 reinforced from the role angle: two users who hold ONLY the Draw User
+		# role (granted on Draw access, no System Manager) each own a private diagram,
+		# and neither appears in the other's list — in both directions.
+		from draw.setup import grant_draw_user_role
+
+		alice = self._user("draw-alice-73@example.com")
+		bob = self._user("draw-bob-73@example.com")
+		for u in (alice, bob):
+			# A real Draw user is a desk user; make them one BEFORE granting so the
+			# role-add is clean and does not flip user_type (which via set_system_user
+			# would call clear_sessions). The Website->desk first-visit rotation stays
+			# covered by test_opening_draw_grants_the_role_to_a_user_who_lacks_it.
+			frappe.db.set_value("User", u, "user_type", "System User")
+			grant_draw_user_role(u)
+			self.assertIn("Draw User", frappe.get_roles(u))
+			self.assertNotIn("System Manager", frappe.get_roles(u))
+
+		alice_doc = self._private_diagram_owned_by(alice, "Alice private")
+		bob_doc = self._private_diagram_owned_by(bob, "Bob private")
+
+		frappe.set_user(alice)
+		try:
+			visible = {d.name for d in frappe.get_list("Draw Diagram", filters={"is_trashed": 0})}
+			self.assertIn(alice_doc.name, visible)
+			self.assertNotIn(bob_doc.name, visible, "another user's private diagram leaked into the list")
+		finally:
+			frappe.set_user("Administrator")
+
+		frappe.set_user(bob)
+		try:
+			visible = {d.name for d in frappe.get_list("Draw Diagram", filters={"is_trashed": 0})}
+			self.assertIn(bob_doc.name, visible)
+			self.assertNotIn(alice_doc.name, visible, "another user's private diagram leaked into the list")
 		finally:
 			frappe.set_user("Administrator")
 
