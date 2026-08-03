@@ -173,10 +173,15 @@ export async function flush(session, saver, diagramResource, status, frozen) {
         // Returns false once the pending document IS the one just saved.
         if (!onSaveSuccess(session, diagramResource, status, document, result)) break
       } catch (error) {
+        // Read the peer state ONCE and hand the same answer to both decisions. A
+        // peer joining or leaving between the retry check and the freeze check
+        // would otherwise freeze a session that had just retried, or skip the
+        // freeze for a conflict that was decided as peerless.
+        const peered = Boolean(session.hasPeers?.())
         // A lost revision race against a co-editor is recoverable: refresh the
         // revision and send the same document again, rather than freezing.
-        if (await recoverFromStaleRevision(session, error)) continue
-        onSaveError(session, status, frozen, error)
+        if (await recoverFromStaleRevision(session, error, peered)) continue
+        onSaveError(session, status, frozen, error, peered)
         break // leave pendingDocument in place for a reconnect / next-edit retry
       }
     }
@@ -222,7 +227,7 @@ function onSaveSuccess(session, diagramResource, status, savedDocument, result) 
 
 // A stale revision freezes the editor for reload; a network failure starts the
 // 5s offline-freeze countdown while keeping the unsaved document in memory.
-function onSaveError(session, status, frozen, error) {
+function onSaveError(session, status, frozen, error, peered = false) {
   status.value = 'error'
   if (isStaleRevision(error)) {
     // Only a conflict with a session we are NOT connected to freezes: it holds
@@ -230,7 +235,7 @@ function onSaveError(session, status, frozen, error) {
     // Yjs room does not, so a race it wins just leaves this save pending for the
     // next edit to retry — freezing there is what silently dropped everything the
     // user drew afterwards (GitHub #171).
-    if (session.hasPeers?.()) return
+    if (peered) return
     frozen.value = 'This diagram was changed elsewhere — reload.'
     session.frozenReason = 'stale'
     return
@@ -247,9 +252,18 @@ function onSaveError(session, status, frozen, error) {
 // With no peer connected the second writer is a genuine other session whose edits
 // are NOT in our document, so this declines and the freeze stands. A refresh that
 // fails (offline, access revoked) declines too, rather than retrying blind.
-async function recoverFromStaleRevision(session, error) {
+//
+// LIMIT OF `peered`: it says a peer is connected, NOT that the writer we lost to is
+// that peer. With asymmetric WebRTC (A and C in the room, B's transport blocked), B
+// can advance the revision while A retries past it, and B's edits are then overwritten
+// — where the old code would have frozen A. The invariant "we already hold their
+// edits" only holds while every concurrent writer is a connected room peer. Tightening
+// it means merging the server's crdt_state before the retry rather than trusting the
+// room, which is a larger change than this fix; the freeze it replaces dropped a
+// peer's own work unconditionally, on every ordinary collaborative session.
+async function recoverFromStaleRevision(session, error, peered) {
   if (!isStaleRevision(error)) return false
-  if (!session.hasPeers?.()) return false
+  if (!peered) return false
   if (session.staleRetries >= MAX_STALE_RETRIES) return false
   session.staleRetries += 1
   return session.refreshRevision()

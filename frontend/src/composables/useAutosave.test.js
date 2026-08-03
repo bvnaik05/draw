@@ -186,7 +186,7 @@ function staleHarness({ peers = true, staleCalls = 1, refreshOk = true } = {}) {
     staleRetries: 0,
     revision: () => diagramResource.doc.revision,
     diagramName: () => 'diagram-1',
-    hasPeers: () => peers,
+    hasPeers: vi.fn(() => peers),
     refreshRevision: vi.fn(async () => {
       if (!refreshOk) return false
       diagramResource.doc.revision += 1 // the peer's save moved it on
@@ -255,6 +255,19 @@ describe('flush on a stale revision', () => {
     expect(h.frozen.value, 'a frozen session never saves again — that is the bug').toBeNull()
     expect(h.status.value).toBe('error')
     expect(h.session.pendingDocument).toEqual({ shapes: ['a'] })
+  })
+
+  it('decides retry-or-freeze from ONE peer reading per failed save', async () => {
+    // Two independent readings (one for the retry, one for the freeze) let a peer
+    // leaving in between freeze a session that had just retried, and a peer joining
+    // in between swallow a freeze that should have fired.
+    const h = staleHarness({ staleCalls: Infinity })
+    h.session.pendingDocument = { shapes: ['a'] }
+
+    await h.session.flushNow()
+
+    expect(h.saver.submit).toHaveBeenCalledTimes(4)
+    expect(h.session.hasPeers, 'peer state was read twice for one save').toHaveBeenCalledTimes(4)
   })
 
   it('spends a FRESH retry budget on the next flush, so an edit can still recover', async () => {
