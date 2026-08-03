@@ -90,21 +90,20 @@ def _owner_permission_flags(doctype: str) -> dict:
 
 
 def _ensure_owner_permission(doctype: str) -> None:
-	"""Add an if_owner perm row for Draw User on the given doctype, or bring an
-	existing one up to date with the rights the app now needs."""
+	"""Add an if_owner perm row for Draw User on the given doctype, or grant
+	`comment` on a row that predates it."""
 	flags = _owner_permission_flags(doctype)
+	fields = ["name", "comment"] if flags.get("comment") else ["name"]
 	row = frappe.db.get_value(
-		"Custom DocPerm",
-		{"parent": doctype, "role": ROLE, "if_owner": 1},
-		["name", *flags],
-		as_dict=True,
+		"Custom DocPerm", {"parent": doctype, "role": ROLE, "if_owner": 1}, fields, as_dict=True
 	)
 	if row:
-		# A site set up before a right was added keeps its old row, so back-fill the
-		# missing flags instead of returning — rights are only ever added here.
-		missing = {key: 1 for key in flags if not row.get(key)}
-		if missing:
-			frappe.db.set_value("Custom DocPerm", row.name, missing)
+		# A site set up before `comment` was granted keeps its old row, so top up
+		# that one flag instead of returning. Only that flag: the standard rights
+		# are left as the site has them, so an operator who deliberately cleared one
+		# does not get it handed back on the next migrate.
+		if flags.get("comment") and not row.comment:
+			frappe.db.set_value("Custom DocPerm", row.name, "comment", 1)
 		return
 	frappe.get_doc(
 		{
