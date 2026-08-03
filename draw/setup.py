@@ -16,9 +16,11 @@ def ensure_setup(*args, **kwargs) -> None:
 	"""Create the Draw User role + owner-scoped perms and register the diagram
 	"comment" permission type. Safe to run repeatedly."""
 	_ensure_role()
+	# The permission type first: it adds the `comment` field to Custom DocPerm, and
+	# the perm row below is written with that flag set.
+	_ensure_comment_permission_type()
 	for doctype in OWNED_DOCTYPES:
 		_ensure_owner_permission(doctype)
-	_ensure_comment_permission_type()
 	frappe.clear_cache()
 
 
@@ -66,9 +68,43 @@ def _ensure_role() -> None:
 	)
 
 
+def _has_comment_permission_type(doctype: str) -> bool:
+	"""Whether the custom "comment" permission type is registered for `doctype`.
+	False on Frappe versions that have no Permission Type doctype at all."""
+	if not frappe.db.exists("DocType", "Permission Type"):
+		return False
+	return bool(frappe.db.exists("Permission Type", {"doc_type": doctype, "perm_type": "comment"}))
+
+
+def _owner_permission_flags(doctype: str) -> dict:
+	"""The rights the Draw User if_owner row grants on `doctype`.
+
+	`comment` comes with the custom permission type (GitHub #172): sharing at the
+	comment / edit level sets the DocShare `comment` flag, and Frappe only lets you
+	grant a right you hold yourself (`frappe.share.check_share_permission`). Without
+	it, only Administrator could invite anyone to comment on or co-edit a diagram."""
+	flags = {"read": 1, "write": 1, "create": 1, "delete": 1, "share": 1}
+	if _has_comment_permission_type(doctype):
+		flags["comment"] = 1
+	return flags
+
+
 def _ensure_owner_permission(doctype: str) -> None:
-	"""Add an if_owner perm row for Draw User on the given doctype if missing."""
-	if frappe.db.exists("Custom DocPerm", {"parent": doctype, "role": ROLE, "if_owner": 1}):
+	"""Add an if_owner perm row for Draw User on the given doctype, or bring an
+	existing one up to date with the rights the app now needs."""
+	flags = _owner_permission_flags(doctype)
+	row = frappe.db.get_value(
+		"Custom DocPerm",
+		{"parent": doctype, "role": ROLE, "if_owner": 1},
+		["name", *flags],
+		as_dict=True,
+	)
+	if row:
+		# A site set up before a right was added keeps its old row, so back-fill the
+		# missing flags instead of returning — rights are only ever added here.
+		missing = {key: 1 for key in flags if not row.get(key)}
+		if missing:
+			frappe.db.set_value("Custom DocPerm", row.name, missing)
 		return
 	frappe.get_doc(
 		{
@@ -78,11 +114,7 @@ def _ensure_owner_permission(doctype: str) -> None:
 			"parentfield": "permissions",
 			"role": ROLE,
 			"if_owner": 1,
-			"read": 1,
-			"write": 1,
-			"create": 1,
-			"delete": 1,
-			"share": 1,
+			**flags,
 		}
 	).insert(ignore_permissions=True)
 
@@ -93,7 +125,7 @@ def _ensure_comment_permission_type() -> None:
 	the doctype's perm rules. No-ops on Frappe versions without Permission Type."""
 	if not frappe.db.exists("DocType", "Permission Type"):
 		return
-	if frappe.db.exists("Permission Type", {"doc_type": "Draw Diagram", "perm_type": "comment"}):
+	if _has_comment_permission_type("Draw Diagram"):
 		return
 	frappe.get_doc(
 		{"doctype": "Permission Type", "doc_type": "Draw Diagram", "perm_type": "comment"}
