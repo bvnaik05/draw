@@ -126,6 +126,35 @@ class TestDrawDiagram(IntegrationTestCase):
 		self.assertEqual(row["level"], "edit")
 		self.assertTrue(row["can_edit"])
 
+	def test_owner_can_share_at_comment_and_edit_level(self):
+		# GitHub #172: the comment and edit tiers set the DocShare `comment` flag, and
+		# Frappe refuses to grant a right the sharer does not hold themselves. Every
+		# sharing test above runs as Administrator, who holds everything — a plain
+		# diagram owner has to be able to do it too, or the app's own co-editing
+		# invite is unusable for everyone but the site's admin.
+		from draw.api.share import get_diagram_shares, share_diagram
+		from draw.setup import ROLE, ensure_setup
+
+		# Also covers the back-fill: a site set up before this fix already has the
+		# perm row, so a repeat run has to add the missing flag rather than no-op.
+		ensure_setup()
+		owner = self._user("draw-sharer@example.com")
+		frappe.get_doc("User", owner).add_roles(ROLE)
+		collaborator = self._user("draw-invitee@example.com")
+		# One diagram per level, as in the bug report.
+		docs = {level: self._private_diagram_owned_by(owner, level) for level in ("comment", "edit")}
+
+		frappe.set_user(owner)
+		try:
+			for level, doc in docs.items():
+				self.assertTrue(frappe.has_permission("Draw Diagram", "comment", doc=doc.name))
+				share_diagram(doc.name, collaborator, level)
+				row = next(s for s in get_diagram_shares(doc.name) if s["user"] == collaborator)
+				self.assertEqual(row["level"], level)
+				self.assertTrue(row["comment"])
+		finally:
+			frappe.set_user("Administrator")
+
 	# ----- general access tiers (GitHub #106) -----
 
 	def _read_as(self, user, name):
