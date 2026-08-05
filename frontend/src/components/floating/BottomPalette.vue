@@ -201,10 +201,19 @@ function endTileDrag(close) {
   close?.()
 }
 
-const modes = [
-  { tool: 'select', icon: 'mouse-pointer', label: 'Select' },
-  { tool: 'hand', icon: 'hand', label: 'Hand' },
-]
+// Select and Hand are merged into one toggle (#238): the icon reflects whichever
+// mode is currently active, and the tooltip names the mode a click switches to
+// (mirroring flowFlip's "Switch to …" wording below). The underlying tool value
+// stays literally 'select' or 'hand' — DiagramCanvas/useKeyboard read those directly.
+const pointerMode = computed(() =>
+  editorUi.state.tool === 'hand'
+    ? { icon: 'hand', label: 'Switch to Select' }
+    : { icon: 'mouse-pointer', label: 'Switch to Hand' },
+)
+function togglePointerTool() {
+  editorUi.setTool(editorUi.state.tool === 'hand' ? 'select' : 'hand')
+}
+const isPointerToolActive = computed(() => editorUi.state.tool === 'select' || editorUi.state.tool === 'hand')
 
 // Mode-specific tool seam (spec diagram-types C6): a strategy may declare extra
 // pointer modes. None today beyond whiteboard's, which render via WhiteboardTools.
@@ -233,12 +242,12 @@ const tileBase = 'flex h-9 w-9 items-center justify-center rounded-md hover:bg-s
          side clusters keep the "+" in the middle (#90). -->
     <template v-if="isCreateCanvas">
       <div class="flex flex-1 basis-0 items-center justify-end gap-1">
-        <Tooltip v-for="mode in modes" :key="mode.tool" :text="mode.label">
+        <Tooltip :text="pointerMode.label">
           <button
-            :class="[buttonBase, toggleClass(editorUi.state.tool === mode.tool)]"
-            @click="editorUi.setTool(mode.tool)"
+            :class="[buttonBase, toggleClass(isPointerToolActive)]"
+            @click="togglePointerTool"
           >
-            <LucideIcon :name="mode.icon" class="h-4 w-4" />
+            <LucideIcon :name="pointerMode.icon" class="h-4 w-4" />
           </button>
         </Tooltip>
       </div>
@@ -364,12 +373,12 @@ const tileBase = 'flex h-9 w-9 items-center justify-center rounded-md hover:bg-s
     <!-- LEGACY single-type docs (mind map / flowchart / whiteboard): their own
          pointer modes + map/tool actions + guides, unchanged. -->
     <template v-else>
-      <Tooltip v-for="mode in modes" :key="mode.tool" :text="mode.label">
+      <Tooltip :text="pointerMode.label">
         <button
-          :class="[buttonBase, toggleClass(editorUi.state.tool === mode.tool)]"
-          @click="editorUi.setTool(mode.tool)"
+          :class="[buttonBase, toggleClass(isPointerToolActive)]"
+          @click="togglePointerTool"
         >
-          <LucideIcon :name="mode.icon" class="h-4 w-4" />
+          <LucideIcon :name="pointerMode.icon" class="h-4 w-4" />
         </button>
       </Tooltip>
 
