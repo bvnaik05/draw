@@ -221,8 +221,10 @@ const surfaceTools = computed(() => modeStrategy?.value?.surfaceTools || [])
 
 // On the unified bar WhiteboardTools shows ONLY the live annotation modes — pen,
 // sticky, table, text, line and image have moved into the "+" catalog, leaving
-// highlighter / eraser / laser (+ the active tool's options disclosure).
-const unifiedWhiteboardExclude = ['text', 'line', 'image', 'pen', 'sticky', 'table']
+// highlighter / eraser (+ the active tool's options disclosure). Laser is excluded
+// too (#239): it renders in the left cluster next to the pointer/hand toggle
+// instead, so it sits to the left of "+" like the other pointer-style modes.
+const unifiedWhiteboardExclude = ['text', 'line', 'image', 'pen', 'sticky', 'table', 'laser']
 
 const buttonBase =
   'flex h-[34px] w-[34px] items-center justify-center rounded-md text-ink-gray-7 hover:bg-surface-gray-2'
@@ -248,6 +250,17 @@ const tileBase = 'flex h-9 w-9 items-center justify-center rounded-md hover:bg-s
             @click="togglePointerTool"
           >
             <LucideIcon :name="pointerMode.icon" class="h-4 w-4" />
+          </button>
+        </Tooltip>
+        <!-- Laser lives here, left of "+", next to the pointer/hand toggle (#239) —
+             WhiteboardTools excludes it so it isn't duplicated on the right. -->
+        <Tooltip v-if="isUnified" text="Laser pointer">
+          <button
+            data-testid="wtool-laser"
+            :class="[buttonBase, toggleClass(editorUi.state.tool === 'laser')]"
+            @click="editorUi.setTool('laser')"
+          >
+            <LucideIcon name="circle-dot" class="h-4 w-4" />
           </button>
         </Tooltip>
       </div>
@@ -382,6 +395,18 @@ const tileBase = 'flex h-9 w-9 items-center justify-center rounded-md hover:bg-s
         </button>
       </Tooltip>
 
+      <!-- Laser sits right after the pointer/hand toggle (#239), matching the
+           unified layout's left cluster; WhiteboardTools below excludes it. -->
+      <Tooltip v-if="isWhiteboard" text="Laser pointer">
+        <button
+          data-testid="wtool-laser"
+          :class="[buttonBase, toggleClass(editorUi.state.tool === 'laser')]"
+          @click="editorUi.setTool('laser')"
+        >
+          <LucideIcon name="circle-dot" class="h-4 w-4" />
+        </button>
+      </Tooltip>
+
       <!-- Mind map: map-wide actions (per-node editing is in the floating toolbar). -->
       <template v-if="isMindmap">
         <div class="mx-0.5 h-5 w-px bg-surface-gray-3" />
@@ -407,8 +432,9 @@ const tileBase = 'flex h-9 w-9 items-center justify-center rounded-md hover:bg-s
         </Tooltip>
       </template>
 
-      <!-- Whiteboard tools: full set for a whiteboard doc. -->
-      <WhiteboardTools v-if="isWhiteboard" :exclude="[]" />
+      <!-- Whiteboard tools: full set for a whiteboard doc, minus laser (rendered
+           above, next to the pointer/hand toggle). -->
+      <WhiteboardTools v-if="isWhiteboard" :exclude="['laser']" />
 
       <!-- Any other type declaring extra surface tools (seam; none today). -->
       <template v-else-if="surfaceTools.length">
