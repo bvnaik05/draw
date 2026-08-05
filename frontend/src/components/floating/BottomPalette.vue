@@ -212,11 +212,12 @@ const modes = [
 // pointer modes. None today beyond whiteboard's, which render via WhiteboardTools.
 const surfaceTools = computed(() => modeStrategy?.value?.surfaceTools || [])
 
-// On the unified bar WhiteboardTools shows ONLY the live annotation modes — the
-// merged Draw tool (key 'pen', #242), sticky, table, text, line and image have
-// moved into the "+" catalog, leaving eraser / laser (+ the active tool's options
-// disclosure). Repositioning Draw onto the bar itself is #240.
-const unifiedWhiteboardExclude = ['text', 'line', 'image', 'pen', 'sticky', 'table']
+// On the unified bar WhiteboardTools shows the live annotation modes — Draw and
+// eraser sit directly on the bar, to the right of the "+" (#240), alongside laser
+// (+ the active tool's options disclosure). Sticky, table, text, line and image
+// stay catalog-only; the "+" also still offers Draw for the block canvas, which
+// has no WhiteboardTools row of its own.
+const unifiedWhiteboardExclude = ['text', 'line', 'image', 'sticky', 'table']
 
 const buttonBase =
   'flex h-[34px] w-[34px] items-center justify-center rounded-md text-ink-gray-7 hover:bg-surface-gray-2'
@@ -357,9 +358,9 @@ const tileBase = 'flex h-9 w-9 items-center justify-center rounded-md hover:bg-s
       </Popover>
 
       <div class="flex flex-1 basis-0 items-center justify-start gap-1">
-        <!-- Live annotation tools (unified only): highlighter / eraser / laser +
-             the active tool's options. The catalog owns pen/sticky/table/text/
-             line/image, so they're excluded here. -->
+        <!-- Live annotation tools (unified only): Draw / eraser / laser + the
+             active tool's options, in that order (#240). The catalog still owns
+             sticky/table/text/line/image, so those stay excluded here. -->
         <WhiteboardTools v-if="isUnified" :exclude="unifiedWhiteboardExclude" />
       </div>
     </template>
