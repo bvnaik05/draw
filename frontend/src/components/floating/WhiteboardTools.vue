@@ -6,7 +6,7 @@
 // disclosure; board-wide settings and the selected-object editor follow. All
 // chrome is Frappe UI.
 import { computed } from 'vue'
-import { Popover, Tooltip } from 'frappe-ui'
+import { Popover, Tooltip, Slider } from 'frappe-ui'
 import LucideIcon from '@/icons/LucideIcon.vue'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
@@ -33,8 +33,9 @@ const imageInsert = useImageInsert(store)
 
 // Tools that expose options in the disclosure popover. The table tool is absent:
 // clicking it opens the size picker (which commits directly), so it never needs
-// the separate options step (#134).
-const OPTION_TOOLS = ['pen', 'highlighter', 'eraser', 'sticky', 'line']
+// the separate options step (#134). 'pen' is the merged Draw tool (#242, see
+// whiteboardTools.js for why its id stays 'pen' rather than 'draw').
+const OPTION_TOOLS = ['pen', 'eraser', 'sticky', 'line']
 
 // Eraser modes (#39). 'ink' is the classic whiteboard eraser — it takes only what
 // the tip covers; 'object' takes the whole element under it, the only way to erase
@@ -44,14 +45,33 @@ const ERASER_MODES = [
   { key: 'object', icon: 'square-x', label: 'Erase by object' },
 ]
 
+// The Draw tool's pen/highlighter sub-modes (#242), styled like ERASER_MODES.
+const DRAW_KINDS = [
+  { key: 'pen', icon: 'pen-line', label: 'Pen' },
+  { key: 'highlighter', icon: 'highlighter', label: 'Highlighter' },
+]
+
 const activeTool = computed(() => editorUi.state.tool)
 const visibleTools = computed(() => visibleWhiteboardTools(props.exclude))
 const showImageInsert = computed(() => !props.exclude.includes('image'))
 const activeHasOptions = computed(() => OPTION_TOOLS.includes(activeTool.value))
-const optionsLabel = computed(() => `${capitalize(activeTool.value)} options`)
+// 'pen' reads as "Draw options" (its display label), not "Pen options" — the tool
+// id and the label it shows the user diverge on purpose (#242).
+const optionsLabel = computed(() => `${activeTool.value === 'pen' ? 'Draw' : capitalize(activeTool.value)} options`)
 function capitalize(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : ''
 }
+
+// Slider works in whole numbers on a [min,max] array model; drawOpacity is a 0-1
+// float, so this is the seam between the two. A global highlighter-opacity
+// preference (not per-stroke, see useWhiteboardUi.js), so it's fine to keep the
+// conversion local to this popover rather than threading percentages elsewhere.
+const drawOpacityPercent = computed({
+  get: () => [Math.round(ui.state.drawOpacity * 100)],
+  set: (value) => {
+    ui.state.drawOpacity = (value?.[0] ?? Math.round(ui.state.drawOpacity * 100)) / 100
+  },
+})
 
 // The biggest tip is wider than the swatch row, so the preview dot is capped —
 // the canvas cursor is what shows the true tip size.
@@ -132,8 +152,23 @@ function insertTable({ rows, cols }, close) {
       </Tooltip>
     </template>
     <template #body-main>
-      <!-- Pen: color + width. -->
+      <!-- Draw (#242): pen/highlighter sub-mode picker, shared color, pen-only
+           size (highlighter's width is the fixed HIGHLIGHTER_WIDTH constant, not
+           a user control today), highlighter-only opacity. -->
       <div v-if="activeTool === 'pen'" class="w-48 p-2">
+        <div class="mb-2 flex gap-1">
+          <button
+            v-for="k in DRAW_KINDS"
+            :key="k.key"
+            class="flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[13px]"
+            :class="ui.state.drawKind === k.key ? 'bg-surface-gray-2 text-ink-gray-9' : 'text-ink-gray-7 hover:bg-surface-gray-2'"
+            @click="ui.state.drawKind = k.key"
+          >
+            <LucideIcon :name="k.icon" class="h-4 w-4" />
+            {{ k.label }}
+          </button>
+        </div>
+
         <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-5">Color</div>
         <div class="mb-2 grid grid-cols-8 gap-1.5">
           <button
@@ -145,18 +180,25 @@ function insertTable({ rows, cols }, close) {
             @click="ui.state.penColor = c"
           />
         </div>
-        <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-5">Width</div>
-        <div class="flex gap-2">
-          <button
-            v-for="w in PEN_WIDTHS"
-            :key="w"
-            class="flex h-7 flex-1 items-center justify-center rounded-md"
-            :class="ui.state.penWidth === w ? 'bg-surface-gray-3' : 'bg-surface-gray-1 hover:bg-surface-gray-2'"
-            @click="ui.state.penWidth = w"
-          >
-            <span class="rounded-full bg-surface-gray-10" :style="{ width: w + 'px', height: w + 'px' }" />
-          </button>
-        </div>
+
+        <template v-if="ui.state.drawKind === 'pen'">
+          <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-5">Size</div>
+          <div class="flex gap-2">
+            <button
+              v-for="w in PEN_WIDTHS"
+              :key="w"
+              class="flex h-7 flex-1 items-center justify-center rounded-md"
+              :class="ui.state.penWidth === w ? 'bg-surface-gray-3' : 'bg-surface-gray-1 hover:bg-surface-gray-2'"
+              @click="ui.state.penWidth = w"
+            >
+              <span class="rounded-full bg-surface-gray-10" :style="{ width: w + 'px', height: w + 'px' }" />
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-5">Opacity</div>
+          <Slider v-model="drawOpacityPercent" :min="10" :max="100" :step="5" size="sm" />
+        </template>
       </div>
 
       <!-- Eraser: mode + tip size (#39). The canvas cursor shows the real tip. -->
@@ -186,21 +228,6 @@ function insertTable({ rows, cols }, close) {
           >
             <span class="rounded-full bg-surface-gray-10" :style="eraserDotStyle(size)" />
           </button>
-        </div>
-      </div>
-
-      <!-- Highlighter: color. -->
-      <div v-else-if="activeTool === 'highlighter'" class="w-48 p-2">
-        <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-gray-5">Color</div>
-        <div class="grid grid-cols-8 gap-1.5">
-          <button
-            v-for="c in CHALK_COLORS"
-            :key="c"
-            class="h-5 w-5 rounded-full border"
-            :class="ui.state.penColor === c ? 'border-[1.5px] border-ink-gray-9' : 'border-outline-gray-2'"
-            :style="{ background: c }"
-            @click="ui.state.penColor = c"
-          />
         </div>
       </div>
 

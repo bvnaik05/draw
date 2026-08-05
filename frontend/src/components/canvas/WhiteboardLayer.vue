@@ -21,7 +21,6 @@ import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
 import { LASER_COLOR, LASER_HEAD_RADIUS, LASER_FADE_MS } from '@/diagram/laser.js'
 import { roughenSegment } from '@/diagram/sketch.js'
 import { pointsToPath } from '@/diagram/svgPath.js'
-import { HIGHLIGHTER_OPACITY } from '@/diagram/whiteboardColors.js'
 import {
   whiteboardObjectBoxes,
   whiteboardObjectsInZOrder,
@@ -72,8 +71,11 @@ function strokePath(stroke) {
   return pointsToPath(wobbled)
 }
 
+// Highlighter opacity is a global preference (ui.state.drawOpacity, #242), not
+// stored per-stroke — every highlighter stroke on the canvas (old and new) reads
+// the current slider value live. Pen strokes are unaffected, always opaque.
 function strokeOpacity(stroke) {
-  return stroke.kind === 'highlighter' ? HIGHLIGHTER_OPACITY : 1
+  return stroke.kind === 'highlighter' ? ui.state.drawOpacity : 1
 }
 
 // Highlight EVERY selected object (multi-select), not just a lone selection.
@@ -202,7 +204,7 @@ const laserHead = computed(() => {
       fill="none"
       :stroke="live.color"
       :stroke-width="live.width"
-      :stroke-opacity="live.kind === 'highlighter' ? HIGHLIGHTER_OPACITY : 1"
+      :stroke-opacity="live.kind === 'highlighter' ? ui.state.drawOpacity : 1"
       :stroke-linecap="live.kind === 'highlighter' ? 'butt' : 'round'"
       stroke-linejoin="round"
     />
