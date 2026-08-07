@@ -1,9 +1,18 @@
 <script setup>
-// One-click action tile (48px, icon + 9px label, README 4d). Toggled tiles get
-// a gray-900 border + bg-surface-gray-2.
-import LucideIcon from '@/icons/LucideIcon.vue'
+// One-click action tile for the Align / Arrange / Distribute / Transform
+// sections. A frappe-ui Button with the icon before the label.
+//
+// The label used to be printed under the icon at 9px, which is off the type
+// scale. Rather than shrink the text to fit the tile, the tile grew to fit the
+// text: `size="md"` is frappe-ui's 32px control, whose label is text-base (14px),
+// and the sections lay these out two-per-row so a label like "Remove gaps" fits
+// without truncating (#294).
+import { Button } from 'frappe-ui'
 
 defineProps({
+  /** Complete lucide utility class, e.g. 'lucide-align-left'. Not a bare name:
+   *  Tailwind's JIT only emits classes it can read literally in the source, so
+   *  building one with `lucide-${name}` yields no CSS and a blank icon. */
   icon: { type: String, required: true },
   label: { type: String, required: true },
   active: { type: Boolean, default: false },
@@ -12,12 +21,14 @@ defineEmits(['click'])
 </script>
 
 <template>
-  <button
-    class="flex h-12 flex-col items-center justify-center gap-1 rounded-md border bg-surface-base hover:border-outline-gray-3 hover:bg-surface-gray-1"
-    :class="active ? 'border-outline-gray-9 bg-surface-gray-2' : 'border-outline-gray-1'"
+  <Button
+    class="!w-full !justify-start"
+    size="md"
+    theme="gray"
+    :variant="active ? 'subtle' : 'outline'"
+    :icon-left="icon"
+    :tooltip="label"
+    :label="label"
     @click="$emit('click')"
-  >
-    <LucideIcon :name="icon" class="h-[18px] w-[18px] text-ink-gray-7" />
-    <span class="text-[9px] text-ink-gray-6">{{ label }}</span>
-  </button>
+  />
 </template>
