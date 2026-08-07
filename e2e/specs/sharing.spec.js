@@ -29,9 +29,21 @@ async function openShareDialog(page) {
   await expect(page.getByTestId('general-access-trigger')).toBeVisible()
 }
 
+// Both role pickers (the invite row and each member row) are frappe-ui <Select>s
+// now (#292). Select renders its rows through reka-ui, so the control is NOT a
+// native <select> and selectOption() fails with "Element is not a <select>
+// element". Open the trigger by its accessible name, then click the option by its
+// visible label — the same shape as setGeneralAccess below.
+const MEMBER_ROLE_LABELS = { view: 'Can view', comment: 'Can comment', edit: 'Can edit' }
+
+async function setRole(page, triggerLabel, level) {
+  await page.getByLabel(triggerLabel).click()
+  await page.getByRole('option').filter({ hasText: MEMBER_ROLE_LABELS[level] }).first().click()
+}
+
 // Invite by typing the address and picking the search result.
 async function invite(page, email, level) {
-  if (level) await page.getByLabel('Access level for the person being added').selectOption(level)
+  if (level) await setRole(page, 'Access level for the person being added', level)
   await page.getByPlaceholder('Add people by email…').fill(email)
   const result = page.getByRole('button', { name: new RegExp(email, 'i') }).first()
   await result.waitFor({ state: 'visible' })
@@ -43,14 +55,27 @@ function memberRow(page, email) {
   return page.locator('div').filter({ hasText: new RegExp(`^${email}$`) }).first()
 }
 
-// General access is a Writer-style tier menu now (#106), not a <select>: click the
-// trigger to open the tier list, then pick the tier by its stable test id. The tiers
-// are 'restricted' | 'site_users_view' | 'public_view' — the old two-state
+// General access is a frappe-ui <Select> (#292, tiers from #106): click the trigger
+// to open the tier list, then pick the tier by its visible label. The tiers are
+// 'restricted' | 'site_users_view' | 'public_view' — the old two-state
 // 'link'/'restricted' select is gone. The trigger carries the live tier as its
 // data-value, so a caller can wait on it once a change has round-tripped.
+//
+// Options are picked by label rather than a test id: Select renders its own rows
+// via reka-ui and does not forward arbitrary attributes onto them.
+const GENERAL_ACCESS_LABELS = {
+  restricted: 'Restricted',
+  site_users_view: 'All site users can view',
+  public_view: 'Anyone with the link can view',
+}
+
 async function setGeneralAccess(page, tier) {
   await page.getByTestId('general-access-trigger').click()
-  await page.getByTestId(`general-access-option-${tier}`).click()
+  await page
+    .getByRole('option')
+    .filter({ hasText: GENERAL_ACCESS_LABELS[tier] })
+    .first()
+    .click()
 }
 
 test.describe('sharing: inviting people', () => {
@@ -96,7 +121,7 @@ test.describe('sharing: inviting people', () => {
       })
       .toBe('view')
 
-    await page.getByLabel(`Access level for ${TARGET}`).selectOption('edit')
+    await setRole(page, `Access level for ${TARGET}`, 'edit')
 
     await expect
       .poll(async () => (await fetchShares(page, name)).find((s) => s.user === TARGET)?.level, {
