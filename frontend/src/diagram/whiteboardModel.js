@@ -72,6 +72,14 @@ export function makeTable(x, y, partial = {}) {
     color: partial.color || '#171717',
     // First row rendered as a header (tinted band + bold text) when set (#338).
     hasHeader: partial.hasHeader ?? false,
+    // Horizontal text alignment for every cell: 'left' | 'center' | 'right'.
+    align: partial.align || 'left',
+    // Per-column widths / per-row heights only materialise once a border is
+    // dragged; absent means every column/row keeps the uniform cellW/cellH.
+    colWidths: partial.colWidths,
+    rowHeights: partial.rowHeights,
+    // Merged cell rectangles ({row,col,rowspan,colspan}); absent means none.
+    merges: partial.merges,
     cells: partial.cells || {},
     zIndex: partial.zIndex || 0,
   }
@@ -247,12 +255,142 @@ export function tableCols(table) {
   return Math.max(0, Math.min(MAX_TABLE_DIM, Math.floor(table.cols) || 0))
 }
 
+// Smallest a column/row can be dragged to, so a cell never collapses to nothing.
+export const MIN_TABLE_CELL = 24
+
+// Effective per-column widths / per-row heights. The stored arrays are optional
+// and may be short (only the dragged indices are set), so fall back to the
+// uniform cellW/cellH per index — old documents and un-resized tables are
+// unchanged, and a resize only has to record the columns it touched.
+export function colWidthsOf(table) {
+  const stored = table.colWidths || []
+  return Array.from({ length: tableCols(table) }, (_, c) =>
+    Math.max(MIN_TABLE_CELL, stored[c] || table.cellW),
+  )
+}
+
+export function rowHeightsOf(table) {
+  const stored = table.rowHeights || []
+  return Array.from({ length: tableRows(table) }, (_, r) =>
+    Math.max(MIN_TABLE_CELL, stored[r] || table.cellH),
+  )
+}
+
+// Cumulative start offsets (length n+1); offsets[i] is the left/top edge of i.
+function cumulative(sizes) {
+  const out = [0]
+  for (const size of sizes) out.push(out[out.length - 1] + size)
+  return out
+}
+export const colOffsets = (table) => cumulative(colWidthsOf(table))
+export const rowOffsets = (table) => cumulative(rowHeightsOf(table))
+
 export function tableWidth(table) {
-  return tableCols(table) * table.cellW
+  const offsets = colOffsets(table)
+  return offsets[offsets.length - 1]
 }
 
 export function tableHeight(table) {
-  return tableRows(table) * table.cellH
+  const offsets = rowOffsets(table)
+  return offsets[offsets.length - 1]
+}
+
+// The pixel box {x,y,w,h} of one cell (canvas units), honouring per-column/row
+// sizes. The single source of truth for cell geometry used by render + hit-test.
+export function cellBox(table, row, col) {
+  const cx = colOffsets(table)
+  const ry = rowOffsets(table)
+  return {
+    x: table.x + cx[col],
+    y: table.y + ry[row],
+    w: cx[col + 1] - cx[col],
+    h: ry[row + 1] - ry[row],
+  }
+}
+
+// Which segment of `offsets` contains `pos` (its index), clamped to the last one.
+function segmentIndex(offsets, pos) {
+  for (let i = 0; i < offsets.length - 1; i += 1) {
+    if (pos < offsets[i + 1]) return i
+  }
+  return Math.max(0, offsets.length - 2)
+}
+
+// Resize one column / row, seeding the size array from the uniform default so
+// only the dragged index changes. Min-clamped; wrapped in a store commit each.
+export function resizeTableColumn(table, col, width) {
+  const widths = colWidthsOf(table)
+  widths[col] = Math.max(MIN_TABLE_CELL, Math.round(width))
+  table.colWidths = widths
+}
+
+export function resizeTableRow(table, row, height) {
+  const heights = rowHeightsOf(table)
+  heights[row] = Math.max(MIN_TABLE_CELL, Math.round(height))
+  table.rowHeights = heights
+}
+
+// ----- cell merges (#338) ----------------------------------------------------
+// A merge shows a rectangle of cells as one, anchored at its top-left cell:
+// { row, col, rowspan, colspan }. The anchor renders spanning the rectangle; the
+// cells it covers are skipped. Stored on `table.merges` (absent = none).
+export function tableMerges(table) {
+  // Bounded like the row/col counts: the render checks cell coverage against every
+  // merge, per cell, so a shared/public diagram can't ship a giant `merges` array
+  // to blow that up — a real table has at most one merge per cell (#338).
+  return (table.merges || []).slice(0, MAX_TABLE_DIM * MAX_TABLE_DIM)
+}
+
+function rectsOverlap(ra, ca, rsa, csa, rb, cb, rsb, csb) {
+  return ra < rb + rsb && rb < ra + rsa && ca < cb + csb && cb < ca + csa
+}
+
+// The merge whose rectangle covers (row, col), or null. Anchors count too.
+export function mergeCovering(table, row, col) {
+  return (
+    tableMerges(table).find(
+      (m) =>
+        row >= m.row && row < m.row + m.rowspan && col >= m.col && col < m.col + m.colspan,
+    ) || null
+  )
+}
+
+// A covered cell that is NOT its merge's anchor — the render skips these.
+export function isCoveredCell(table, row, col) {
+  const m = mergeCovering(table, row, col)
+  return !!m && !(m.row === row && m.col === col)
+}
+
+// The pixel box of a cell, spanning its merge when it is the anchor; otherwise
+// the plain cell. Covered non-anchor cells return their own box (never drawn).
+export function cellSpanBox(table, row, col) {
+  const start = cellBox(table, row, col)
+  const m = mergeCovering(table, row, col)
+  if (!m || m.row !== row || m.col !== col) return start
+  const endRow = Math.min(tableRows(table) - 1, m.row + m.rowspan - 1)
+  const endCol = Math.min(tableCols(table) - 1, m.col + m.colspan - 1)
+  const end = cellBox(table, endRow, endCol)
+  return { x: start.x, y: start.y, w: end.x + end.w - start.x, h: end.y + end.h - start.y }
+}
+
+// Merge the cell rectangle (r0,c0)-(r1,c1) into one, dropping any merges it
+// overlaps. A single cell is ignored. Text stays in the anchor (top-left) cell.
+export function mergeTableCells(table, r0, c0, r1, c1) {
+  const row = Math.max(0, Math.min(r0, r1))
+  const col = Math.max(0, Math.min(c0, c1))
+  const rowspan = Math.min(tableRows(table), Math.max(r0, r1) + 1) - row
+  const colspan = Math.min(tableCols(table), Math.max(c0, c1) + 1) - col
+  if (rowspan * colspan <= 1) return
+  const kept = tableMerges(table).filter(
+    (m) => !rectsOverlap(m.row, m.col, m.rowspan, m.colspan, row, col, rowspan, colspan),
+  )
+  table.merges = [...kept, { row, col, rowspan, colspan }]
+}
+
+// Un-merge the cell at (row, col) — remove the merge covering it.
+export function unmergeTableCell(table, row, col) {
+  const m = mergeCovering(table, row, col)
+  if (m) table.merges = tableMerges(table).filter((x) => x !== m)
 }
 
 // The topmost table whose bounding box contains the point, or null.
@@ -327,7 +465,7 @@ export function translateWhiteboardObject(model, kind, id, dx, dy) {
 export function tableCellAt(table, point) {
   if (tableAt({ tables: [table] }, point) !== table) return null
   return {
-    row: Math.min(tableRows(table) - 1, Math.floor((point.y - table.y) / table.cellH)),
-    col: Math.min(tableCols(table) - 1, Math.floor((point.x - table.x) / table.cellW)),
+    row: segmentIndex(rowOffsets(table), point.y - table.y),
+    col: segmentIndex(colOffsets(table), point.x - table.x),
   }
 }
