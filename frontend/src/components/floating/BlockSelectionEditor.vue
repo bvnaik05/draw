@@ -5,12 +5,16 @@
 // each reusing the existing modification sections so all logic (incl. multi-
 // select intersection) is shared. Mounted once per editor (EditorShell).
 import { computed } from 'vue'
-import { Button, Popover, Select } from 'frappe-ui'
+import { Button, Popover, Select, TabButtons } from 'frappe-ui'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { anchorPoint, unionBounds } from '@/diagram/geometry.js'
 import { useCanvasToolbarStyle } from '@/composables/useCanvasToolbarStyle.js'
 import { isDragging } from '@/composables/useShapeTransform.js'
 import { activeEditor, richCommands, isMarkActive } from '@/composables/useRichText.js'
+import { isMindmapShape } from '@/diagram/freeFloating.js'
+import { hasFill, hasBorder } from '@/diagram/mindmapNodeStyle.js'
+import { inkFor } from '@/diagram/espressoPalette.js'
+import EspressoSwatchGrid from '@/components/palette-right/EspressoSwatchGrid.vue'
 import FillBorderSection from '@/components/palette-right/FillBorderSection.vue'
 import ArrangeSection from '@/components/palette-right/ArrangeSection.vue'
 import AlignSection from '@/components/palette-right/AlignSection.vue'
@@ -129,7 +133,52 @@ function toggleAutoFit() {
   if (shapeIds.value.length) store.updateShapes(shapeIds.value, { text: { autoFit: !autoFit.value } })
 }
 
+// Text colour (#259): while editing it recolours the caret/selection live, else it
+// sets the shape's base text colour across the selection.
+const currentTextColor = computed(() => textStyle.value.color || '#171717')
+function setTextColor(hex) {
+  if (!hex) return
+  if (editing.value) richCommands.setColor(hex)
+  else updateTextStyle({ color: hex })
+}
+
 const panel = 'max-h-[70vh] w-[300px] overflow-y-auto'
+
+// ---- mind-map node overrides (#274 / #260). A node selection swaps the full
+// colour picker for the curated Espresso grid and exposes a per-node corner curve.
+const isNodeSelection = computed(() => hasShapes.value && shapes.value.every((s) => isMindmapShape(s)))
+const nodeCurve = computed(() => shapes.value[0]?.mindmap?.curve || 'moderate')
+const curveOptions = [
+  { label: 'None', value: 'none' },
+  { label: 'Moderate', value: 'moderate' },
+  { label: 'High', value: 'high' },
+]
+
+// Set a node's fill from the grid: a colour boxes it (keeping text readable), "None"
+// (null) clears it — the node stays shaped only while it still has a border.
+function setNodeFill(hex) {
+  const ids = shapeIds.value
+  if (!ids.length) return
+  if (hex === null) store.updateShapes(ids, { fill: 'none', mindmap: { shaped: hasBorder(shapes.value[0]) } })
+  else store.updateShapes(ids, { fill: hex, text: { style: { color: inkFor(hex) } }, mindmap: { shaped: true } })
+}
+
+// Set a node's border colour from the grid; "None" (null) removes the stroke, and
+// the node stays shaped only while it still has a fill.
+function setNodeBorder(hex) {
+  const ids = shapeIds.value
+  if (!ids.length) return
+  if (hex === null) {
+    store.updateShapes(ids, { border: { color: 'transparent', width: 0 }, mindmap: { shaped: hasFill(shapes.value[0]) } })
+  } else {
+    const width = shapes.value[0]?.border?.width > 0 ? shapes.value[0].border.width : 1.5
+    store.updateShapes(ids, { border: { color: hex, width }, mindmap: { shaped: true } })
+  }
+}
+
+function setNodeCurve(value) {
+  if (shapeIds.value.length) store.updateShapes(shapeIds.value, { mindmap: { curve: value } })
+}
 </script>
 
 <template>
@@ -150,8 +199,10 @@ const panel = 'max-h-[70vh] w-[300px] overflow-y-auto'
         </Popover>
       </template>
 
-      <!-- Shapes selected: fill+border+opacity, text, arrange, link. -->
+      <!-- Shapes selected: fill+border+opacity, text, arrange, link. While editing
+           TEXT the shape controls hide and the bar becomes a text-only menu (#259). -->
       <template v-else-if="hasShapes">
+        <template v-if="!editing">
         <!-- Fill and Border are separate menu items (each opens its own colour
              picker); opacity lives with Fill. -->
         <Popover side="top">
@@ -162,7 +213,12 @@ const panel = 'max-h-[70vh] w-[300px] overflow-y-auto'
               </template>
             </Button>
           </template>
-          <template #body-main><div :class="panel"><FillBorderSection mode="fill" /><TransparencySection /></div></template>
+          <template #body-main>
+            <div :class="panel">
+              <EspressoSwatchGrid v-if="isNodeSelection" mode="fill" :model-value="primaryFill" @select="setNodeFill" />
+              <template v-else><FillBorderSection mode="fill" /><TransparencySection /></template>
+            </div>
+          </template>
         </Popover>
 
         <Popover side="top">
@@ -173,13 +229,32 @@ const panel = 'max-h-[70vh] w-[300px] overflow-y-auto'
               </template>
             </Button>
           </template>
-          <template #body-main><div :class="panel"><FillBorderSection mode="border" /></div></template>
+          <template #body-main>
+            <div :class="panel">
+              <EspressoSwatchGrid v-if="isNodeSelection" mode="border" :model-value="primaryBorder" @select="setNodeBorder" />
+              <FillBorderSection v-else mode="border" />
+            </div>
+          </template>
+        </Popover>
+
+        <!-- Per-node corner curve (#260), only for mind-map nodes. -->
+        <Popover v-if="isNodeSelection" side="top">
+          <template #target="{ togglePopover }">
+            <Button variant="ghost" theme="gray" size="md" icon="lucide-spline" tooltip="Corners" label="Corners" @mousedown.prevent @click="togglePopover()" />
+          </template>
+          <template #body-main>
+            <div class="p-2">
+              <TabButtons size="sm" :model-value="nodeCurve" :options="curveOptions" @update:model-value="setNodeCurve" />
+            </div>
+          </template>
         </Popover>
 
         <div class="mx-0.5 h-5 w-px bg-surface-gray-3" />
+        </template>
 
-        <!-- Text formatting surfaced directly on the bar (one-click, real-time):
-             font, size, bold/italic/underline, align. -->
+        <!-- Text formatting: font, size, B/I/U/S, align, colour. Always shown for a
+             shape — this IS the text-only menu while editing text (#259), and part of
+             the shape menu otherwise. -->
         <Select :model-value="font" :options="FONTS" class="h-8 w-[92px]" @update:model-value="setFont" @mousedown.stop />
         <div class="flex items-center rounded-md border border-outline-gray-2">
           <Button variant="ghost" theme="gray" size="md" class="!w-6" icon="lucide-minus" label="Decrease font size" @mousedown.prevent @click="stepFontSize(-1)" />
@@ -193,8 +268,22 @@ const panel = 'max-h-[70vh] w-[300px] overflow-y-auto'
         <Button :variant="alignActive('left') ? 'subtle' : 'ghost'" theme="gray" size="md" icon="lucide-text-align-start" tooltip="Align left" label="Align left" @mousedown.prevent @click="setTextAlign('left')" />
         <Button :variant="alignActive('center') ? 'subtle' : 'ghost'" theme="gray" size="md" icon="lucide-text-align-center" tooltip="Align center" label="Align center" @mousedown.prevent @click="setTextAlign('center')" />
         <Button :variant="alignActive('right') ? 'subtle' : 'ghost'" theme="gray" size="md" icon="lucide-text-align-end" tooltip="Align right" label="Align right" @mousedown.prevent @click="setTextAlign('right')" />
+        <!-- Text colour (#259): a coloured "A" opens the Espresso grid. -->
+        <Popover side="top">
+          <template #target="{ togglePopover }">
+            <Button variant="ghost" theme="gray" size="md" tooltip="Text colour" label="Text colour" @mousedown.prevent @click="togglePopover()">
+              <template #icon>
+                <span class="grid size-4 place-items-center rounded text-xs font-semibold" :style="{ color: currentTextColor }">A</span>
+              </template>
+            </Button>
+          </template>
+          <template #body-main>
+            <div class="p-1"><EspressoSwatchGrid mode="fill" :allow-none="false" :model-value="currentTextColor" @select="setTextColor" /></div>
+          </template>
+        </Popover>
         <Button :variant="autoFit ? 'subtle' : 'ghost'" theme="gray" size="md" icon="lucide-scaling" tooltip="Auto-fit text to shape" label="Auto-fit text to shape" @mousedown.prevent @click="toggleAutoFit" />
 
+        <template v-if="!editing">
         <div class="mx-0.5 h-5 w-px bg-surface-gray-3" />
 
         <!-- Arrange / Align / Distribute / Transform are separate menu items, not
@@ -243,9 +332,11 @@ const panel = 'max-h-[70vh] w-[300px] overflow-y-auto'
         <div class="mx-0.5 h-5 w-px bg-surface-gray-3" />
 
         <Button variant="ghost" theme="gray" size="md" icon="lucide-copy" tooltip="Duplicate" label="Duplicate" @mousedown.prevent @click="duplicate" />
+        </template>
       </template>
 
-      <Button variant="ghost" theme="red" size="md" icon="lucide-trash-2" tooltip="Delete" label="Delete" @mousedown.prevent @click="remove" />
+      <!-- Delete hides while editing text — you're editing the label, not the shape. -->
+      <Button v-if="!editing" variant="ghost" theme="red" size="md" icon="lucide-trash-2" tooltip="Delete" label="Delete" @mousedown.prevent @click="remove" />
     </div>
   </Teleport>
 </template>
