@@ -29,7 +29,12 @@ defineProps({
   tooltip: { type: String, default: '' },
   icon: { type: String, default: undefined },
   iconLeft: { type: String, default: undefined },
-  active: { type: Boolean, default: false },
+  // Chrome stays neutral gray; 'red' is for destructive controls only.
+  theme: { type: String, default: 'gray' },
+  // Toggles only. Left undefined the aria-pressed attribute is not rendered at
+  // all — a stepper or a menu trigger is not a toggle, and claiming otherwise
+  // makes a screen reader announce a pressed state that means nothing.
+  active: { type: Boolean, default: undefined },
   disabled: { type: Boolean, default: false },
 })
 </script>
@@ -37,7 +42,7 @@ defineProps({
 <template>
   <Button
     variant="ghost"
-    theme="gray"
+    :theme="theme"
     size="sm"
     :icon="icon"
     :icon-left="iconLeft"
