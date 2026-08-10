@@ -41,7 +41,8 @@ export const CHALK_COLORS = [
 ]
 
 export const PEN_WIDTHS = [2, 4, 8]
-export const HIGHLIGHTER_WIDTH = 18
+export const HIGHLIGHTER_WIDTHS = [10, 18, 26]
+export const PEN_OPACITY = 1
 export const HIGHLIGHTER_OPACITY = 0.4
 
 // Relative luminance (sRGB) of a #rrggbb color, used for auto-contrast text.

@@ -67,11 +67,11 @@ function strokePath(stroke) {
   return pointsToPath(wobbled)
 }
 
-// Highlighter opacity is a global preference (ui.state.drawOpacity, #242), not
-// stored per-stroke — every highlighter stroke on the canvas (old and new) reads
-// the current slider value live. Pen strokes are unaffected, always opaque.
+// Ink opacity is a global preference per kind (ui.state.penOpacity /
+// highlighterOpacity, #242), not stored per-stroke — every stroke on the canvas
+// (old and new) reads the current slider value live.
 function strokeOpacity(stroke) {
-  return stroke.kind === 'highlighter' ? ui.state.drawOpacity : 1
+  return stroke.kind === 'highlighter' ? ui.state.highlighterOpacity : ui.state.penOpacity
 }
 
 // Highlight EVERY selected object (multi-select), not just a lone selection.
@@ -200,7 +200,7 @@ const laserHead = computed(() => {
       fill="none"
       :stroke="live.color"
       :stroke-width="live.width"
-      :stroke-opacity="live.kind === 'highlighter' ? ui.state.drawOpacity : 1"
+      :stroke-opacity="live.kind === 'highlighter' ? ui.state.highlighterOpacity : ui.state.penOpacity"
       :stroke-linecap="live.kind === 'highlighter' ? 'butt' : 'round'"
       stroke-linejoin="round"
     />
