@@ -12,11 +12,6 @@
 // - handlesSurfaceInteraction: the type owns surface pointer/dblclick/wheel,
 //   delegated through inject('modeInteraction') (see DiagramCanvas).
 // - keyboardMode: selects the per-mode keyboard handler in useKeyboard.
-// - surfaceTools: extra pointer-mode buttons the canvas toolbar renders for this
-//   type (spec C6 whiteboard pen/highlighter/eraser/text/sticky/laser). Each is
-//   { tool, icon, label }; clicking it sets editorUi tool to `tool`. The type's
-//   mode-interaction composable reads editorUi.state.tool to act on it. Empty for
-//   block/mindmap (they use only the shared select/hand/draw modes).
 
 const BLOCK = {
   type: 'block',
@@ -25,10 +20,9 @@ const BLOCK = {
   hasBoundedPaper: true,
   handlesSurfaceInteraction: false,
   keyboardMode: 'block',
-  surfaceTools: [],
   showsShapeTools: true, // left creation palette (shapes/connectors/icons)
   // No right panel: shape editing lives in the floating contextual toolbar
-  // (BlockSelectionEditor); creation + canvas settings in the bottom palette.
+  // creation and canvas settings all live on the canvas toolbar.
 }
 
 const MINDMAP = {
@@ -38,10 +32,9 @@ const MINDMAP = {
   hasBoundedPaper: false, // freely auto-expanding canvas (spec A2)
   handlesSurfaceInteraction: false, // node interactions live on the nodes (M1/M2)
   keyboardMode: 'mindmap',
-  surfaceTools: [],
   showsShapeTools: false, // mind maps grow by keyboard (Tab/Enter), not shape drag
   // No right panel: per-node editing lives in the floating contextual toolbar
-  // (MindMapOverlay), map-wide actions in the bottom palette — Whimsical-style.
+  // and map-wide actions both live on the canvas toolbar.
 }
 
 const FLOWCHART = {
@@ -51,10 +44,9 @@ const FLOWCHART = {
   hasBoundedPaper: true, // bounded with base growth (spec B2)
   handlesSurfaceInteraction: true, // + handles, drag-to-empty, node move
   keyboardMode: 'flowchart',
-  surfaceTools: [], // flowchart builds via + handles / keyboard, not bottom tools
   showsShapeTools: false, // flowchart builds via + handles / keyboard
   // No right panel: per-node editing lives in the floating contextual toolbar
-  // (FlowchartSelectionEditor); map-wide layout actions in the bottom palette.
+  // and map-wide layout actions both live on the canvas toolbar.
 }
 
 const WHITEBOARD = {
@@ -64,14 +56,12 @@ const WHITEBOARD = {
   hasBoundedPaper: true, // a bounded white canvas/paper, like block
   handlesSurfaceInteraction: true, // pen/highlighter/eraser/sticky/text/laser
   keyboardMode: 'whiteboard',
-  // NO surfaceTools here on purpose. The whiteboard's tool set lives in
-  // WhiteboardTools.vue, which the canvas toolbar renders for whiteboard and
-  // unified documents; the `surfaceTools` seam is the fallback after it, so
-  // anything declared here would never render. A duplicate list did sit here, with
-  // icons that had drifted from the ones actually shown (pen as 'edit-2' vs the real
-  // 'pen-line'), which is misleading rather than harmless — it reads as the
-  // authoritative tool set. The seam stays available for a future type that has no
-  // component of its own.
+  // The whiteboard's tool set is NOT declared here. It lives in
+  // floating/whiteboardTools.js, which WhiteboardTools.vue renders onto the
+  // canvas toolbar. A duplicate list did sit here once, with icons that had
+  // drifted from the ones actually shown (pen as 'edit-2' against the real
+  // 'pen-line') — misleading rather than harmless, because it read as the
+  // authoritative set. One list, one place.
   showsShapeTools: false, // no shape palette on the whiteboard
 }
 
