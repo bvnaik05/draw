@@ -50,3 +50,14 @@ describe('saving the thumbnail of an emptied diagram (#93, #223)', () => {
     expect(submissions).toEqual([])
   })
 })
+
+describe('forcing a regeneration past the throttle (#399)', () => {
+  it('sends a second save immediately when force is set, unlike a plain call', async () => {
+    const thumbnail = harness(EMPTY)
+    await thumbnail.generate()
+    await thumbnail.generate() // throttled, no-op
+    await thumbnail.generate({ force: true })
+
+    expect(submissions).toHaveLength(2)
+  })
+})

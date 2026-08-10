@@ -565,9 +565,9 @@ export function useThumbnail(store, diagramResource) {
   let lastRunAt = 0
   const saver = createResource({ url: 'draw.api.diagram.save_thumbnail' })
 
-  async function generate() {
+  async function generate({ force = false } = {}) {
     const now = Date.now()
-    if (now - lastRunAt < THROTTLE_MS) return null
+    if (!force && now - lastRunAt < THROTTLE_MS) return null
     const name = diagramResource?.doc?.name
     if (!name) return null
     lastRunAt = now
