@@ -15,7 +15,12 @@ const props = defineProps({
   selectionActive: { type: Boolean, default: false },
   pinLimitReached: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'toggle-select', 'toggle-pin', 'rename', 'duplicate', 'delete', 'show-info', 'collect'])
+// `select` carries the wanted state, not "flip it" (#405). frappe-ui's Checkbox
+// emits update:modelValue TWICE per click — once from its `defineModel` setter and
+// once from an explicit emit in the same handler — so a toggling listener ran an
+// even number of times and selection never took. Setting a value is idempotent,
+// which makes the duplicate harmless.
+const emit = defineEmits(['open', 'select', 'toggle-pin', 'rename', 'duplicate', 'delete', 'show-info', 'collect'])
 
 // A non-empty diagram ALWAYS shows a preview: the saved raster thumbnail when we
 // have one (cheap), otherwise a live SVG rendered from the document. Only a truly
@@ -141,7 +146,7 @@ const TIME_UNITS = [
       :model-value="selected"
       :aria-label="`Select ${diagram.title || 'Untitled'}`"
       @click.stop
-      @update:model-value="emit('toggle-select', diagram.name)"
+      @update:model-value="(wanted) => emit('select', diagram.name, wanted)"
     />
 
     <!-- One-click star (Gmail-style pin). -->
@@ -185,7 +190,7 @@ const TIME_UNITS = [
       :model-value="selected"
       :aria-label="`Select ${diagram.title || 'Untitled'}`"
       @click.stop
-      @update:model-value="emit('toggle-select', diagram.name)"
+      @update:model-value="(wanted) => emit('select', diagram.name, wanted)"
     />
 
     <!-- One-click star (Gmail-style pin): always shown when pinned, on hover otherwise. -->

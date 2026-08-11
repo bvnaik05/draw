@@ -5,18 +5,20 @@
 # owner-or-public reads, revision-checked saves, thumbnail upload, and the daily
 # trash purge. Guests may read only public diagrams.
 #
-# Deliberately NOT here: listing, trash/restore/delete, duplicate and sharing. The
-# frontend does all of that CRUD through frappe-ui's list/document resources (see
-# frontend/src/data/diagrams.js and TileGrid's duplicate/trash handlers), and
-# sharing lives in draw/api/share.py, which is the only implementation — it carries
-# the three-level view/comment/edit model. Parallel endpoints for those used to sit
-# in this module, unused, and a caller reaching one would have got weaker access
-# rules than the live path applies.
+# Deliberately NOT here: listing, single-diagram delete, duplicate and sharing. The
+# frontend does that CRUD through frappe-ui's list/document resources (see
+# frontend/src/data/diagrams.js and TileGrid's duplicate handler), and sharing lives
+# in draw/api/share.py, which is the only implementation — it carries the three-level
+# view/comment/edit model. Parallel endpoints for those used to sit in this module,
+# unused, and a caller reaching one would have got weaker access rules than the live
+# path applies.
 #
-# The one listing endpoint that DOES live here is shared_with_me(): "diagrams shared
-# with me that I don't own" cannot be expressed as a frappe-ui list filter (it joins
-# DocShare and excludes the owner), so the Home sidebar's "Shared with you" view
-# (GitHub #116) calls this scoped, DocShare-backed read instead.
+# Two endpoints DO live here, both because a frappe-ui resource cannot express them:
+#   shared_with_me() — "diagrams shared with me that I don't own" is not a list filter
+#     (it joins DocShare and excludes the owner), so the Home sidebar's "Shared with
+#     you" view (GitHub #116) calls this scoped, DocShare-backed read instead.
+#   set_trashed() — a resource trashes one document per request, which made clearing
+#     a selection O(n) round trips (GitHub #402). This is the batch.
 
 import hashlib
 import hmac
@@ -206,6 +208,81 @@ def _room_secret(name: str, purpose: str, access: str) -> str:
 	"""Site-scoped, unguessable token for a diagram's collaboration room."""
 	message = f"draw:{purpose}:{name}:{access}".encode()
 	return hmac.new(get_encryption_key().encode(), message, hashlib.sha256).hexdigest()
+
+
+# --- trash (GitHub #402) ------------------------------------------------------
+# The second endpoint that has to live here rather than going through frappe-ui's
+# document resource, for the same reason as shared_with_me(): the client cannot
+# express it. Trashing a selection meant one `set_value` round trip per diagram,
+# so clearing 60 of them cost 60 sequential requests and 63 seconds behind a
+# modal. A batch is one request whatever the size of the selection.
+
+
+MAX_TRASH_BATCH = 500
+
+
+@frappe.whitelist(methods=["POST"])
+def set_trashed(names: str | list[str], is_trashed: int = 1) -> dict:
+	"""Move a batch of diagrams to Trash, or restore them, in a single write.
+
+	Returns the names that were actually changed. A name the caller may not write
+	is skipped rather than failing the batch, so one un-writable diagram in a
+	selection cannot strand the other fifty-nine.
+
+	Writes at the database level on purpose. Trashing is not an edit: going
+	through the document would bump `revision` (which the editor reads as a
+	conflicting save) and `modified` (which would reorder "Last edited" and push
+	a restored diagram to the top of the shelf). `trashed_on` is stamped here
+	because DrawDiagram.before_save, which normally does it, is bypassed.
+	"""
+	writable = _writable_subset(_parse_names(names))
+	if not writable:
+		return {"updated": []}
+
+	trashed = cint(is_trashed)
+	frappe.db.set_value(
+		DOCTYPE,
+		{"name": ["in", writable]},
+		{"is_trashed": trashed, "trashed_on": now_datetime() if trashed else None},
+		update_modified=False,
+	)
+	# POST-only endpoint: the framework commits on a successful request.
+	return {"updated": writable}
+
+
+def _parse_names(names: str | list[str]) -> list[str]:
+	"""The requested diagram names, de-duplicated and capped at MAX_TRASH_BATCH."""
+	if isinstance(names, str):
+		names = frappe.parse_json(names)
+	if not isinstance(names, list):
+		frappe.throw(_("Expected a list of diagram names"))
+	unique = list(dict.fromkeys(str(name) for name in names if name))
+	if len(unique) > MAX_TRASH_BATCH:
+		frappe.throw(_("Cannot trash more than {0} diagrams at once").format(MAX_TRASH_BATCH))
+	return unique
+
+
+def _writable_subset(names: list[str]) -> list[str]:
+	"""The names the caller may write, in the order given.
+
+	One query answers the common case — a user clearing their own shelf owns every
+	diagram in the selection — so the per-document permission check runs only for
+	the remainder (diagrams shared with the caller, or names that do not exist).
+	"""
+	if not names:
+		return []
+	owners = dict(
+		frappe.get_all(
+			DOCTYPE, filters={"name": ["in", names]}, fields=["name", "owner"], as_list=True
+		)
+	)
+	user = frappe.session.user
+	return [
+		name
+		for name in names
+		if name in owners
+		and (owners[name] == user or frappe.has_permission(DOCTYPE, "write", doc=name))
+	]
 
 
 # --- writes ------------------------------------------------------------------

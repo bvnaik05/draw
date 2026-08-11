@@ -74,6 +74,7 @@ declare module 'vue' {
     Rulers: typeof import('./src/components/canvas/Rulers.vue')['default']
     SaveIndicator: typeof import('./src/components/toolbar/SaveIndicator.vue')['default']
     SectionView: typeof import('./src/components/canvas/SectionView.vue')['default']
+    SelectAllCheckbox: typeof import('./src/components/home/SelectAllCheckbox.vue')['default']
     SelectionLayer: typeof import('./src/components/canvas/SelectionLayer.vue')['default']
     SettingsDialog: typeof import('./src/components/home/SettingsDialog.vue')['default']
     ShapeGlyph: typeof import('./src/components/floating/ShapeGlyph.vue')['default']

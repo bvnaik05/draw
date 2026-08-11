@@ -10,7 +10,7 @@ defineProps({
   selected: { type: Object, default: () => new Set() },
   pinLimitReached: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'toggle-select', 'toggle-pin', 'rename', 'duplicate', 'delete', 'show-info', 'collect'])
+const emit = defineEmits(['open', 'select', 'toggle-pin', 'rename', 'duplicate', 'delete', 'show-info', 'collect'])
 
 const TILE_COLS = 'grid-template-columns: repeat(auto-fill, minmax(224px, 1fr))'
 </script>
@@ -25,7 +25,7 @@ const TILE_COLS = 'grid-template-columns: repeat(auto-fill, minmax(224px, 1fr))'
       :selection-active="selected.size > 0"
       :pin-limit-reached="pinLimitReached"
       @open="emit('open', $event)"
-      @toggle-select="emit('toggle-select', $event)"
+      @select="(name, wanted) => emit('select', name, wanted)"
       @toggle-pin="emit('toggle-pin', $event)"
       @rename="emit('rename', $event)"
       @duplicate="emit('duplicate', $event)"
@@ -46,7 +46,7 @@ const TILE_COLS = 'grid-template-columns: repeat(auto-fill, minmax(224px, 1fr))'
       :selection-active="selected.size > 0"
       :pin-limit-reached="pinLimitReached"
       @open="emit('open', $event)"
-      @toggle-select="emit('toggle-select', $event)"
+      @select="(name, wanted) => emit('select', name, wanted)"
       @toggle-pin="emit('toggle-pin', $event)"
       @rename="emit('rename', $event)"
       @duplicate="emit('duplicate', $event)"

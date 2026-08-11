@@ -1147,6 +1147,99 @@ class TestDrawDiagram(IntegrationTestCase):
 			frappe.ValidationError, save_thumbnail, doc.name, "data:image/png;base64,!!!not-base64!!!"
 		)
 
+	# ----- batch trash (#402) -----
+
+	def test_set_trashed_moves_a_whole_batch_in_one_call(self):
+		from draw.api.diagram import set_trashed
+
+		names = [self._make("block", {"schemaVersion": 1}, title=f"Batch {i}").name for i in range(3)]
+
+		result = set_trashed(names)
+
+		self.assertEqual(result["updated"], names)
+		for name in names:
+			flag, stamp = frappe.db.get_value("Draw Diagram", name, ["is_trashed", "trashed_on"])
+			self.assertEqual(flag, 1)
+			self.assertIsNotNone(stamp, "trashed_on must be stamped — before_save is bypassed here")
+
+	def test_set_trashed_restores_and_clears_the_stamp(self):
+		from draw.api.diagram import set_trashed
+
+		doc = self._make("block", {"schemaVersion": 1}, title="Restore me")
+		set_trashed([doc.name])
+
+		set_trashed([doc.name], is_trashed=0)
+
+		flag, stamp = frappe.db.get_value("Draw Diagram", doc.name, ["is_trashed", "trashed_on"])
+		self.assertEqual(flag, 0)
+		self.assertIsNone(stamp)
+
+	def test_set_trashed_leaves_revision_and_modified_alone(self):
+		# Trashing is not an edit. Bumping `revision` reads as a conflicting save to
+		# an open editor, and bumping `modified` would reorder "Last edited" and push
+		# a restored diagram to the top of the shelf.
+		from draw.api.diagram import set_trashed
+
+		doc = self._make("block", {"schemaVersion": 1}, title="Untouched metadata")
+		before = frappe.db.get_value("Draw Diagram", doc.name, ["revision", "modified"])
+
+		set_trashed([doc.name])
+
+		self.assertEqual(frappe.db.get_value("Draw Diagram", doc.name, ["revision", "modified"]), before)
+
+	def test_set_trashed_accepts_the_json_string_a_http_call_sends(self):
+		from draw.api.diagram import set_trashed
+
+		doc = self._make("block", {"schemaVersion": 1}, title="From the wire")
+
+		self.assertEqual(set_trashed(json.dumps([doc.name]))["updated"], [doc.name])
+
+	def test_set_trashed_skips_a_diagram_the_caller_cannot_write(self):
+		# One un-writable diagram in a selection must not strand the rest of it.
+		from draw.api.diagram import set_trashed
+
+		other = self._user("draw-batch-stranger@example.com")
+		theirs = self._private_diagram_owned_by(other, title="Not yours")
+		mine = self._make("block", {"schemaVersion": 1}, title="Mine")
+
+		user = self._draw_user("draw-batch-owner@example.com")
+		frappe.db.set_value("Draw Diagram", mine.name, "owner", user)
+		frappe.set_user(user)
+		try:
+			result = set_trashed([theirs.name, mine.name])
+		finally:
+			frappe.set_user("Administrator")
+
+		self.assertEqual(result["updated"], [mine.name])
+		self.assertEqual(frappe.db.get_value("Draw Diagram", theirs.name, "is_trashed"), 0)
+		self.assertEqual(frappe.db.get_value("Draw Diagram", mine.name, "is_trashed"), 1)
+
+	def test_set_trashed_ignores_names_that_do_not_exist(self):
+		from draw.api.diagram import set_trashed
+
+		doc = self._make("block", {"schemaVersion": 1}, title="Real one")
+
+		self.assertEqual(set_trashed(["no-such-diagram", doc.name])["updated"], [doc.name])
+
+	def test_set_trashed_de_duplicates_the_batch(self):
+		from draw.api.diagram import set_trashed
+
+		doc = self._make("block", {"schemaVersion": 1}, title="Twice over")
+
+		self.assertEqual(set_trashed([doc.name, doc.name])["updated"], [doc.name])
+
+	def test_set_trashed_refuses_an_unbounded_batch(self):
+		from draw.api.diagram import MAX_TRASH_BATCH, set_trashed
+
+		names = [f"diagram-{i}" for i in range(MAX_TRASH_BATCH + 1)]
+
+		self.assertRaises(frappe.ValidationError, set_trashed, names)
+
+	def test_set_trashed_rejects_something_that_is_not_a_list(self):
+		from draw.api.diagram import set_trashed
+
+		self.assertRaises(frappe.ValidationError, set_trashed, json.dumps({"name": "nope"}))
+
 	# ----- whitelisted API contract -----
 
 	def test_every_whitelisted_endpoint_annotates_all_arguments(self):

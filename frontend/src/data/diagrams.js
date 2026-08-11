@@ -1,7 +1,7 @@
 // Data access for Draw Diagram documents, via frappe-ui resources.
 // Keeps all Draw Diagram API wiring in one place so views stay declarative.
 
-import { createListResource, createDocumentResource } from 'frappe-ui'
+import { call, createListResource, createDocumentResource } from 'frappe-ui'
 import { createDiagramDocument } from '@/diagram/schema.js'
 import { useAppSettings } from '@/composables/useAppSettings.js'
 import { DEFAULT_THEME_PRESET } from '@/diagram/theme.js'
@@ -64,6 +64,18 @@ function applyDefaultSettings(document) {
   const { settings } = useAppSettings()
   document.themePreset = settings.defaultThemePreset || DEFAULT_THEME_PRESET
   if (document.canvas) document.canvas.background = settings.defaultCanvasBackground ?? null
+}
+
+// Move a batch of diagrams to Trash, or restore them, in ONE request (#402).
+// A document resource writes one diagram per round trip, so clearing a selection
+// of sixty used to be sixty of them. Returns the names the server actually
+// changed — it silently skips any the caller may not write.
+export async function setTrashed(names, isTrashed) {
+  const response = await call('draw.api.diagram.set_trashed', {
+    names,
+    is_trashed: isTrashed ? 1 : 0,
+  })
+  return response?.updated || []
 }
 
 export function loadDiagram(name) {
