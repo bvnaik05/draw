@@ -30,6 +30,7 @@ declare module 'vue' {
     CommentsPanel: typeof import('./src/components/comments/CommentsPanel.vue')['default']
     CommentsToggle: typeof import('./src/components/toolbar/CommentsToggle.vue')['default']
     CommentThread: typeof import('./src/components/comments/CommentThread.vue')['default']
+    ConfirmHost: typeof import('./src/components/ConfirmHost.vue')['default']
     ConnectorMarker: typeof import('./src/components/canvas/ConnectorMarker.vue')['default']
     ConnectorSection: typeof import('./src/components/palette-right/ConnectorSection.vue')['default']
     ConnectorView: typeof import('./src/components/canvas/ConnectorView.vue')['default']

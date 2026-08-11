@@ -8,7 +8,7 @@
 // on selection. Creation is the top-right CTA only. At most MAX_PINNED pinned.
 // Deleting from the bulk bar is optimistic and batched — see "trash (#402)" below.
 import { computed, reactive, ref, watch } from 'vue'
-import { call, useCall, useList, dialog, toast, Dialog, Button, Divider, Dropdown, TabButtons, TextInput, Tooltip } from 'frappe-ui'
+import { call, useCall, useList, dialog, Dialog, Button, Divider, Dropdown, TabButtons, TextInput, Tooltip } from 'frappe-ui'
 import DiagramCollection from './DiagramCollection.vue'
 import CollectionChips from './CollectionChips.vue'
 import CollectionPicker from './CollectionPicker.vue'
@@ -357,13 +357,16 @@ const collectionHandlers = {
     <div class="mb-5 flex h-9 items-center gap-2">
       <!-- In list view the master checkbox lives in the table header (left of
            Name); in tile view there's no header row, so it sits here. -->
-      <SelectAllCheckbox
-        v-if="view === 'tile' && currentDiagrams.length"
-        class="ml-1 mr-1 flex-none"
-        :all-selected="allSelected"
-        :some-selected="someSelected"
-        @change="setAllSelected"
-      />
+      <!-- Spacing lives on the wrapper: frappe-ui's Checkbox has no
+           `inheritAttrs: false`, so a class passed to it lands on both its root
+           element and the control inside, doubling the margin. -->
+      <span v-if="view === 'tile' && currentDiagrams.length" class="ml-1 mr-1 flex flex-none items-center">
+        <SelectAllCheckbox
+          :all-selected="allSelected"
+          :some-selected="someSelected"
+          @change="setAllSelected"
+        />
+      </span>
 
       <template v-if="selectedCount">
         <span class="text-sm font-semibold text-ink-gray-9">{{ selectedCount }} selected</span>

@@ -26,7 +26,8 @@ function undoHandler() {
 
 describe('useOptimisticTrash', () => {
   beforeEach(() => {
-    setTrashed.mockReset().mockResolvedValue([])
+    // By default the server accepts everything it was asked for.
+    setTrashed.mockReset().mockImplementation((names) => Promise.resolve(names))
     toast.success.mockReset()
     toast.error.mockReset()
   })
@@ -42,7 +43,7 @@ describe('useOptimisticTrash', () => {
     expect(notTrashing({ name: 'b' })).toBe(false)
     expect(notTrashing({ name: 'c' })).toBe(true)
 
-    write.resolve([])
+    write.resolve(['a', 'b'])
     await settled
   })
 
@@ -64,7 +65,7 @@ describe('useOptimisticTrash', () => {
       'Moved 1 diagram to Trash',
       expect.objectContaining({ action: expect.objectContaining({ label: 'Undo' }) }),
     )
-    write.resolve([])
+    write.resolve(['a'])
     await settled
   })
 
@@ -89,7 +90,7 @@ describe('useOptimisticTrash', () => {
     const refresh = vi.fn()
     const { notTrashing, trashDiagrams } = useOptimisticTrash(refresh)
 
-    await expect(trashDiagrams(['a', 'b'])).resolves.toBe(false)
+    await expect(trashDiagrams(['a', 'b'])).resolves.toEqual([])
 
     expect(notTrashing({ name: 'a' })).toBe(true)
     expect(notTrashing({ name: 'b' })).toBe(true)
@@ -119,7 +120,7 @@ describe('useOptimisticTrash', () => {
 
     expect(setTrashed).toHaveBeenCalledTimes(1)
 
-    write.resolve([])
+    write.resolve(['a'])
     await settled
     await undone
     expect(setTrashed).toHaveBeenLastCalledWith(['a'], false)
@@ -138,7 +139,7 @@ describe('useOptimisticTrash', () => {
 
   it('does nothing at all for an empty selection', async () => {
     const { trashDiagrams } = useOptimisticTrash(async () => {})
-    await expect(trashDiagrams([])).resolves.toBe(false)
+    await expect(trashDiagrams([])).resolves.toEqual([])
     expect(setTrashed).not.toHaveBeenCalled()
     expect(toast.success).not.toHaveBeenCalled()
   })

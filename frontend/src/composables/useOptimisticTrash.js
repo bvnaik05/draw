@@ -26,44 +26,69 @@ export function useOptimisticTrash(refresh) {
   }
 
   function trashDiagrams(names) {
-    if (!names.length) return Promise.resolve(false)
+    if (!names.length) return Promise.resolve([])
     names.forEach((name) => trashing.add(name))
     // The toast goes up against the in-flight write rather than after it, so Undo
-    // is on offer from the moment the rows disappear.
+    // is on offer from the moment the rows disappear. It claims the whole
+    // selection because that is the optimistic promise; writeTrashed corrects the
+    // record if the server turns any of them down.
     const settled = writeTrashed(names)
     toast.success(`Moved ${countLabel(names.length)} to Trash`, {
-      action: { label: 'Undo', onClick: () => undoTrash(names, settled) },
+      action: { label: 'Undo', onClick: () => undoTrash(settled) },
     })
     return settled
   }
 
-  // Resolves true once the batch is trashed and the list has caught up; false if
-  // the write failed and the rows have been put back.
+  // Resolves with the names the server ACTUALLY trashed — empty if the write
+  // failed outright. The endpoint skips diagrams the caller cannot write rather
+  // than failing the batch, so "we asked for 7" and "7 moved" are different
+  // facts; reporting the first as the second would leave the user believing a
+  // delete happened that did not, and would have Undo restore rows that were
+  // never trashed.
   async function writeTrashed(names) {
+    let updated = []
     try {
-      await setTrashed(names, true)
+      updated = await setTrashed(names, true)
     } catch (error) {
-      names.forEach((name) => trashing.delete(name))
+      release(names)
       toast.error(messageFrom(error, `Could not move ${countLabel(names.length)} to Trash`))
-      return false
+      return []
     }
-    await refresh()
-    names.forEach((name) => trashing.delete(name))
-    return true
+    // A failed reload leaves a stale list, which the release below resolves the
+    // honest way — the rows come back rather than staying hidden on a guess.
+    await refresh().catch(() => {})
+    release(names)
+    reportDeclined(names, updated)
+    return updated
   }
 
   // Undo waits for the trash write to settle first: a restore that overtook it
-  // would be undone by the very write it is undoing.
-  async function undoTrash(names, settled) {
-    if (!(await settled)) return
+  // would be undone by the very write it is undoing. It restores only what was
+  // actually trashed.
+  async function undoTrash(settled) {
+    const trashed = await settled
+    if (!trashed.length) return
     try {
-      await setTrashed(names, false)
+      await setTrashed(trashed, false)
     } catch (error) {
-      toast.error(messageFrom(error, `Could not restore ${countLabel(names.length)}`))
+      toast.error(messageFrom(error, `Could not restore ${countLabel(trashed.length)}`))
       return
     }
-    await refresh()
-    toast.success(`Restored ${countLabel(names.length)}`)
+    await refresh().catch(() => {})
+    toast.success(`Restored ${countLabel(trashed.length)}`)
+  }
+
+  function release(names) {
+    names.forEach((name) => trashing.delete(name))
+  }
+
+  // Diagrams the server declined — shared with the caller at view level, say. The
+  // rows are already back on the shelf by now; this says why they came back.
+  function reportDeclined(names, updated) {
+    const moved = new Set(updated)
+    const declined = names.filter((name) => !moved.has(name))
+    if (!declined.length) return
+    toast.error(`${countLabel(declined.length)} stayed — you can only delete diagrams you can edit`)
   }
 
   return { notTrashing, trashDiagrams }

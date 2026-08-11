@@ -8,6 +8,7 @@
 // you go into.
 import { ref } from 'vue'
 import { Button, Dialog, TextInput, Tooltip, dialog, toast } from 'frappe-ui'
+import { confirm } from '@/composables/useConfirm.js'
 import { createCollection, deleteCollection, renameCollection } from '@/data/collections.js'
 
 const props = defineProps({
@@ -57,7 +58,7 @@ function startRename(collection) {
 // Deleting a collection never deletes what is in it — say so, or it reads as
 // destructive and no one will touch it.
 function confirmDelete(collection) {
-  dialog.confirm({
+  confirm({
     title: 'Delete collection?',
     message: `"${collection.title}" will be removed. The ${collection.count} drawing${
       collection.count === 1 ? '' : 's'
