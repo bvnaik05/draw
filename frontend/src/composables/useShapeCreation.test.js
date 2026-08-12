@@ -9,6 +9,7 @@ import {
 import { shapeCornerRadius } from '@/diagram/shapeGeometry.js'
 import { createDiagramStore } from '@/stores/useDiagramStore.js'
 import { createDiagramDocument } from '@/diagram/schema.js'
+import { useTextEditing } from '@/composables/useTextEditing.js'
 
 // The palette-drag gesture has two halves in different files: the tile produces a
 // dataTransfer payload (startPaletteDrag) and the canvas consumes it
@@ -292,6 +293,23 @@ describe('placeArmedStarter (click-to-place, #75)', () => {
     expect(centre.x).toBeCloseTo(120, 6)
     expect(centre.y).toBeCloseTo(80, 6)
     expect(editorUi.state.pendingStarter).toBeNull()
+  })
+
+  // #410: a placed flowchart node used to be left merely SELECTED, not editing — so
+  // the very next keystroke fell through to the global flowchart keyboard handler
+  // (Enter/D/T/I chain a node) instead of typing a label. Dropping straight into
+  // edit, with the default label pre-selected, is what closes that off.
+  it('drops the placed flowchart node straight into text-edit with its label pre-selected', () => {
+    const store = unifiedStore()
+    const editorUi = armedUi({ kind: 'flowchart', nodeType: 'terminator' })
+    const creation = useShapeCreation(store, editorUi)
+
+    creation.placeArmedStarter(fakePointerEvent(120, 80))
+
+    const node = store.state.shapes.find((s) => s.role === 'flowchart-node')
+    const editing = useTextEditing(store, editorUi)
+    expect(editing.editingShapeId.value).toBe(node.id)
+    expect(editing.session.selectAll).toBe(true)
   })
 
   it('honours the viewport pan/zoom when mapping the click to a canvas point', () => {

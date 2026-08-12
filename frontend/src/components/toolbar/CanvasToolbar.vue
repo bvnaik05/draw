@@ -40,6 +40,7 @@ import LineGroup from './groups/LineGroup.vue'
 import MindmapStyleGroup from './groups/MindmapStyleGroup.vue'
 import MindmapNodeGroup from './groups/MindmapNodeGroup.vue'
 import FlowchartNodeGroup from './groups/FlowchartNodeGroup.vue'
+import FlowchartNodeTypeGroup from './groups/FlowchartNodeTypeGroup.vue'
 import MapLayoutGroup from './groups/MapLayoutGroup.vue'
 import WhiteboardObjectGroup from './groups/WhiteboardObjectGroup.vue'
 import StickyGroup from './groups/StickyGroup.vue'
@@ -51,7 +52,7 @@ import WhiteboardTools from '@/components/floating/WhiteboardTools.vue'
 import ToolbarSeparator from './ToolbarSeparator.vue'
 
 const { chromeType } = useSelectionContext()
-const { connector, hasShapes, count, editing } = useBlockSelection()
+const { connector, hasShapes, count, editing, shapes } = useBlockSelection()
 const mindmap = useMindmapSelection()
 const store = useDiagramStore()
 const modeStrategy = useModeStrategy()
@@ -139,6 +140,11 @@ const flowchartSelected = computed(
       <template v-else-if="shapeSelected">
         <ToolbarSeparator />
         <template v-if="!editing">
+          <!-- A migrated flowchart node (free-floating #122) gets its type swap
+               here, alongside the generic Fill/Border every shape already has —
+               chromeType resolves it to 'block' chrome, so FlowchartNodeGroup
+               below (which reads the legacy sub-model) never sees it (#410). -->
+          <FlowchartNodeTypeGroup :shapes="shapes" />
           <StyleGroup />
           <ToolbarSeparator />
         </template>

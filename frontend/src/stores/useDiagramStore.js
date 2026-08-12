@@ -10,8 +10,14 @@ import { clone } from '@/utils/clone.js'
 import { DEFAULT_THEME_PRESET } from '@/diagram/theme.js'
 import { createDiagramDocument, SCHEMA_VERSION, DEFAULT_DIAGRAM_TYPE } from '@/diagram/schema.js'
 import { addChild, addSibling, addRootNode, createMindMap, subtreeIds } from '@/diagram/mindmapModel.js'
-import { ROLE, isMindmapShape, isFlowchartShape, flattenSubmodels } from '@/diagram/freeFloating.js'
-import { mindmapModelFromShapes } from '@/diagram/freeFloatingGraph.js'
+import {
+  ROLE,
+  isMindmapShape,
+  isFlowchartShape,
+  flattenSubmodels,
+  FLOWCHART_FALLBACK_TYPE,
+} from '@/diagram/freeFloating.js'
+import { mindmapModelFromShapes, flowchartModelFromShapes } from '@/diagram/freeFloatingGraph.js'
 import { buildMindmapChild, buildMindmapSibling, buildFlowchartChild, flowchartLayoutPatches, mindmapLayoutPatches } from '@/diagram/freeFloatingOps.js'
 import { DEFAULT_NODE_STYLE } from '@/diagram/mindmapNodeStyle.js'
 import { useAppSettings } from '@/composables/useAppSettings.js'
@@ -23,6 +29,8 @@ import {
   removeFlowchartEdge,
   flowchartNodeById,
   flowchartEdgeById,
+  swapNodeType,
+  outgoingEdges,
 } from '@/diagram/flowchartModel.js'
 import {
   addStroke,
@@ -429,6 +437,42 @@ function attachFlowchart(store, state, history) {
         (c) => !remove.has(c.from?.shapeId) && !remove.has(c.to?.shapeId),
       )
       state.selection = state.selection.filter((sid) => !remove.has(sid))
+    })
+  }
+  // Swap a migrated flowchart SHAPE's node type in place (free-floating #122, spec
+  // B7/B11), preserving its edges — the free-floating counterpart of swapNodeType,
+  // which the toolbar's Node-type picker could not reach before (#410: it only ever
+  // wrote to the empty legacy state.flowchart). Reconstructs the model so the
+  // existing branch-aware swap logic runs unchanged, then writes back the swapped
+  // node's shape plus its outgoing edges' ports (a decision leaving the type
+  // re-homes its outgoing edges onto 'out'). An edge's on-canvas ROUTE never needs
+  // patching here — ConnectorView recomputes each flowchart edge's anchor from the
+  // shapes' current boxes on every render.
+  store.swapFlowchartNodeType = (id, nodeType) => {
+    const shape = state.shapes.find((s) => s.id === id && s.role === ROLE.flowchartNode)
+    if (!shape) return
+    const model = flowchartModelFromShapes(state.shapes, state.connectors)
+    swapNodeType(model, id, nodeType)
+    const node = flowchartNodeById(model, id)
+    // swapNodeType is a no-op for an unknown node, an unknown type, or an unchanged
+    // one. Reading the result back is what tells those apart, so an invalid type
+    // can never be written onto the shape.
+    if (node?.nodeType !== nodeType) return
+    const ports = new Map(outgoingEdges(model, id).map((edge) => [edge.to.nodeId, edge.from.port]))
+    history.commit('Swap node type', () => {
+      shape.type = FLOWCHART_FALLBACK_TYPE[nodeType] || 'rectangle'
+      shape.w = node.w
+      shape.h = node.h
+      shape.flowchart = {
+        ...shape.flowchart,
+        nodeType,
+        branches: node.branches.map((branch) => ({ ...branch })),
+      }
+      for (const connector of state.connectors) {
+        if (connector.role !== ROLE.flowchartEdge || connector.from?.shapeId !== id) continue
+        const port = ports.get(connector.to?.shapeId)
+        if (port) connector.flowchart = { ...connector.flowchart, fromPort: port }
+      }
     })
   }
   store.updateFlowchartNode = (id, patch) =>

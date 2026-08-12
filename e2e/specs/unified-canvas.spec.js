@@ -394,6 +394,12 @@ test.describe('unified canvas: free-floating mind map & flowchart', () => {
     await insertFlowchartNode(page) // auto-selected
     await expect(flowchartAddHandles(page).first()).toBeVisible()
 
+    // A dropped node now lands straight in text-edit with its label pre-selected
+    // (#410), which is the whole point of that change — so the build shortcut below
+    // would otherwise just type into the label. Escape commits and exits the editing
+    // session (TextEditor's own handler) before the key reaches the free-floating
+    // flowchart keydown handler.
+    await page.keyboard.press('Escape')
     await page.keyboard.press('Enter') // Enter adds a connected Process step below (#77)
 
     await expect
