@@ -111,37 +111,29 @@ test.describe('unified canvas: block tools', () => {
 })
 
 test.describe('unified canvas: history', () => {
-  // The store has carried undo and redo since the start, reachable only by
-  // keyboard — so this asserts the toolbar route specifically, not the history
-  // itself, which Meta+z already covers above.
-  test('the toolbar undoes and redoes an insert, and stops at each end', async ({ page, diagram }) => {
+  // Undo/redo are keyboard-only (#397 toolbar trim) — no toolbar buttons.
+  // 'a shape can be selected, moved and undone' above already covers Meta+z;
+  // this covers the redo direction and an insert (not just a move).
+  test('Meta+Shift+z redoes an insert undone with Meta+z', async ({ page, diagram }) => {
     const name = await diagram.open('unified', { empty: true })
-    const bar = page.locator(TOOLBAR)
-    const undo = bar.getByRole('button', { name: 'Undo', exact: true })
-    const redo = bar.getByRole('button', { name: 'Redo', exact: true })
-
-    // A document nobody has edited yet has no step in either direction.
-    await expect(undo).toBeDisabled()
-    await expect(redo).toBeDisabled()
 
     await dragShapeFromCatalog(page, { x: 500, y: 320 })
     await expect
       .poll(async () => (await diagram.saved(name)).shapes.length, { timeout: 20_000 })
       .toBe(1)
-    await expect(undo).toBeEnabled()
 
-    await undo.click()
+    await page.keyboard.press('Meta+z')
     await expect
       .poll(async () => (await diagram.saved(name)).shapes.length, {
-        message: 'the toolbar Undo did not remove the shape from the saved document',
+        message: 'Meta+z did not remove the inserted shape from the saved document',
         timeout: 20_000,
       })
       .toBe(0)
 
-    await redo.click()
+    await page.keyboard.press('Meta+Shift+z')
     await expect
       .poll(async () => (await diagram.saved(name)).shapes.length, {
-        message: 'the toolbar Redo did not put the shape back',
+        message: 'Meta+Shift+z did not put the shape back',
         timeout: 20_000,
       })
       .toBe(1)

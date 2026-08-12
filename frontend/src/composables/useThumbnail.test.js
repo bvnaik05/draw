@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('frappe-ui', () => ({ createResource: () => ({ submit: () => {} }) }))
 
 const { documentToSvg, isDocumentEmpty, safeColor } = await import('./useThumbnail.js')
+const { ROUNDED_CORNER_RADIUS, SHARP_CORNER_RADIUS } = await import('@/diagram/shapeGeometry.js')
 
 // documentToSvg is the SINGLE render-to-SVG path: PNG/PDF export (useExport), the
 // saved thumbnail, and the home + trash tile previews all go through it. So anything
@@ -181,6 +182,51 @@ describe('documentToSvg still renders single-type documents', () => {
   it('renders a legacy block document', () => {
     const doc = { ...unifiedDocument(), diagramType: 'block' }
     expect(documentToSvg(doc)).toContain('BLOCK-SHAPE')
+  })
+})
+
+// Corner radius (#411): the rect branch hardcoded rx="8", so a box left the canvas
+// less rounded than it was drawn — in PNG export, PDF export, the home tile and the
+// minimap at once. The radius has to come from the same helper ShapeView uses.
+describe('documentToSvg — corner radius', () => {
+  function boxDoc(shape) {
+    return {
+      schemaVersion: 2,
+      diagramType: 'block',
+      themePreset: 'ocean',
+      canvas: { width: 1280, height: 720, background: 'none' },
+      sections: [],
+      connectors: [],
+      shapes: [
+        {
+          id: 'b1', x: 0, y: 0, w: 200, h: 100, rotation: 0, opacity: 1, zIndex: 1,
+          fill: '#EFF6FF', border: { color: '#4F94FF', width: 2 }, text: { content: '', style: {} },
+          ...shape,
+        },
+      ],
+      mindmap: null, flowchart: null, whiteboard: null,
+    }
+  }
+
+  const rxOf = (svg) => svg.match(/<rect[^>]*\srx="([^"]*)"/)[1]
+
+  it("exports the shape's own radius, not a fixed one", () => {
+    expect(rxOf(documentToSvg(boxDoc({ type: 'rounded', cornerRadius: 32 })))).toBe('32')
+    expect(rxOf(documentToSvg(boxDoc({ type: 'rounded', cornerRadius: 4 })))).toBe('4')
+  })
+
+  it('exports a rounded rectangle at the radius the canvas draws it', () => {
+    expect(rxOf(documentToSvg(boxDoc({ type: 'rounded' })))).toBe(String(ROUNDED_CORNER_RADIUS))
+  })
+
+  it('keeps a plain rectangle lightly rounded', () => {
+    expect(rxOf(documentToSvg(boxDoc({ type: 'rectangle' })))).toBe(String(SHARP_CORNER_RADIUS))
+  })
+
+  it('falls back to the type default rather than letting a crafted radius through', () => {
+    const svg = documentToSvg(boxDoc({ type: 'rounded', cornerRadius: '8" onload="alert(1)' }))
+    expect(svg, 'an event handler reached the markup').not.toMatch(/\son[a-z]+\s*=/i)
+    expect(rxOf(svg)).toBe(String(ROUNDED_CORNER_RADIUS))
   })
 })
 

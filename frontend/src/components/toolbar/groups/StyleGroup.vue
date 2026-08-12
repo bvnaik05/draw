@@ -9,6 +9,7 @@ import { useBlockSelection } from '@/composables/useBlockSelection.js'
 import { isMindmapShape } from '@/diagram/freeFloating.js'
 import { hasFill, hasBorder } from '@/diagram/mindmapNodeStyle.js'
 import { inkFor } from '@/diagram/espressoPalette.js'
+import { CORNER_RADIUS_OPTIONS, isRoundedBoxShape, shapeCornerRadius } from '@/diagram/shapeGeometry.js'
 import EspressoSwatchGrid from '@/components/palette-right/EspressoSwatchGrid.vue'
 import FillBorderSection from '@/components/palette-right/FillBorderSection.vue'
 import TransparencySection from '@/components/palette-right/TransparencySection.vue'
@@ -58,6 +59,27 @@ function setNodeBorder(hex) {
 function setNodeCurve(value) {
   if (shapeIds.value.length) store.updateShapes(shapeIds.value, { mindmap: { curve: value } })
 }
+
+// A plain rounded rectangle picks its own roundedness from four presets (#411). It
+// shares the Corners popover with a node's branch curve — the selection is one or
+// the other, never both, so the two controls can't collide.
+const isRoundedBoxSelection = computed(
+  () => shapes.value.length > 0 && shapes.value.every(isRoundedBoxShape),
+)
+const boxCornerRadius = computed(() =>
+  shapeCornerRadius(shapes.value[0]?.type, shapes.value[0]?.cornerRadius),
+)
+function setBoxCornerRadius(radius) {
+  if (shapeIds.value.length) store.updateShapes(shapeIds.value, { cornerRadius: radius })
+}
+
+// The swatch previews the shape at a quarter of its size, radius included: on a
+// smaller box, border-radius clamps to half the height and 12 / 20 / 32 would all
+// render as the same pill, making three of the four presets indistinguishable.
+const PREVIEW_SCALE = 0.25
+function previewRadiusStyle(radius) {
+  return { borderRadius: `${radius * PREVIEW_SCALE}px` }
+}
 </script>
 
 <template>
@@ -95,13 +117,35 @@ function setNodeCurve(value) {
     </template>
   </Popover>
 
-  <Popover v-if="isNodeSelection">
+  <!-- One Corners entry, two controls: a node's branch curve, or a rounded
+       rectangle's own roundedness (#411). -->
+  <Popover v-if="isNodeSelection || isRoundedBoxSelection">
     <template #trigger>
       <ToolbarButton label="Corners" icon="lucide-spline" />
     </template>
     <template #default>
       <div class="p-2">
-        <TabButtons size="sm" :model-value="nodeCurve" :options="CURVE_OPTIONS" @update:model-value="setNodeCurve" />
+        <TabButtons
+          v-if="isNodeSelection"
+          size="sm"
+          :model-value="nodeCurve"
+          :options="CURVE_OPTIONS"
+          @update:model-value="setNodeCurve"
+        />
+        <div v-else class="flex items-center gap-1.5">
+          <!-- frappe-ui-exempt: the swatch IS a scaled preview of the literal corner radius, which no Button variant can draw --><button
+            v-for="radius in CORNER_RADIUS_OPTIONS"
+            :key="radius"
+            type="button"
+            :aria-label="`Corner radius ${radius}`"
+            :aria-pressed="boxCornerRadius === radius"
+            class="flex h-9 w-14 items-center justify-center rounded-md"
+            :class="boxCornerRadius === radius ? 'bg-surface-gray-3' : 'bg-surface-gray-1 hover:bg-surface-gray-2'"
+            @click="setBoxCornerRadius(radius)"
+          >
+            <span class="block h-6 w-11 border-[1.5px] border-outline-gray-4" :style="previewRadiusStyle(radius)" />
+          </button>
+        </div>
       </div>
     </template>
   </Popover>

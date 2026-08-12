@@ -19,13 +19,17 @@ import { tableInsertOrigin } from '@/components/floating/tableSizePicker.js'
 // Curated set (#131). The polygon is placed vertex by vertex, so its tile arms a
 // multi-click tool and — unlike every other shape — cannot be dragged onto the
 // canvas, because there is no fixed geometry to drop.
+//
+// Square and Diamond are not tiles of their own: a square is a rectangle drawn
+// with Shift held (boxBetween in useShapeCreation.js already locks the sides
+// equal), and Diamond stayed reachable only through this catalog, which is
+// gone. Both shape TYPES still exist in the schema/renderer — a mind-map node
+// and a flowchart decision node still use them — this only trims the tile grid.
 export const SHAPES = [
   { type: 'rectangle', label: 'Rectangle' },
-  { type: 'square', label: 'Square' },
   { type: 'rounded', label: 'Rounded rectangle' },
   { type: 'ellipse', label: 'Ellipse' },
   { type: 'triangle', label: 'Triangle' },
-  { type: 'diamond', label: 'Diamond' },
   { type: 'hexagon', label: 'Hexagon' },
   { type: 'polygon', label: 'Polygon' },
   { type: 'arrow', label: 'Block arrow' },

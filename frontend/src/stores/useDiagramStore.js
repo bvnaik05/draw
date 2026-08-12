@@ -7,7 +7,7 @@ import { reactive, computed, provide, inject } from 'vue'
 import { createShape, createConnector, nextId } from '@/diagram/factories.js'
 import { createHistory } from '@/stores/history.js'
 import { clone } from '@/utils/clone.js'
-import { findThemePreset, DEFAULT_THEME_PRESET } from '@/diagram/theme.js'
+import { DEFAULT_THEME_PRESET } from '@/diagram/theme.js'
 import { createDiagramDocument, SCHEMA_VERSION, DEFAULT_DIAGRAM_TYPE } from '@/diagram/schema.js'
 import { addChild, addSibling, addRootNode, createMindMap, subtreeIds } from '@/diagram/mindmapModel.js'
 import {
@@ -91,7 +91,7 @@ function assembleStore(state, history) {
   attachSelection(store, state)
   attachOrdering(store, state, history)
   attachGrouping(store, state, history)
-  attachThemeAndCanvas(store, state, history)
+  attachCanvas(store, state, history)
   attachMindMap(store, state, history)
   attachFlowchart(store, state, history)
   attachWhiteboard(store, state, history)
@@ -989,32 +989,12 @@ function attachGrouping(store, state, history) {
     )
 }
 
-function attachThemeAndCanvas(store, state, history) {
-  store.applyTheme = (presetName) =>
-    history.commit('Apply theme', () => {
-      const previousPreset = state.themePreset
-      state.themePreset = presetName
-      restyleShapes(state, presetName, previousPreset)
-    })
+// state.themePreset is still read all over (canvas data-fdpreset, the flowchart
+// and mind-map layers, thumbnails) and Settings' defaultThemePreset seeds it for
+// a new diagram — but no mutator switches an existing diagram's preset any more,
+// so nothing here re-paints shapes to a new triad (#397).
+function attachCanvas(store, state, history) {
   store.setCanvas = (patch) => history.commit('Canvas', () => Object.assign(state.canvas, patch))
-}
-
-// Re-paint only shapes that still wear the PREVIOUS preset's triad, so a user's
-// deliberate fill/border/text-color overrides survive a theme change (the
-// CONVENTIONS contract: applyTheme restyles shapes that use theme triads).
-function restyleShapes(state, presetName, previousPreset) {
-  const next = findThemePreset(presetName).t
-  const previous = findThemePreset(previousPreset).t
-  for (const shape of state.shapes) {
-    if (shape.type === 'text') continue
-    if (shape.fill === previous.fill) shape.fill = next.fill
-    if (shape.border?.color === previous.stroke) {
-      shape.border = { ...shape.border, color: next.stroke }
-    }
-    if (shape.text?.style?.color === previous.ink) {
-      shape.text = { ...shape.text, style: { ...shape.text.style, color: next.ink } }
-    }
-  }
 }
 
 function attachDocumentIo(store, state, history) {

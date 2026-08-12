@@ -368,8 +368,8 @@ via the Espresso dark token overrides (`--es-surface-white` → `#1C1C1C`, etc.)
 - Sidebar Trash → **Trash view**; "Back to diagrams" → **Home**.
 
 ### Other (from PRD, staged in prototype)
-- Double-click shape → inline text edit (centered default); rulers appear top/left in
-  screen space at all zooms (PRD §6).
+- Double-click shape → inline text edit (centered default); the text sits inside the
+  shape with a fixed 12px horizontal padding, no rulers (PRD §6).
 - Double-click empty canvas → creates last-used (or rectangle) shape at that point in
   text-edit mode (PRD §7.1).
 - Keyboard: see PRD §7.3 (Cmd/Ctrl C/X/V, Z/Y, A, D, Delete, Esc; arrow-key nudge,

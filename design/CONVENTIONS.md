@@ -62,7 +62,7 @@ frontend/src/
     useThumbnail.js            # throttled SVG->raster thumbnail on save
   components/
     canvas/                    # DiagramCanvas, ShapeView, ConnectorView, SelectionLayer,
-                               # HoverArrows, SmartGuidesLayer, GridLayer, TextEditor, Rulers
+                               # HoverArrows, SmartGuidesLayer, GridLayer, TextEditor
     toolbar/                   # TopToolbar (title bar) + CanvasToolbar (the static bar)
       groups/                  # one component per toolbar entry; see the contract below
     palette-right/            # panel bodies the toolbar's menus reuse (fill, arrange, link...)
@@ -83,8 +83,8 @@ frontend/src/
 ## The canvas toolbar — one bar, no floating menus
 
 Every control that acts on the selection lives in ONE static bar
-(`toolbar/CanvasToolbar.vue`), between the title bar and the ruler. Before #359
-there were eight bars floating over the canvas, each anchored above whatever was
+(`toolbar/CanvasToolbar.vue`), directly below the title bar. Before #359 there
+were eight bars floating over the canvas, each anchored above whatever was
 selected. Do not add a ninth.
 
 The bar is ONE left-aligned run: a fixed prefix that never changes, then the
@@ -157,7 +157,6 @@ Methods (all shape/connector mutations are history-tracked via commit()):
 - `select(ids)` ; `toggleInSelection(id)` ; `addToSelection(ids)` ; `clearSelection()` ; `selectAll()`
 - `bringToFront(ids)` ; `bringForward(ids)` ; `sendBackward(ids)` ; `sendToBack(ids)`
 - `group(ids)` / `ungroup(ids)` (single-level; store a `groupId` on shapes)
-- `applyTheme(presetName)` (sets themePreset; restyles shapes that use theme triads)
 - `setCanvas(patch)` (size preset / background)
 - `getDocument() -> plain JSON` matching schema.js (for persistence)
 - `loadDocument(doc)` (replace state from a parsed document)
