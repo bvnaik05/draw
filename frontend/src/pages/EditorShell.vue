@@ -4,7 +4,7 @@
 // loaded at all), parses its document, creates + provides the store and editor
 // UI, then composes the toolbar, palettes, canvas, and floating palette
 // (CONVENTIONS integration).
-import { computed, watch, onMounted } from 'vue'
+import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { parseDiagramDocument } from '@/diagram/schema.js'
 import { createDiagramStore, provideDiagramStore } from '@/stores/useDiagramStore.js'
@@ -115,6 +115,16 @@ watch(
     if (status === 'saved') thumbnail.generate()
   },
 )
+
+// A save that lands inside that 30s throttle window is common when someone edits
+// for a few seconds and then leaves — and this watcher stops with the rest of the
+// component, so the 'saved' transition for whatever save is still in flight never
+// reaches it. The throttle then leaves Home showing a stale, incomplete raster
+// forever: a stored thumbnail always wins over a live re-render (#221/#223), and
+// nothing else regenerates it until the diagram is edited again 30s apart. Force
+// one last capture of the in-memory document on the way out, bypassing the
+// throttle, so Home always reflects what was actually left on the canvas (#399).
+onUnmounted(() => thumbnail.generate({ force: true }))
 
 // The doc may arrive after mount; load it into the store once it lands. Reset the
 // mind-map chrome with it — this fires for a late-arriving document and for any
