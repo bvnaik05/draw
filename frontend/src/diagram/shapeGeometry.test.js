@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { shapeCornerRadius, SHARP_CORNER_RADIUS, ROUNDED_CORNER_RADIUS } from './shapeGeometry.js'
+import {
+  shapeCornerRadius,
+  SHARP_CORNER_RADIUS,
+  ROUNDED_CORNER_RADIUS,
+  CORNER_RADIUS_OPTIONS,
+} from './shapeGeometry.js'
 
 // ShapeView renders both the committed shape and the draw preview through this
 // value, so a plain rectangle preview can't look like a rounded rectangle (#130).
@@ -15,5 +20,33 @@ describe('shapeCornerRadius', () => {
 
   it('treats a square like a plain rectangle', () => {
     expect(shapeCornerRadius('square')).toBe(SHARP_CORNER_RADIUS)
+  })
+})
+
+// The roundedness picker (StyleGroup) writes its choice onto the shape itself, and
+// everything that draws a box — canvas, hover outline, export — resolves it here (#411).
+describe('a per-shape corner radius', () => {
+  it('wins over the type default', () => {
+    expect(shapeCornerRadius('rounded', 4)).toBe(4)
+    expect(shapeCornerRadius('rectangle', 32)).toBe(32)
+    expect(shapeCornerRadius('rounded', 0)).toBe(0)
+  })
+
+  it('falls back to the type default when the shape carries none', () => {
+    expect(shapeCornerRadius('rounded', undefined)).toBe(ROUNDED_CORNER_RADIUS)
+    expect(shapeCornerRadius('rectangle', null)).toBe(SHARP_CORNER_RADIUS)
+  })
+
+  // A persisted document can hold anything; an unusable radius must not reach an
+  // `rx` attribute, where it would flatten the corner instead of rounding it.
+  it('ignores a radius that is not a usable number', () => {
+    expect(shapeCornerRadius('rounded', '32')).toBe(ROUNDED_CORNER_RADIUS)
+    expect(shapeCornerRadius('rounded', Number.NaN)).toBe(ROUNDED_CORNER_RADIUS)
+    expect(shapeCornerRadius('rounded', -8)).toBe(ROUNDED_CORNER_RADIUS)
+  })
+
+  it('offers four presets, the current default among them', () => {
+    expect(CORNER_RADIUS_OPTIONS).toHaveLength(4)
+    expect(CORNER_RADIUS_OPTIONS).toContain(ROUNDED_CORNER_RADIUS)
   })
 })
