@@ -13,12 +13,14 @@
 # unused, and a caller reaching one would have got weaker access rules than the live
 # path applies.
 #
-# Two endpoints DO live here, both because a frappe-ui resource cannot express them:
-#   shared_with_me() — "diagrams shared with me that I don't own" is not a list filter
-#     (it joins DocShare and excludes the owner), so the Home sidebar's "Shared with
-#     you" view (GitHub #116) calls this scoped, DocShare-backed read instead.
+# One endpoint DOES live here, because a frappe-ui resource cannot express it:
 #   set_trashed() — a resource trashes one document per request, which made clearing
 #     a selection O(n) round trips (GitHub #402). This is the batch.
+#
+# There is no listing endpoint. shared_with_me() served the "Shared with you" view
+# alone, and that view went with the home view switcher (GitHub #407) — leaving the
+# endpoint behind would have been exactly the unused parallel path described above.
+# Home lists by permission, so a diagram shared with you still appears there.
 
 import hashlib
 import hmac
@@ -119,39 +121,6 @@ def get_public_diagram(name: str) -> dict:
 	return get_diagram(name)
 
 
-@frappe.whitelist()
-def shared_with_me() -> list[dict]:
-	"""Diagrams shared with the current user that they do NOT own — the Home
-	sidebar's "Shared with you" view (GitHub #116).
-
-	Source of truth is core DocShare (frappe.share.get_shared), so it returns exactly
-	the diagrams someone granted this user through the Share dialog. The caller's own
-	diagrams (a self-share, or a share added before ownership moved) and trashed ones
-	are filtered out. Returns the same field set the tile grid renders, so a shared
-	diagram looks identical to an owned one on the shelf.
-	"""
-	user = frappe.session.user
-	shared_names = frappe.share.get_shared(DOCTYPE, user)
-	if not shared_names:
-		return []
-	return frappe.get_all(
-		DOCTYPE,
-		filters={"name": ["in", shared_names], "owner": ["!=", user], "is_trashed": 0},
-		fields=[
-			"name",
-			"title",
-			"creation",
-			"modified",
-			"diagram_type",
-			"is_pinned",
-			"owner",
-			"document",
-			"thumbnail",
-		],
-		order_by="modified desc",
-	)
-
-
 # --- real-time collaboration room (SPEC §11.1) -------------------------------
 # The editor syncs peer-to-peer over Frappe's *public* signaling server, so the
 # room id is the only thing separating one session from another. Deriving it
@@ -211,9 +180,9 @@ def _room_secret(name: str, purpose: str, access: str) -> str:
 
 
 # --- trash (GitHub #402) ------------------------------------------------------
-# The second endpoint that has to live here rather than going through frappe-ui's
-# document resource, for the same reason as shared_with_me(): the client cannot
-# express it. Trashing a selection meant one `set_value` round trip per diagram,
+# The one endpoint that has to live here rather than going through frappe-ui's
+# document resource, because the client cannot express it: trashing a selection
+# meant one `set_value` round trip per diagram,
 # so clearing 60 of them cost 60 sequential requests and 63 seconds behind a
 # modal. A batch is one request whatever the size of the selection.
 

@@ -1,23 +1,23 @@
 <script setup>
-// Home page — composes the sidebar + tile grid (+ empty state) + trash view, and
-// routes to the editor on create/open (spec §2). "Create" makes a unified canvas
-// and lands straight on the editor — no type picker (canvas unification). No
-// folders (#115): diagrams are one flat, pinnable list.
+// Home page — composes the tile grid (+ empty state) + trash view, and routes to
+// the editor on create/open (spec §2). "Create" makes a unified canvas and lands
+// straight on the editor — no type picker (canvas unification). No folders
+// (#115): diagrams are one flat, pinnable list.
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Alert, Button, Dropdown, TabButtons, toast } from 'frappe-ui'
+import { Alert, Breadcrumbs, Button, Dropdown, toast } from 'frappe-ui'
 import { errorMessage } from '@/utils/errorText.js'
 import Logomark from '@/components/Logomark.vue'
 import SettingsDialog from '@/components/home/SettingsDialog.vue'
 import TileGrid from '@/components/home/TileGrid.vue'
 import EmptyState from '@/components/home/EmptyState.vue'
 import TrashView from '@/components/home/TrashView.vue'
-import { SIDEBAR_NAV, VIEW_TITLES } from '@/components/home/homeViews.js'
 import { diagrams, createDiagram } from '@/data/diagrams.js'
 import { logout } from '@/data/session.js'
 import { getDriveAvailability, shouldShowInstallDriveBanner } from '@/data/drive.js'
 
 const router = useRouter()
+// The whole library is Home; Trash is the one place apart from it (#407).
 const view = ref('home')
 
 // Nudge users without Frappe Drive to install it (so their diagrams are tracked
@@ -36,14 +36,11 @@ onMounted(async () => {
 const list = computed(() => diagrams.data || [])
 const isEmpty = computed(() => list.value.length === 0)
 
-const title = computed(() => VIEW_TITLES[view.value] || 'Home')
-
-// The view switcher replaces the old sidebar nav (#308). Same model, so the
-// view set stays defined once in homeViews.js, which already stores each icon's
-// complete lucide class.
-const viewTabs = computed(() =>
-  SIDEBAR_NAV.map((item) => ({ value: item.key, label: item.label, iconLeft: item.icon })),
-)
+// Trash is the only place left to navigate to, so it is a breadcrumb rather than
+// a bar of tabs (#407): Home is the whole library, and the trail only appears
+// once you have stepped out of it.
+const inTrash = computed(() => view.value === 'trash')
+const breadcrumbs = [{ label: 'Home', onClick: () => (view.value = 'home') }, { label: 'Trash' }]
 
 // Real logged-in user, injected into the page boot by www/draw.py.
 const fullName = computed(() => window.full_name || 'You')
@@ -59,11 +56,26 @@ async function signOut() {
   }
 }
 
-// App menu, mirroring the Frappe Slides navbar dropdown.
+// App menu, mirroring the Frappe Drive navbar dropdown: where you can go on top,
+// then what you can do to the app. Trash lives here now that the view switcher is
+// gone (#407) — it is the one view Home does not already contain.
 const appMenu = computed(() => [
-  { label: 'Apps', icon: 'lucide-layout-grid', onClick: () => (window.location.href = '/apps') },
-  { label: 'Settings', icon: 'lucide-settings', onClick: () => (showSettings.value = true) },
-  { label: 'Log out', icon: 'lucide-log-out', onClick: signOut },
+  {
+    group: 'Views',
+    hideLabel: true,
+    options: [
+      { label: 'Trash', icon: 'lucide-trash-2', onClick: () => (view.value = 'trash') },
+    ],
+  },
+  {
+    group: 'App',
+    hideLabel: true,
+    options: [
+      { label: 'Apps', icon: 'lucide-layout-grid', onClick: () => (window.location.href = '/apps') },
+      { label: 'Settings', icon: 'lucide-settings', onClick: () => (showSettings.value = true) },
+      { label: 'Log out', icon: 'lucide-log-out', onClick: signOut },
+    ],
+  },
 ])
 
 // Guard against double-submission: a fast double-click (or a stray double event)
@@ -98,8 +110,9 @@ function open(name) {
 
 <template>
   <div class="flex h-screen flex-col">
-    <!-- Top bar (#308): app identity + menu on the left, view switcher beside it.
-         No sidebar — the gallery gets the full width. -->
+    <!-- Top bar: app identity + menu, and nothing else (#407). Home is the whole
+         library, so it needs no navigation of its own; the trail appears only in
+         Trash, to lead back. No sidebar — the gallery gets the full width. -->
     <header
       class="flex flex-none items-center gap-4 border-b border-outline-gray-1 bg-surface-base px-9 py-2"
     >
@@ -113,15 +126,15 @@ function open(name) {
         </Button>
       </Dropdown>
 
-      <TabButtons v-model="view" size="sm" :options="viewTabs" />
+      <Breadcrumbs v-if="inTrash" :items="breadcrumbs" />
     </header>
 
     <main class="min-h-0 flex-1 overflow-y-auto px-9 py-7">
-      <TrashView v-if="view === 'trash'" />
+      <TrashView v-if="inTrash" />
 
       <template v-else>
         <div class="mb-6 flex items-center justify-between">
-          <div class="text-3xl font-bold text-ink-gray-9">{{ title }}</div>
+          <!-- frappe-ui-exempt: page title, the H1 of the gallery — the type scale governs body and control text, not the page heading --><div class="text-3xl font-bold text-ink-gray-9">Home</div>
           <Button variant="solid" :loading="isCreating" @click="create">
             <template #prefix><span class="lucide-plus h-4 w-4" aria-hidden="true" /></template>
             Create
@@ -143,7 +156,7 @@ function open(name) {
         </Alert>
 
         <EmptyState v-if="isEmpty" @create="create" />
-        <TileGrid v-else :mode="view" @create="create" @open="open" />
+        <TileGrid v-else @create="create" @open="open" />
       </template>
     </main>
 

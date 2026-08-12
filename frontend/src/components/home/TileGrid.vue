@@ -8,7 +8,7 @@
 // on selection. Creation is the top-right CTA only. At most MAX_PINNED pinned.
 // Deleting from the bulk bar is optimistic and batched — see "trash (#402)" below.
 import { computed, reactive, ref, watch } from 'vue'
-import { call, useCall, useList, dialog, Dialog, Button, Divider, Dropdown, TabButtons, TextInput, Tooltip } from 'frappe-ui'
+import { call, useList, dialog, Dialog, Button, Divider, Dropdown, TabButtons, TextInput, Tooltip } from 'frappe-ui'
 import DiagramCollection from './DiagramCollection.vue'
 import CollectionChips from './CollectionChips.vue'
 import CollectionPicker from './CollectionPicker.vue'
@@ -25,13 +25,9 @@ import {
 import { submitOrThrow } from '@/data/submit.js'
 import { createDiagramDocument } from '@/diagram/schema.js'
 
-const props = defineProps({
-  mode: { type: String, default: 'home' }, // 'home' | 'recent' | 'shared' | 'pinned'
-})
 const emit = defineEmits(['create', 'open', 'changed'])
 
 const MAX_PINNED = 5
-const RECENT_LIMIT = 24
 
 // `refetch: false` keeps writes from triggering their own list reload — every
 // mutation here already ends in an explicit refresh(), so the default would
@@ -62,18 +58,6 @@ const previewDocuments = useList({
 })
 const documentsByName = computed(() =>
   Object.fromEntries((previewDocuments.data || []).map((d) => [d.name, d.document])),
-)
-
-// "Shared with you" can't be a plain list filter — it joins DocShare and excludes
-// the owner — so it comes from a dedicated endpoint (draw.api.diagram.shared_with_me),
-// fetched lazily the first time that view is opened.
-const shared = useCall({ url: '/api/v2/method/draw.api.diagram.shared_with_me', immediate: false })
-watch(
-  () => props.mode,
-  (mode) => {
-    if (mode === 'shared') shared.fetch()
-  },
-  { immediate: true },
 )
 
 // Merge each thumbnail-less diagram's document back onto its row, so the tiles
@@ -155,21 +139,15 @@ function bySort(a, b) {
   if (sortKey.value === 'title') return dir * (a.title || '').localeCompare(b.title || '')
   return dir * (ts(a[sortKey.value]) - ts(b[sortKey.value]))
 }
-function byNewest(a, b) {
-  return ts(b.modified) - ts(a.modified)
-}
 
 // --- collections (#217) ----------------------------------------------------
 // Labels, not folders: the chip row narrows the SAME list rather than navigating
-// into anything, so a diagram in two collections shows under both. Only on Home —
-// Recent / Shared / Pinned are their own answers to "which diagrams", and stacking
-// a second filter on them reads as a bug.
+// into anything, so a diagram in two collections shows under both. With one
+// listing view (#407) the chips are always available.
 const collections = ref([])
 const activeCollection = ref('')
 const collectedNames = ref(null) // null = no collection filter
 const collecting = ref(null) // the diagram whose "Add to collection" dialog is open
-
-const showsCollections = computed(() => props.mode === 'home')
 
 async function loadCollections() {
   collections.value = await listCollections()
@@ -190,7 +168,7 @@ async function refreshCollections() {
   if (activeCollection.value) await selectCollection(activeCollection.value)
 }
 
-watch(() => props.mode, (mode) => { if (mode === 'home') loadCollections() }, { immediate: true })
+loadCollections()
 
 function matchesCollection(diagram) {
   return !collectedNames.value || collectedNames.value.has(diagram.name)
@@ -210,21 +188,6 @@ const pinned = computed(() => pinnedOnly(visibleRows.value).sort(bySort))
 const files = computed(() => unpinned(visibleRows.value).sort(bySort))
 const hasPinnedSection = computed(() => pinned.value.length > 0)
 
-// Recent is the newest slice of my library; the Pinned view reuses the same pinned
-// group Home shows. "Shared with you" is its own resource (search-filtered here).
-const recentList = computed(() => [...visibleRows.value].sort(byNewest).slice(0, RECENT_LIMIT))
-const sharedList = computed(() =>
-  (shared.data || []).filter((d) => notTrashing(d) && matchesQuery(d)).sort(bySort),
-)
-
-// The single flat list a non-home view renders.
-const modeList = computed(() => {
-  if (props.mode === 'recent') return recentList.value
-  if (props.mode === 'shared') return sharedList.value
-  if (props.mode === 'pinned') return pinned.value
-  return []
-})
-
 // --- selection + bulk delete ----------------------------------------------
 const selected = reactive(new Set())
 const selectedCount = computed(() => selected.size)
@@ -239,19 +202,16 @@ function clearSelection() {
   selected.clear()
 }
 
-// The diagrams selectable in the current view, so Select all grabs what's on screen.
-const currentDiagrams = computed(() => {
-  if (props.mode === 'home') return [...pinned.value, ...files.value]
-  return modeList.value
-})
-// Current view shows nothing (a search excluded everything — the truly-empty home
+// The diagrams on screen, so Select all grabs exactly those.
+const currentDiagrams = computed(() => [...pinned.value, ...files.value])
+// Nothing on the shelf (a search excluded everything — the truly-empty home
 // renders HomeShell's EmptyState instead of this grid).
 const nothingHere = computed(() => !currentDiagrams.value.length)
 const hasActiveFilter = computed(() => Boolean(query.value.trim()) || Boolean(activeCollection.value))
 
-// The empty state speaks to the view you're in: a filtered search vs. an empty
-// Shared / Pinned tab want different words (and glyph) than a fresh, unused Home.
-const emptyState = computed(() => emptyStateFor(props.mode, hasActiveFilter.value))
+// A search that matched nothing wants different words (and glyph) than a fresh,
+// unused Home.
+const emptyState = computed(() => emptyStateFor(hasActiveFilter.value))
 const allSelected = computed(() => {
   const diagrams = currentDiagrams.value
   return diagrams.length > 0 && diagrams.every((d) => selected.has(d.name))
@@ -334,7 +294,6 @@ function refresh() {
     // still need their document fetched.
     previewDocuments.reload(),
     // Keep the Shared view live after an action taken from it (e.g. duplicate).
-    props.mode === 'shared' ? shared.fetch() : null,
   ])
 }
 
@@ -403,7 +362,6 @@ const collectionHandlers = {
     </div>
 
     <CollectionChips
-      v-if="showsCollections"
       :collections="collections"
       :active="activeCollection"
       @select="selectCollection"
@@ -439,31 +397,17 @@ const collectionHandlers = {
       <span class="w-7 flex-none" />
     </div>
 
-    <!-- HOME: a titled Pinned group (when anything is pinned), then the rest. -->
-    <template v-if="mode === 'home'">
-      <template v-if="hasPinnedSection">
-        <!-- frappe-ui-exempt: text-2xs group label, matching the list-view column header above --><div class="mb-2 text-2xs font-semibold text-ink-gray-5">Pinned</div>
-        <DiagramCollection :diagrams="pinned" :view="view" :selected="selected" :pin-limit-reached="pinLimitReached" v-on="collectionHandlers" />
-        <Divider class="my-3" />
-        <!-- frappe-ui-exempt: text-2xs group label, matching the list-view column header above --><div class="mb-2 text-2xs font-semibold text-ink-gray-5">Diagrams</div>
-      </template>
-
-      <DiagramCollection v-if="files.length" :diagrams="files" :view="view" :selected="selected" :pin-limit-reached="pinLimitReached" v-on="collectionHandlers" />
+    <!-- A titled Pinned group (when anything is pinned), then the rest. -->
+    <template v-if="hasPinnedSection">
+      <!-- frappe-ui-exempt: text-2xs group label, matching the list-view column header above --><div class="mb-2 text-2xs font-semibold text-ink-gray-5">Pinned</div>
+      <DiagramCollection :diagrams="pinned" :view="view" :selected="selected" :pin-limit-reached="pinLimitReached" v-on="collectionHandlers" />
+      <Divider class="my-3" />
+      <!-- frappe-ui-exempt: text-2xs group label, matching the list-view column header above --><div class="mb-2 text-2xs font-semibold text-ink-gray-5">Diagrams</div>
     </template>
 
-    <!-- RECENT / SHARED / PINNED: a single flat list. (Only these modes — home
-         renders its own grouped view above; v-else-if keeps it from double-
-         rendering there.) -->
-    <DiagramCollection
-      v-else-if="mode !== 'home'"
-      :diagrams="modeList"
-      :view="view"
-      :selected="selected"
-      :pin-limit-reached="pinLimitReached"
-      v-on="collectionHandlers"
-    />
+    <DiagramCollection v-if="files.length" :diagrams="files" :view="view" :selected="selected" :pin-limit-reached="pinLimitReached" v-on="collectionHandlers" />
 
-    <!-- Empty view — worded for the current tab (search / Shared / Pinned / Home). -->
+    <!-- Empty shelf — worded for a search that matched nothing vs. a fresh Home. -->
     <div v-if="nothingHere" class="flex flex-col items-center gap-3 py-20 text-center">
       <div class="flex h-12 w-12 items-center justify-center rounded-full bg-surface-gray-2">
         <span class="h-5 w-5 text-ink-gray-5" aria-hidden="true" :class="emptyState.icon" />
