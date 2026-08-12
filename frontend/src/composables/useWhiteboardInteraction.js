@@ -28,7 +28,6 @@ function mergeAnchor(table, cell) {
 }
 import { eraseInkAt, eraseObjectsAt, sweepPoints } from '@/diagram/eraser.js'
 import { rectsIntersect } from '@/diagram/geometry.js'
-import { HIGHLIGHTER_WIDTH } from '@/diagram/whiteboardColors.js'
 import { isAdditiveEvent, runMarqueeDrag } from '@/composables/pointer.js'
 // Shared drag flag (see useShapeTransform.js) so WhiteboardSelectionEditor can
 // hide while a group/table is actively being dragged, not just while selected (#248).
@@ -139,7 +138,7 @@ function placeTable(context, store, editorUi, ui) {
 function beginStroke(context, ui, drawing, tool) {
   drawing.active = true
   drawing.points = [context.point]
-  const width = tool === 'highlighter' ? HIGHLIGHTER_WIDTH : ui.state.penWidth
+  const width = tool === 'highlighter' ? ui.state.highlighterWidth : ui.state.penWidth
   ui.liveStroke.value = { points: drawing.points, color: ui.state.penColor, width, kind: tool }
 }
 

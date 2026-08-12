@@ -182,13 +182,12 @@ test.describe('flowchart', () => {
 })
 
 // Pen and highlighter are ONE "Draw" tool now (#242) — there is no separate
-// highlighter button to click. Arm Draw (its tool id is still 'pen', see
-// whiteboardTools.js), then pick the ink in the tool's options popover, and close
-// the popover again so it can't sit over the canvas the drag needs to reach.
+// highlighter button to click. Arming Draw opens its options popover directly
+// (no separate 'sliders' click, matching the eraser's own arm-opens-options
+// pattern below), so pick the ink straight from there, then close the popover
+// again so it can't sit over the canvas the drag needs to reach.
 async function armDraw(page, kind) {
   await page.getByTestId('wtool-pen').click()
-  const options = toolByIcon(page, 'sliders')
-  await options.click()
   // The ink picker is TabButtons, which renders each tab through reka-ui's
   // RadioGroupItem — so the tab is a <button role="radio">, NOT role="button".
   const ink = page
@@ -196,7 +195,11 @@ async function armDraw(page, kind) {
     .getByRole('radio', { name: kind === 'highlighter' ? 'Highlighter' : 'Pen', exact: true })
   await ink.waitFor({ state: 'visible' })
   await ink.click()
-  await options.click()
+  // Dismiss by clicking the tool itself: re-arming the already-active tool is a
+  // no-op, but the trigger's own click still toggles its popover shut (mirrors
+  // the eraser's object-mode dismissal above).
+  await page.getByTestId('wtool-pen').click()
+  await expect(page.locator(POPOVER)).toBeHidden()
 }
 
 test.describe('whiteboard', () => {
