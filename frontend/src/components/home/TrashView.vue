@@ -3,7 +3,8 @@
 // over a grid of trashed diagrams, each with Restore and permanent Delete.
 // Loads only trashed diagrams; restore clears the flag, delete removes the doc.
 import { computed } from 'vue'
-import { useList, dialog, toast, Alert, Button } from 'frappe-ui'
+import { useList, toast, Alert, Button } from 'frappe-ui'
+import { confirm } from '@/composables/useConfirm.js'
 import { submitOrThrow } from '@/data/submit.js'
 import { documentToSvg, isDocumentEmpty } from '@/composables/useThumbnail.js'
 
@@ -32,9 +33,10 @@ async function restore(diagram) {
   refresh()
 }
 
-// Permanent delete is irreversible, so it always asks first.
+// Permanent delete is irreversible, so it always asks first — unlike moving to
+// Trash, which is optimistic with an Undo and asks nothing (#402).
 function askPurge(diagram) {
-  dialog.confirm({
+  confirm({
     title: 'Delete permanently?',
     message: `“${diagram.title}” will be permanently deleted. This cannot be undone.`,
     theme: 'red',
@@ -56,7 +58,7 @@ function refresh() {
 
 <template>
   <div>
-    <h1 class="mb-4 text-3xl font-bold text-ink-gray-9">Trash</h1>
+    <!-- frappe-ui-exempt: page title, matching HomeShell's own text-3xl heading — the type scale governs body and control text, not the page's H1 --><h1 class="mb-4 text-3xl font-bold text-ink-gray-9">Trash</h1>
 
     <Alert
       class="mb-6"

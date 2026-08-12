@@ -6,12 +6,15 @@
 //   pinned — a flat list of just the pinned diagrams (#116)
 // Toolbar offers search + sort + a tile/list toggle, becoming a bulk-action bar
 // on selection. Creation is the top-right CTA only. At most MAX_PINNED pinned.
-import { computed, reactive, ref, watch, watchEffect } from 'vue'
-import { call, useCall, useList, dialog, toast, Dialog, Button, Divider, Dropdown, TabButtons, TextInput, Tooltip } from 'frappe-ui'
+// Deleting from the bulk bar is optimistic and batched — see "trash (#402)" below.
+import { computed, reactive, ref, watch } from 'vue'
+import { call, useCall, useList, dialog, Dialog, Button, Divider, Dropdown, TabButtons, TextInput, Tooltip } from 'frappe-ui'
 import DiagramCollection from './DiagramCollection.vue'
 import CollectionChips from './CollectionChips.vue'
 import CollectionPicker from './CollectionPicker.vue'
+import SelectAllCheckbox from './SelectAllCheckbox.vue'
 import { listCollections, diagramsInCollection } from '@/data/collections.js'
+import { useOptimisticTrash } from '@/composables/useOptimisticTrash.js'
 import {
   pinnedOnly,
   unpinned,
@@ -193,8 +196,13 @@ function matchesCollection(diagram) {
   return !collectedNames.value || collectedNames.value.has(diagram.name)
 }
 
+// Deleting is optimistic and batched (#402): the rows leave the shelf on click and
+// one request settles the whole selection behind them, so `notTrashing` filters out
+// the ones on their way to Trash before the reloaded list has caught up.
+const { notTrashing, trashDiagrams } = useOptimisticTrash(refresh)
+
 const visibleRows = computed(() =>
-  rows.value.filter((d) => matchesQuery(d) && matchesCollection(d)),
+  rows.value.filter((d) => notTrashing(d) && matchesQuery(d) && matchesCollection(d)),
 )
 
 // Home: a Pinned group, then every other diagram (flat — no folders, #115).
@@ -205,7 +213,9 @@ const hasPinnedSection = computed(() => pinned.value.length > 0)
 // Recent is the newest slice of my library; the Pinned view reuses the same pinned
 // group Home shows. "Shared with you" is its own resource (search-filtered here).
 const recentList = computed(() => [...visibleRows.value].sort(byNewest).slice(0, RECENT_LIMIT))
-const sharedList = computed(() => (shared.data || []).filter((d) => matchesQuery(d)).sort(bySort))
+const sharedList = computed(() =>
+  (shared.data || []).filter((d) => notTrashing(d) && matchesQuery(d)).sort(bySort),
+)
 
 // The single flat list a non-home view renders.
 const modeList = computed(() => {
@@ -218,9 +228,12 @@ const modeList = computed(() => {
 // --- selection + bulk delete ----------------------------------------------
 const selected = reactive(new Set())
 const selectedCount = computed(() => selected.size)
-function toggleSelect(name) {
-  if (selected.has(name)) selected.delete(name)
-  else selected.add(name)
+// Set the wanted state rather than flipping the current one. frappe-ui's Checkbox
+// emits update:modelValue twice per click (#405), and a flip run twice is a no-op —
+// which is why clicking a tile's checkbox used to do nothing at all.
+function setSelected(name, wanted) {
+  if (wanted) selected.add(name)
+  else selected.delete(name)
 }
 function clearSelection() {
   selected.clear()
@@ -245,48 +258,22 @@ const allSelected = computed(() => {
 })
 // Some-but-not-all selected → the master checkbox shows Gmail's indeterminate dash.
 const someSelected = computed(() => selectedCount.value > 0 && !allSelected.value)
-function selectAll() {
-  currentDiagrams.value.forEach((d) => selected.add(d.name))
-}
-// Gmail behaviour: any selection → click clears; nothing selected → select all.
-function toggleSelectAll() {
-  if (selectedCount.value > 0) clearSelection()
-  else selectAll()
+// Gmail behaviour: any selection → the master box clears it; nothing selected →
+// it takes everything on screen. Idempotent for the same reason setSelected is.
+function setAllSelected(wanted) {
+  clearSelection()
+  if (wanted) currentDiagrams.value.forEach((d) => selected.add(d.name))
 }
 
-// Native checkbox has no reactive `indeterminate` prop — set it on the element.
-const masterCheckbox = ref(null)
-watchEffect(() => {
-  if (masterCheckbox.value) masterCheckbox.value.indeterminate = someSelected.value
-})
-
-function askDelete(names) {
-  const n = names.length
-  dialog.confirm({
-    title: 'Move to Trash?',
-    message: `Move ${n} diagram${n === 1 ? '' : 's'} to Trash? You can restore ${n === 1 ? 'it' : 'them'} from Trash.`,
-    theme: 'red',
-    confirmLabel: 'Delete',
-    onConfirm: async () => {
-      try {
-        for (const name of names) {
-          await submitOrThrow(enriched.setValue, { name, is_trashed: 1, trashed_on: frappeNow() })
-        }
-        toast.success(`Moved ${n} diagram${n === 1 ? '' : 's'} to Trash`)
-      } finally {
-        // Always clear and refresh, even if a delete errored, so the list can
-        // never be left showing a diagram that is already trashed.
-        clearSelection()
-        refresh()
-      }
-    },
-  })
-}
+// The selection empties as the rows go, so the bulk bar collapses back to the
+// search field in the same frame rather than sitting there over nothing.
 function deleteSelected() {
-  askDelete([...selected])
+  const names = [...selected]
+  clearSelection()
+  trashDiagrams(names)
 }
 function trash(diagram) {
-  askDelete([diagram.name])
+  trashDiagrams([diagram.name])
 }
 
 // --- pin / rename / duplicate ---------------------------------------------
@@ -337,22 +324,23 @@ const infoRows = computed(() => {
   ]
 })
 
+// Awaitable so the optimistic trash can hold its rows hidden until the reloaded
+// list agrees they are gone, instead of flashing them back in the gap (#402).
 function refresh() {
-  enriched.reload()
-  // A save may have added or cleared a thumbnail, which changes which diagrams
-  // still need their document fetched.
-  previewDocuments.reload()
-  // Keep the Shared view live after an action taken from it (e.g. duplicate).
-  if (props.mode === 'shared') shared.fetch()
   emit('changed')
-}
-function frappeNow() {
-  return new Date().toISOString().slice(0, 19).replace('T', ' ')
+  return Promise.all([
+    enriched.reload(),
+    // A save may have added or cleared a thumbnail, which changes which diagrams
+    // still need their document fetched.
+    previewDocuments.reload(),
+    // Keep the Shared view live after an action taken from it (e.g. duplicate).
+    props.mode === 'shared' ? shared.fetch() : null,
+  ])
 }
 
 const collectionHandlers = {
   open: (name) => emit('open', name),
-  'toggle-select': toggleSelect,
+  select: setSelected,
   'toggle-pin': togglePin,
   rename: startRename,
   duplicate,
@@ -369,17 +357,16 @@ const collectionHandlers = {
     <div class="mb-5 flex h-9 items-center gap-2">
       <!-- In list view the master checkbox lives in the table header (left of
            Name); in tile view there's no header row, so it sits here. -->
-      <Tooltip v-if="view === 'tile'" :text="allSelected || someSelected ? 'Clear selection' : 'Select all'">
-        <input
-          v-if="currentDiagrams.length"
-          ref="masterCheckbox"
-          type="checkbox"
-          :checked="allSelected"
-          class="ml-1 mr-1 h-4 w-4 flex-none cursor-pointer [accent-color:var(--ink-gray-9)]"
-          :aria-label="allSelected || someSelected ? 'Clear selection' : 'Select all'"
-          @change="toggleSelectAll"
+      <!-- Spacing lives on the wrapper: frappe-ui's Checkbox has no
+           `inheritAttrs: false`, so a class passed to it lands on both its root
+           element and the control inside, doubling the margin. -->
+      <span v-if="view === 'tile' && currentDiagrams.length" class="ml-1 mr-1 flex flex-none items-center">
+        <SelectAllCheckbox
+          :all-selected="allSelected"
+          :some-selected="someSelected"
+          @change="setAllSelected"
         />
-      </Tooltip>
+      </span>
 
       <template v-if="selectedCount">
         <span class="text-sm font-semibold text-ink-gray-9">{{ selectedCount }} selected</span>
@@ -425,35 +412,27 @@ const collectionHandlers = {
 
     <!-- List-view column header — aligns column-for-column with the flat rows. The
          master checkbox sits left; Name / Created / Last edited click to sort (#302). -->
-    <div
-      v-if="view === 'list'"
-      class="mb-1 flex items-center gap-3 border-b border-outline-gray-1 px-3 pb-2 text-2xs font-medium text-ink-gray-5"
-    >
+    <!-- frappe-ui-exempt: text-2xs column-header row, the table-header convention shared with DiagramTile's list row and the "Pinned"/"Diagrams" section labels below --><div v-if="view === 'list'" class="mb-1 flex items-center gap-3 border-b border-outline-gray-1 px-3 pb-2 text-2xs font-medium text-ink-gray-5">
       <span class="flex w-4 flex-none items-center justify-center">
-        <Tooltip :text="allSelected || someSelected ? 'Clear selection' : 'Select all'">
-          <input
-            v-if="currentDiagrams.length"
-            ref="masterCheckbox"
-            type="checkbox"
-            :checked="allSelected"
-            class="h-4 w-4 cursor-pointer [accent-color:var(--ink-gray-9)]"
-            :aria-label="allSelected || someSelected ? 'Clear selection' : 'Select all'"
-            @change="toggleSelectAll"
-          />
-        </Tooltip>
+        <SelectAllCheckbox
+          v-if="currentDiagrams.length"
+          :all-selected="allSelected"
+          :some-selected="someSelected"
+          @change="setAllSelected"
+        />
       </span>
       <!-- Pin lane. The type-icon lane that sat here is gone with the icon (#218). -->
       <span class="w-6 flex-none" />
-      <button class="flex min-w-0 flex-1 items-center gap-1 hover:text-ink-gray-7" @click="setSort('title')">
+      <!-- frappe-ui-exempt: sortable column label, not a control — Button's own height, padding and background would break the column alignment with the rows beneath --><button class="flex min-w-0 flex-1 items-center gap-1 hover:text-ink-gray-7" @click="setSort('title')">
         Name
         <span v-if="sortArrow('title')" class="h-3 w-3 flex-none" aria-hidden="true" :class="sortArrow('title')" />
       </button>
       <span class="hidden w-28 flex-none lg:block">Owner</span>
-      <button class="hidden w-28 flex-none items-center gap-1 hover:text-ink-gray-7 md:flex" @click="setSort('creation')">
+      <!-- frappe-ui-exempt: sortable column label — see the Name column above --><button class="hidden w-28 flex-none items-center gap-1 hover:text-ink-gray-7 md:flex" @click="setSort('creation')">
         Created
         <span v-if="sortArrow('creation')" class="h-3 w-3 flex-none" aria-hidden="true" :class="sortArrow('creation')" />
       </button>
-      <button class="hidden w-28 flex-none items-center gap-1 hover:text-ink-gray-7 sm:flex" @click="setSort('modified')">
+      <!-- frappe-ui-exempt: sortable column label — see the Name column above --><button class="hidden w-28 flex-none items-center gap-1 hover:text-ink-gray-7 sm:flex" @click="setSort('modified')">
         Last edited
         <span v-if="sortArrow('modified')" class="h-3 w-3 flex-none" aria-hidden="true" :class="sortArrow('modified')" />
       </button>
@@ -463,10 +442,10 @@ const collectionHandlers = {
     <!-- HOME: a titled Pinned group (when anything is pinned), then the rest. -->
     <template v-if="mode === 'home'">
       <template v-if="hasPinnedSection">
-        <div class="mb-2 text-2xs font-semibold text-ink-gray-5">Pinned</div>
+        <!-- frappe-ui-exempt: text-2xs group label, matching the list-view column header above --><div class="mb-2 text-2xs font-semibold text-ink-gray-5">Pinned</div>
         <DiagramCollection :diagrams="pinned" :view="view" :selected="selected" :pin-limit-reached="pinLimitReached" v-on="collectionHandlers" />
         <Divider class="my-3" />
-        <div class="mb-2 text-2xs font-semibold text-ink-gray-5">Diagrams</div>
+        <!-- frappe-ui-exempt: text-2xs group label, matching the list-view column header above --><div class="mb-2 text-2xs font-semibold text-ink-gray-5">Diagrams</div>
       </template>
 
       <DiagramCollection v-if="files.length" :diagrams="files" :view="view" :selected="selected" :pin-limit-reached="pinLimitReached" v-on="collectionHandlers" />
@@ -491,7 +470,7 @@ const collectionHandlers = {
       </div>
       <div>
         <p class="text-base font-semibold text-ink-gray-8">{{ emptyState.title }}</p>
-        <p class="mt-0.5 text-xs text-ink-gray-5">{{ emptyState.hint }}</p>
+        <p class="mt-0.5 text-sm text-ink-gray-5">{{ emptyState.hint }}</p>
       </div>
     </div>
 
