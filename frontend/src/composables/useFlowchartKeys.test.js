@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { flowchartKeydown } from './useFlowchartKeys.js'
 import { ROLE } from '@/diagram/freeFloating.js'
+import { useTextEditing } from '@/composables/useTextEditing.js'
 
 // A migrated flowchart node is a role-tagged shape and `state.flowchart` is null
 // after the #122 flip. These cover the free-floating keyboard branch (phase 3c):
@@ -23,11 +24,17 @@ function fakeStore() {
 }
 
 describe('flowchartKeydown — migrated free-floating node (#122 phase 3c)', () => {
-  it('Enter adds a connected Process child and selects it', () => {
+  it('Enter adds a connected Process child, selects it and drops straight into text-edit', () => {
     const store = fakeStore()
     expect(flowchartKeydown({ key: 'Enter' }, store, {})).toBe(true)
     expect(store.addFlowchartChildShape).toHaveBeenCalledWith('f1', 'process')
-    expect(store.select).toHaveBeenCalledWith(['fNEW'])
+    // beginTextEdit selects the node itself, hence the bare id (not an array).
+    expect(store.select).toHaveBeenCalledWith('fNEW')
+    // #410: editing straight away is what keeps the next keystroke from being read
+    // as another one of these same shortcuts instead of naming the new node.
+    const editing = useTextEditing(store, {})
+    expect(editing.editingShapeId.value).toBe('fNEW')
+    expect(editing.session.selectAll).toBe(true)
   })
 
   it('D / T / I add decision / terminator / inputOutput', () => {

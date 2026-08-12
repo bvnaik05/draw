@@ -48,6 +48,72 @@ describe('store.addFlowchartChildShape (free-floating #122)', () => {
   })
 })
 
+// #410: the toolbar's Node-type swap used to write only to the empty legacy
+// state.flowchart, so it silently did nothing for a migrated flowchart shape —
+// there was no way at all to change a node's type once it existed. This is the
+// free-floating counterpart.
+describe('store.swapFlowchartNodeType (free-floating #122, #410)', () => {
+  it('changes the shape glyph and the flowchart tag, preserving the edge', () => {
+    const { store, startId } = migratedFlowchartStore('process')
+    const childId = store.addFlowchartChildShape(startId, 'process')
+
+    store.swapFlowchartNodeType(childId, 'decision')
+
+    const shape = store.state.shapes.find((s) => s.id === childId)
+    expect(shape.type).toBe('diamond')
+    expect(shape.flowchart.nodeType).toBe('decision')
+    expect(shape.flowchart.branches.map((b) => b.port)).toEqual(['yes', 'no'])
+    // The edge in from the parent still targets the swapped node.
+    const edge = store.state.connectors.find((c) => c.to?.shapeId === childId)
+    expect(edge.from.shapeId).toBe(startId)
+  })
+
+  it('adopts the new type default box', () => {
+    const { store, startId } = migratedFlowchartStore('process')
+    const before = store.state.shapes.find((s) => s.id === startId)
+    const box = { w: before.w, h: before.h }
+
+    store.swapFlowchartNodeType(startId, 'decision')
+
+    const after = store.state.shapes.find((s) => s.id === startId)
+    expect({ w: after.w, h: after.h }).not.toEqual(box)
+  })
+
+  it('re-homes an outgoing edge off its branch port when the node stops being a decision', () => {
+    const { store, startId } = migratedFlowchartStore('decision')
+    const grandchildId = store.addFlowchartChildShape(startId, 'process')
+    const edgeBefore = store.state.connectors.find((c) => c.to?.shapeId === grandchildId)
+    expect(edgeBefore.flowchart.fromPort).toBe('yes')
+
+    store.swapFlowchartNodeType(startId, 'process')
+
+    const edgeAfter = store.state.connectors.find((c) => c.to?.shapeId === grandchildId)
+    expect(edgeAfter.flowchart.fromPort).toBe('out')
+    expect(store.state.shapes.find((s) => s.id === startId).flowchart.branches).toEqual([])
+  })
+
+  it('is one undo step', () => {
+    const { store, startId } = migratedFlowchartStore('process')
+    store.swapFlowchartNodeType(startId, 'decision')
+    store.undo()
+    const shape = store.state.shapes.find((s) => s.id === startId)
+    expect(shape.flowchart.nodeType).toBe('process')
+  })
+
+  it('is a no-op for an unknown id, a non-flowchart shape, an unchanged type or an unknown type', () => {
+    const { store, startId } = migratedFlowchartStore('process')
+    const blockId = store.addShape({ type: 'rectangle', x: 0, y: 0, w: 10, h: 10 })
+    const before = JSON.stringify(store.state.shapes)
+
+    store.swapFlowchartNodeType('nope', 'decision')
+    store.swapFlowchartNodeType(blockId, 'decision')
+    store.swapFlowchartNodeType(startId, 'process')
+    store.swapFlowchartNodeType(startId, 'notAType')
+
+    expect(JSON.stringify(store.state.shapes)).toBe(before)
+  })
+})
+
 // A store whose mind map has been flattened to free-floating tagged shapes. Since
 // #260 every node — root and child — defaults to a boxed monochrome node.
 function migratedMindmapStore() {

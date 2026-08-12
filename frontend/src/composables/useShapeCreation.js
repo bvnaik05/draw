@@ -101,6 +101,15 @@ export function useShapeCreation(store, editorUi) {
       // already bound) so the drop works outside a mounted editor too.
       if (rootId) useTextEditing(store, editorUi).beginTextEdit(rootId, { selectAll: true, seedIfEmpty: 'New idea' })
     }
+    // A placed flowchart starter gets the same drop-to-type treatment (#410): the
+    // insert already gave it a default label ("Start", "Process", …), so pre-select
+    // that and the first keystroke replaces it. This is also what closes off the
+    // flowchart build shortcuts as a footgun — Enter/D/T/I own the keyboard while a
+    // node is selected, so typing a label used to chain unwanted nodes instead.
+    if (starter.kind === 'flowchart') {
+      const nodeId = store.state.selection[0]
+      if (nodeId) useTextEditing(store, editorUi).beginTextEdit(nodeId, { selectAll: true })
+    }
     return true
   }
 

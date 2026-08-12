@@ -7,7 +7,7 @@
 // connectors expose a draggable midpoint control handle.
 import { ref, computed, nextTick } from 'vue'
 import { anchorPoint } from '@/diagram/geometry.js'
-import { ROLE } from '@/diagram/freeFloating.js'
+import { ROLE, edgeAnchors } from '@/diagram/freeFloating.js'
 import { branchPathPoints } from '@/diagram/mindmapLayout.js'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
@@ -27,17 +27,34 @@ const store = useDiagramStore()
 const editorUi = useEditorUi()
 const drawing = useConnectorDrawing(store, editorUi)
 
+// A flowchart edge's from/to anchor (top/bottom/left/right) is stored on the
+// connector, but it is only ever WRITTEN at creation time (or by an explicit whole-
+// chart Tidy/flip). Dragging one of its two nodes anywhere else never updates it, so
+// a stored anchor goes stale the moment the user rearranges a chart by hand — the
+// route then leaves/arrives on whichever side used to be correct, reading as an
+// arrow that doubles back instead of flowing forward (#410). Recomputing it live
+// from the two nodes' CURRENT boxes, the same formula Tidy/flip already use, keeps
+// every flowchart edge self-correcting on every render regardless of how its nodes
+// got to their current spot.
+const liveFlowchartAnchors = computed(() => {
+  if (props.connector.role !== ROLE.flowchartEdge) return null
+  const fromShape = store?.shapeById(props.connector.from?.shapeId)
+  const toShape = store?.shapeById(props.connector.to?.shapeId)
+  if (!fromShape || !toShape) return null
+  return edgeAnchors(fromShape, toShape)
+})
+
 // Resolve an endpoint to a concrete world point (attached anchor or free point).
-function resolve(endpoint) {
+function resolve(endpoint, anchorOverride) {
   if (endpoint && endpoint.shapeId) {
     const shape = store?.shapeById(endpoint.shapeId)
-    if (shape) return anchorPoint(shape, endpoint.anchor || 'right')
+    if (shape) return anchorPoint(shape, anchorOverride || endpoint.anchor || 'right')
   }
   return { x: endpoint?.x || 0, y: endpoint?.y || 0 }
 }
 
-const start = computed(() => resolve(props.connector.from))
-const end = computed(() => resolve(props.connector.to))
+const start = computed(() => resolve(props.connector.from, liveFlowchartAnchors.value?.from))
+const end = computed(() => resolve(props.connector.to, liveFlowchartAnchors.value?.to))
 
 // Curved connectors carry an optional control point; default to the apex above.
 const control = computed(() => {

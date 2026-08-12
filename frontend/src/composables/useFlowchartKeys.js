@@ -16,6 +16,7 @@ import {
 } from '@/diagram/flowchartModel.js'
 import { placeChild } from '@/diagram/flowchartLayout.js'
 import { isFlowchartShape } from '@/diagram/freeFloating.js'
+import { useTextEditing } from '@/composables/useTextEditing.js'
 
 // Map the F5 hotkeys to node types (spec B5).
 const KEY_TO_TYPE = {
@@ -31,7 +32,7 @@ export function flowchartKeydown(event, store, editorUi) {
   const freeIds = (store.state.selection || []).filter((sid) =>
     isFlowchartShape(store.state.shapes?.find((s) => s.id === sid)),
   )
-  if (freeIds.length) return freeFloatingFlowchartKey(event, store, freeIds)
+  if (freeIds.length) return freeFloatingFlowchartKey(event, store, editorUi, freeIds)
   const model = store.state.flowchart
   if (!model) return false
   const node = selectedNode(store, model)
@@ -87,12 +88,15 @@ function createChild(store, parent, nodeType) {
 // keys have a flowchart meaning here: Enter->Process, D->Decision, T->Terminator,
 // I->Input/Output each add a connected node one level down (auto-placed, arrowed
 // edge; a decision fans children into its free branches); Delete/Backspace removes
-// the selected node(s) and their edges. The new node is selected so the next key
-// chains; text is edited via double-click (the block editor). Other keys are consumed
-// as a no-op. Delete MUST be handled here: while a node owns the keyboard the shared
-// block delete/nudge fallback is suppressed (useKeyboard ~line 133), so without this
-// branch Delete would do nothing at all on a migrated flowchart node.
-function freeFloatingFlowchartKey(event, store, ids) {
+// the selected node(s) and their edges. The new node is selected AND dropped straight
+// into text-edit (mirroring the drop-to-type flow a placed starter node gets, #410):
+// these same build keys own the keyboard while a node is selected, so leaving the new
+// node merely selected meant typing a label like "Deploy" silently chained a Decision
+// node instead. Other keys are consumed as a no-op. Delete MUST be handled here:
+// while a node owns the keyboard the shared block delete/nudge fallback is suppressed
+// (useKeyboard ~line 133), so without this branch Delete would do nothing at all on a
+// migrated flowchart node.
+function freeFloatingFlowchartKey(event, store, editorUi, ids) {
   if (event.key === 'Delete' || event.key === 'Backspace') {
     store.deleteFlowchartShapes(ids)
     return true
@@ -102,6 +106,7 @@ function freeFloatingFlowchartKey(event, store, ids) {
   const nodeType = KEY_TO_TYPE[normaliseKey(event.key)]
   if (!nodeType) return true
   const newId = store.addFlowchartChildShape(id, nodeType)
-  if (newId) store.select([newId])
+  // beginTextEdit selects the node itself, so there is no separate store.select here.
+  if (newId) useTextEditing(store, editorUi).beginTextEdit(newId, { selectAll: true })
   return true
 }
