@@ -75,7 +75,14 @@ const outline = computed(() => {
   if (!id || !selectTool.value || store.state.selection.includes(id)) return null
   const shape = store.shapeById(id)
   if (!shape) return null
-  return { x: shape.x, y: shape.y, w: shape.w, h: shape.h, rx: shapeCornerRadius(shape.type) || 0 }
+  return {
+    x: shape.x,
+    y: shape.y,
+    w: shape.w,
+    h: shape.h,
+    // The shape's own roundedness (#411), so the outline hugs the corner it traces.
+    rx: shapeCornerRadius(shape.type, shape.cornerRadius) || 0,
+  }
 })
 </script>
 

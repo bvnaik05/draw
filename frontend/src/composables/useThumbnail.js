@@ -24,6 +24,7 @@ import {
 import { resolveMark } from '@/diagram/richText.js'
 import { pointsToPath } from '@/diagram/svgPath.js'
 import { polygonPointsString } from '@/diagram/polygon.js'
+import { shapeCornerRadius, SHARP_CORNER_RADIUS } from '@/diagram/shapeGeometry.js'
 import { contrastInk, HIGHLIGHTER_OPACITY } from '@/diagram/whiteboardColors.js'
 
 const THROTTLE_MS = 30000
@@ -69,7 +70,15 @@ function shapeBody(s) {
     const pts = polygonPointsString({ x, y, w, h, points: s.points })
     if (pts) return `<polygon points="${pts}" ${fill} ${stroke}/>`
   }
-  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8" ${fill} ${stroke}/>`
+  // The radius used to be hardcoded to 8 here, so every box left the canvas less
+  // rounded than it was drawn — a rounded rectangle renders at 20 on the canvas but
+  // exported at 8, in all four surfaces this one function feeds (PNG, PDF export,
+  // the home tile, the minimap).
+  // Resolve it through the helper the live canvas uses (#411) instead of restating
+  // the rule; num() as well, because nothing in this file reaches an attribute
+  // unguarded, so the line audits on its own.
+  const rx = num(shapeCornerRadius(s.type, s.cornerRadius), SHARP_CORNER_RADIUS)
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" ${fill} ${stroke}/>`
 }
 
 // nodeShape geometry is local to the node box (0,0 at top-left), so the glyph is

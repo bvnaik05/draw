@@ -97,7 +97,7 @@ const cornerRadius = computed(() => {
   // here because the getter only runs at render time (same TDZ pattern as autofit).
   const curve = props.shape.mindmap?.curve
   if (isMindmapNode.value && curve) return curveRadius(curve)
-  return shapeCornerRadius(props.shape.type)
+  return shapeCornerRadius(props.shape.type, props.shape.cornerRadius)
 })
 
 const border = computed(() => props.shape.border || {})
