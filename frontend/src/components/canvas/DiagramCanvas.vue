@@ -44,7 +44,6 @@ import TextEditor from './TextEditor.vue'
 import MindMapNodeLayer from './MindMapNodeLayer.vue'
 import FlowchartLayer from './FlowchartLayer.vue'
 import WhiteboardLayer from './WhiteboardLayer.vue'
-import Rulers from './Rulers.vue'
 import {
   useModeInteraction,
   resolveModeHandlers,
@@ -894,13 +893,9 @@ const surfaceCursor = computed(() => {
       v-if="blockEmpty"
       class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 select-none text-center"
     >
-      <div class="text-md font-medium text-ink-gray-4">Nothing here yet</div>
+      <div class="text-base font-medium text-ink-gray-4">Nothing here yet</div>
       <div class="mt-1 text-sm text-ink-gray-3">Pick a shape from the toolbar above to get started</div>
     </div>
-
-    <!-- Rulers in screen space (outside the viewport <g>), shown while editing
-         text at any zoom (spec §6). -->
-    <Rulers />
   </div>
 </template>
 

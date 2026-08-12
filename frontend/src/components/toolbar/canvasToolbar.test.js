@@ -127,13 +127,13 @@ describe('one left-aligned run', () => {
       expect(index, `${tag} is missing from the bar`).toBeGreaterThan(-1)
       return index
     }
-    const fixed = ['<HistoryGroup', '<PointerGroup', '<InsertGroups', '<ZoomGroup', '<CanvasGroup']
+    const fixed = ['<PointerGroup', '<InsertGroups', '<ZoomGroup', '<GuidesGroup']
     for (let i = 1; i < fixed.length; i += 1) {
       expect(at(fixed[i]), `${fixed[i]} must follow ${fixed[i - 1]}`).toBeGreaterThan(at(fixed[i - 1]))
     }
     const contextual = ['<LineGroup', '<StyleGroup', '<TextGroup', '<ArrangeGroup', '<BlockActionsGroup']
     for (const group of contextual) {
-      expect(at(group), `${group} must come after the fixed prefix`).toBeGreaterThan(at('<CanvasGroup'))
+      expect(at(group), `${group} must come after the fixed prefix`).toBeGreaterThan(at('<GuidesGroup'))
     }
   })
 
@@ -154,7 +154,6 @@ describe('who opts out of the focus guard', () => {
     const files = [
       'groups/InsertGroups.vue',
       'groups/PointerGroup.vue',
-      'groups/HistoryGroup.vue',
       'groups/ZoomGroup.vue',
       '../floating/WhiteboardTools.vue',
     ]
@@ -171,34 +170,21 @@ describe('who opts out of the focus guard', () => {
 })
 
 describe('undo and redo', () => {
-  const group = read('groups/HistoryGroup.vue')
   const toolbar = read('CanvasToolbar.vue')
 
-  // The store has carried undo/redo and canUndo/canRedo since the start, and
-  // until now nothing but useKeyboard called them. A user who did not know the
-  // shortcut had no way back from a mistake.
-  it('reaches the history the keyboard has been the only route to', () => {
-    expect(group).toContain('store.undo()')
-    expect(group).toContain('store.redo()')
+  // They went back to keyboard-only (#397): two more always-present buttons on a
+  // bar with no room to spare, for the one action every user already reaches by
+  // shortcut. Pinned so a future round does not quietly re-promote them.
+  it('has no button on the bar', () => {
+    expect(toolbar).not.toContain('HistoryGroup')
+    expect(existsSync(path.join(here, 'groups/HistoryGroup.vue'))).toBe(false)
   })
 
-  // Disabled off the store's own computeds. A live Undo on an empty history is
-  // a control that does nothing when clicked.
-  it('disables each end of the history at its end', () => {
-    expect(group).toContain(':disabled="!store.canUndo"')
-    expect(group).toContain(':disabled="!store.canRedo"')
-  })
-
-  // Neither is a toggle, so neither claims a pressed state (#365).
-  it('claims no pressed state', () => {
-    expect(group).not.toContain(':active=')
-  })
-
-  // Ahead of everything contextual, so they hold one position whatever is
-  // selected. Slides, Docs and Figma all lead with them.
-  it('leads the bar', () => {
-    const template = templateOf(toolbar)
-    expect(template.indexOf('<HistoryGroup />')).toBeLessThan(template.indexOf('<PointerGroup />'))
+  // Removing the buttons must not remove the route. ⌘Z / ⇧⌘Z (and ⌘Y) are now
+  // the ONLY way back from a mistake, so this is the whole feature.
+  it('leaves the keyboard route intact', () => {
+    const keyboard = read('../../composables/useKeyboard.js')
+    expect(keyboard).toContain('z: () => (event.shiftKey ? store.redo() : store.undo())')
   })
 })
 
@@ -237,14 +223,46 @@ describe('what folds, so the bar fits at 1280px', () => {
   })
 })
 
-describe('canvas-level controls', () => {
-  const group = read('groups/CanvasGroup.vue')
+describe('the shape tiles the grid dropped (#397)', () => {
+  const catalog = read('../../composables/useInsertCatalog.js')
 
-  // store.applyTheme had no caller at all: design/SPEC.md lists theme presets as
-  // a canvas control, but they lost their home when the right palette was
-  // replaced by floating selection editors.
-  it('reaches applyTheme, which nothing else does', () => {
-    expect(group).toContain('store.applyTheme(preset.name)')
+  // A Square is a Rectangle drawn with Shift held, and the tile grid should not
+  // spend a slot on a modifier. Diamond went with it: as a free-standing block it
+  // was the least-reached tile of the nine, and the glyph stays reachable as a
+  // flowchart decision node.
+  it('offers neither a square nor a diamond tile', () => {
+    expect(catalog).not.toContain("{ type: 'square'")
+    expect(catalog).not.toContain("{ type: 'diamond'")
+  })
+
+  // Both TYPES stay in the schema and the renderer — a mind-map node and a
+  // flowchart decision node draw with them — so only the tiles went.
+  it('keeps both shape types rendering', () => {
+    const view = read('../canvas/ShapeView.vue')
+    expect(view).toContain("shape.type === 'square'")
+    expect(view).toContain("shape.type === 'diamond'")
+  })
+
+  // The tooltip is the only place the Shift trick is written down now that the
+  // Square tile is not there to hint at it.
+  it('says where the square went', () => {
+    expect(read('groups/InsertGroups.vue')).toContain("'Rectangle — hold Shift for a square'")
+    expect(read('../../composables/useShapeCreation.js')).toContain('drag.square = event.shiftKey')
+  })
+})
+
+describe('canvas-level controls', () => {
+  const group = read('groups/GuidesGroup.vue')
+
+  // The Canvas menu held theme presets and guides. Presets applied diagram-wide
+  // are gone (#397) — a diagram's look is settled by Settings' defaultThemePreset
+  // when it is created — so guides were all the menu had left, and they are
+  // cheaper as one entry on the bar than as a lid over one control.
+  it('is on the bar, and reaches for no theme preset', () => {
+    expect(templateOf(read('CanvasToolbar.vue'))).toContain('<GuidesGroup />')
+    expect(group).not.toContain('applyTheme')
+    expect(existsSync(path.join(here, 'groups/CanvasGroup.vue'))).toBe(false)
+    expect(read('../../stores/useDiagramStore.js')).not.toContain('applyTheme')
   })
 
   // A dotted grid is not wanted on a whiteboard (Q4).

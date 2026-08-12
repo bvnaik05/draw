@@ -55,10 +55,10 @@ function restore(state, snap) {
   state.selection = (snap.selection || []).filter((id) => live.has(id))
 }
 
-// Property drags (opacity/colour sliders, ruler text-insets, connector endpoint
-// drags) fire an `Update …` commit per input event. Coalesce a rapid run of the
-// SAME `Update …` label into one undo step — matching how editors merge typing —
-// so one slider drag isn't ~50 undo steps. Movement (Move/Resize/Rotate/Nudge)
+// Property drags (opacity/colour sliders, connector endpoint drags) fire an
+// `Update …` commit per input event. Coalesce a rapid run of the SAME `Update …`
+// label into one undo step — matching how editors merge typing — so one slider
+// drag isn't ~50 undo steps. Movement (Move/Resize/Rotate/Nudge)
 // already batches to a single commit on gesture-end, and Add/Delete/Connect
 // labels never coalesce, so distinct actions each stay their own step.
 const COALESCE_MS = 450

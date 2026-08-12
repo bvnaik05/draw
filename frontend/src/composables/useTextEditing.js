@@ -1,6 +1,6 @@
 // In-shape (and connector-label) text editing (spec §6). A module-level
-// singleton so the canvas double-click handler, TextEditor overlay, and Rulers
-// share one editing session without prop plumbing through DiagramCanvas.
+// singleton so the canvas double-click handler and TextEditor overlay share
+// one editing session without prop plumbing through DiagramCanvas.
 // Geometry stays in logical canvas units; commits go through the store.
 
 import { reactive, computed } from 'vue'
@@ -10,6 +10,9 @@ import { shapeCenter } from '@/diagram/geometry.js'
 // rectangle so wrapped text never spills past the sloped edges (spec §6).
 const INSCRIBED_FACTOR = { diamond: 0.5, triangle: 0.5 }
 const INSCRIBED_PAD = 6
+// Fixed left/right breathing room for text inside a shape, so a label never
+// touches the shape's edges. Replaces the old ruler-driven adjustable inset.
+const TEXT_PADDING = 12
 const FONT_FAMILY = 'Inter, sans-serif'
 // A casual, handwritten-feel stack (no web font needed) used by whiteboard text
 // to read closer to TLDraw's hand-drawn style.
@@ -36,7 +39,7 @@ function createTextEditing(store, editorUi) {
   return api
 }
 
-// Reactive readouts the overlay + Rulers consume.
+// Reactive readouts the overlay consumes.
 function attachEditingState(api, session) {
   api.editingShapeId = computed(() => session.shapeId)
   api.editingConnectorId = computed(() => session.connectorId)
@@ -68,18 +71,14 @@ function attachConnectorEditing(api, session, store) {
 // diamonds/triangles). Returns null when no shape is editing.
 export function shapeTextArea(shape) {
   if (!shape) return null
-  // Optional horizontal insets (px) let the ruler markers set where the text
-  // sits inside the shape.
-  const il = Math.max(0, shape.text?.insetLeft || 0)
-  const ir = Math.max(0, shape.text?.insetRight || 0)
   const factor = INSCRIBED_FACTOR[shape.type]
   if (!factor) {
-    return { x: shape.x + il, y: shape.y, w: Math.max(8, shape.w - il - ir), h: shape.h }
+    return { x: shape.x + TEXT_PADDING, y: shape.y, w: Math.max(8, shape.w - TEXT_PADDING * 2), h: shape.h }
   }
-  const w = Math.max(8, shape.w * factor - INSCRIBED_PAD * 2 - il - ir)
+  const w = Math.max(8, shape.w * factor - INSCRIBED_PAD * 2 - TEXT_PADDING * 2)
   const h = shape.h * factor - INSCRIBED_PAD * 2
-  const cx = shapeCenter(shape).x + (il - ir) / 2
-  return { x: cx - w / 2, y: shapeCenter(shape).y - h / 2, w, h }
+  const center = shapeCenter(shape)
+  return { x: center.x - w / 2, y: center.y - h / 2, w, h }
 }
 
 // CSS for the contentEditable, derived from the shape's text.style.
