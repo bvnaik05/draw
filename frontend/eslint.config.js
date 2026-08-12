@@ -54,9 +54,9 @@ export default [
       // A component imported and never placed in the template is dead weight
       // that survives every other check.
       'vue/no-unused-components': 'error',
-      // OFF: a naming convention, not a correctness check. Logomark, Minimap and
-      // Rulers are established names used across the codebase and the specs;
-      // renaming them to satisfy a style rule is churn with nothing behind it.
+      // OFF: a naming convention, not a correctness check. Logomark and Minimap
+      // are established names used across the codebase and the specs; renaming
+      // them to satisfy a style rule is churn with nothing behind it.
       'vue/multi-word-component-names': 'off',
     },
   },

@@ -1,7 +1,7 @@
 <script setup>
-// The static canvas toolbar (#359). One bar below the title bar and above the
-// ruler, holding every control that used to float over the canvas, with contents
-// that follow the selection.
+// The static canvas toolbar (#359). One bar below the title bar, holding every
+// control that used to float over the canvas, with contents that follow the
+// selection.
 //
 // It replaces eight separate floating bars. Those anchored themselves above the
 // selection, so a shape near the top of the canvas pushed its toolbar over the
@@ -31,7 +31,7 @@ import { useFlowchartSelection } from '@/composables/useFlowchartSelection.js'
 import { useModeStrategy } from '@/stores/useModeStrategy.js'
 import { isUnifiedDocument } from '@/diagram/schema.js'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
-import CanvasGroup from './groups/CanvasGroup.vue'
+import GuidesGroup from './groups/GuidesGroup.vue'
 import StyleGroup from './groups/StyleGroup.vue'
 import TextGroup from './groups/TextGroup.vue'
 import ArrangeGroup from './groups/ArrangeGroup.vue'
@@ -44,7 +44,6 @@ import MapLayoutGroup from './groups/MapLayoutGroup.vue'
 import WhiteboardObjectGroup from './groups/WhiteboardObjectGroup.vue'
 import StickyGroup from './groups/StickyGroup.vue'
 import TableCellGroup from './groups/TableCellGroup.vue'
-import HistoryGroup from './groups/HistoryGroup.vue'
 import ZoomGroup from './groups/ZoomGroup.vue'
 import PointerGroup from './groups/PointerGroup.vue'
 import InsertGroups from './groups/InsertGroups.vue'
@@ -109,9 +108,7 @@ const flowchartSelected = computed(
   >
     <TooltipProvider>
       <!-- The fixed prefix: everything that is always here, in an order that
-           never changes. -->
-      <HistoryGroup />
-      <ToolbarSeparator />
+           never changes. Undo/redo stay keyboard-only (⌘Z / ⇧⌘Z) — no button. -->
       <PointerGroup />
       <ToolbarSeparator />
       <!-- Wrapped so the separator goes with them. A legacy mind map or flowchart
@@ -122,17 +119,17 @@ const flowchartSelected = computed(
         <WhiteboardTools v-if="showsAnnotationTools" :exclude="annotationExclude" />
         <ToolbarSeparator />
       </template>
-      <!-- View, then the canvas menu. Both act on the whole diagram rather than
-           on the selection, so they close the fixed part rather than sitting
-           with the contextual groups. -->
+      <!-- View, then guides. Both act on the whole diagram rather than on the
+           selection, so they close the fixed part rather than sitting with the
+           contextual groups. -->
       <ZoomGroup />
-      <CanvasGroup />
+      <GuidesGroup />
 
       <!-- Everything below follows the selection, and it grows off the END of
            the fixed prefix rather than out of its middle. That is the whole
            point of the arrangement: no control the user is reaching for moves
            sideways when the selection changes, which is what the eight floating
-           bars did on every click. The cost is that Canvas sits mid-bar while
+           bars did on every click. The cost is that Guides sits mid-bar while
            something is selected. -->
       <template v-if="connectorSelected">
         <ToolbarSeparator />

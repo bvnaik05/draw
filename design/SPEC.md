@@ -138,8 +138,18 @@ Inspired by the Efficient Elements PowerPoint add-in: sections of **one-click ac
 - **Text/Font** — see 6 (font controls).
 - **Transparency.**
 - **Format painter** — copy all formatting from one shape, apply to others.
-- **Theme presets** — 3–4 curated, coordinated color sets (fill/border/text) applied diagram-wide in one click. Cheap on SVG+JSON; the most Canva-like "wow" in v1.
+- **Theme presets** — 3–4 curated, coordinated color sets (fill/border/text). See the amendment below: they seed a new diagram, they no longer re-style an existing one.
 - **Canvas controls** — change canvas size preset; set canvas background color.
+
+**No diagram-wide theme apply** (amended August 2026, #397). A preset is chosen
+once, in Settings (`defaultThemePreset`), and every diagram created after that
+picks it up — so a diagram's look is settled when it is created and nothing
+re-paints one afterwards. The one-click restyle needed a control on the canvas
+toolbar, which is the scarcest space in the app, to serve a decision most users
+make once; and it was never honest, since it could only repaint shapes still
+wearing the old triad and silently skipped every deliberate override. Reinstate
+it only alongside a real "change this diagram's theme" flow that says up front
+what it will and will not touch.
 
 > Tile set derived from general knowledge of Efficient Elements; cross-check the actual add-in once before build.
 
@@ -188,10 +198,20 @@ Every shape has **8 key points** (4 mid-edges + 4 corners), disambiguated by con
 
 - Every element — including connectors — can contain text.
 - **Double-click** any shape → text-edit mode immediately. Default alignment: horizontally and vertically centered.
-- While editing, **rulers** appear along the canvas top and left, in screen space, correct at all zoom levels. User can change horizontal alignment and adjust the text box's width/height within the shape.
+- Text sits inside the shape with a **fixed 12px horizontal padding**, so a label never touches the shape's edges. User can change horizontal alignment; the text box is not separately resizable.
 - **Formatting (v1):** **Inter** as the single default font (no font-family picker in v1 — keeps export/print consistent). Controls: size, bold, italic, underline, text color, left/center/right alignment.
 - **Overflow:** text wraps; if it still overflows vertically, the **shape auto-grows vertically**. For diamonds/triangles the text area is the **inscribed rectangle**.
 - **Connector labels:** sit at the connector midpoint, horizontal, in a small pill filled with the canvas background color; move with the line.
+
+**No rulers, no adjustable text insets** (amended August 2026, #398). Rulers sat
+along the canvas top and left while a label was being edited, and their markers
+set per-shape left/right insets. They cost a whole component and two persisted
+fields to let a user hand-place text inside a box the app already centres, and
+they appeared on every text edit whether or not anyone wanted them — the first
+double-click on a shape read as the canvas breaking. A fixed 12px padding gives
+the same breathing room with nothing to aim at. Reinstate rulers only if
+positioning against canvas coordinates becomes a real task — precise layout work
+that alignment guides (7.6) and the grid cannot serve.
 
 ---
 
@@ -367,11 +387,11 @@ Each step: build → test in browser → commit. Each lists **acceptance criteri
 **5. Anchors + connectors + hover-arrows.** Handle/anchor disambiguation; snap-to-anchor connector drawing; attach/follow on move+rotate; straight/curved(midpoint)/elbow; arrows; unattached connectors; endpoint re-drag; hover-arrow spawn.
 *AC:* connectors snap to anchors and follow shapes; all three types draw; endpoints re-attach; hover-arrows spawn a connected shape.
 
-**6. Text.** Double-click edit; centered defaults; rulers at all zooms; alignment + text-box sizing; auto-grow overflow; Inter + size/B/I/U/color; connector labels; double-click-empty-canvas create.
-*AC:* text edits inline; rulers correct after zoom; overflow grows the shape; connector labels render in a pill; empty-canvas double-click creates a shape in edit mode.
+**6. Text.** Double-click edit; centered defaults; fixed 12px horizontal padding; alignment; auto-grow overflow; Inter + size/B/I/U/color; connector labels; double-click-empty-canvas create.
+*AC:* text edits inline; the padding holds at every zoom; overflow grows the shape; connector labels render in a pill; empty-canvas double-click creates a shape in edit mode.
 
-**7. Right palette.** Arrange, Align (reference-object), Distribute, Same size, Swap, Rotate/Flip, Fill, Border (+stroke/dash), Font, Transparency, Format painter, Theme presets, Canvas controls; multi-select intersection logic; palette search.
-*AC:* each tile performs its action in one click; intersection logic hides inapplicable tiles; theme preset restyles the whole diagram; search filters the left palette.
+**7. Right palette.** Arrange, Align (reference-object), Distribute, Same size, Swap, Rotate/Flip, Fill, Border (+stroke/dash), Font, Transparency, Format painter, Canvas controls; multi-select intersection logic; palette search.
+*AC:* each tile performs its action in one click; intersection logic hides inapplicable tiles; search filters the left palette.
 
 **8. Keyboard + clipboard.** Copy/cut/paste (internal clipboard, +10 offset, connector-attachment rule), undo/redo (~50-step stack), select-all, Esc, nudging.
 *AC:* all shortcuts behave per 7.3; undo/redo is reliable across actions; nudging + Shift-nudging work.
