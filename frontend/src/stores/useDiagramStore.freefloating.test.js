@@ -288,3 +288,94 @@ describe('store.addChildNodeAt (gap insertion #265)', () => {
     expect(store.state.shapes.length).toBe(before)
   })
 })
+
+// #427 item 5/8: a node is a text container. Its box follows its label, and the
+// tree settles once when the edit lands — not on every keystroke.
+describe('store.commitMindmapNodeText (#427)', () => {
+  it('resizes the node to fit the committed label', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right'])
+    const before = { ...store.shapeById(ids[0]) }
+    store.commitMindmapNodeText(ids[0], { content: 'a much longer idea than before', html: '' })
+    const after = store.shapeById(ids[0])
+    expect(after.text.content).toBe('a much longer idea than before')
+    expect(after.w).toBeGreaterThan(before.w)
+  })
+
+  it('is one undo step covering the text, the box and the re-flow', () => {
+    const { store, rootId, ids } = migratedMindmapStoreWith(['right', 'right'])
+    const sibling = { ...store.shapeById(ids[1]) }
+    const before = store.shapeById(ids[0])
+    const edited = { w: before.w, h: before.h, content: before.text.content }
+    store.commitMindmapNodeText(ids[0], { content: 'w'.repeat(80), html: '' })
+    store.undo()
+    const restored = store.shapeById(ids[0])
+    expect([restored.w, restored.h, restored.text.content]).toEqual([edited.w, edited.h, edited.content])
+    expect(store.shapeById(ids[1])).toMatchObject({ x: sibling.x, y: sibling.y })
+    expect(store.shapeById(rootId)).toBeTruthy()
+  })
+
+  it('re-flows so a grown node stops overlapping its sibling', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
+    store.commitMindmapNodeText(ids[0], { content: 'w'.repeat(120), html: '' })
+    const grown = store.shapeById(ids[0])
+    const sibling = store.shapeById(ids[1])
+    expect(grown.y + grown.h).toBeLessThanOrEqual(sibling.y)
+  })
+
+  it('ignores an id that is not on the canvas', () => {
+    const { store } = migratedMindmapStoreWith(['right'])
+    expect(() => store.commitMindmapNodeText('nope', { content: 'x', html: '' })).not.toThrow()
+  })
+})
+
+// #427 item 4: a mind map is auto-laid-out, so dragging a node moves it in the
+// TREE — parent, side, order — and lets the layout place it.
+describe('store.moveMindmapNode (#427)', () => {
+  it('re-parents the node and re-points its branch, keeping the connector id', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
+    const branchBefore = store.state.connectors.find((c) => c.to?.shapeId === ids[1])
+    store.moveMindmapNode(ids[1], { kind: 'onto', parentId: ids[0] })
+    expect(store.shapeById(ids[1]).mindmap.parentId).toBe(ids[0])
+    const branchAfter = store.state.connectors.find((c) => c.to?.shapeId === ids[1])
+    expect(branchAfter.id).toBe(branchBefore.id)
+    expect(branchAfter.from.shapeId).toBe(ids[0])
+  })
+
+  it('re-orders among siblings without changing the parent', () => {
+    const { store, rootId, ids } = migratedMindmapStoreWith(['right', 'right', 'right'])
+    store.moveMindmapNode(ids[2], { kind: 'gap', parentId: rootId, side: 'right', index: 0 })
+    expect(store.shapeById(ids[2]).mindmap.parentId).toBe(rootId)
+    expect(centreY(store, ids[2])).toBeLessThan(centreY(store, ids[0]))
+  })
+
+  it('leaves clean integer orders behind', () => {
+    const { store, rootId, ids } = migratedMindmapStoreWith(['right', 'right', 'right'])
+    store.moveMindmapNode(ids[2], { kind: 'gap', parentId: rootId, side: 'right', index: 0 })
+    const orders = store.state.shapes
+      .filter((s) => s.mindmap?.parentId === rootId)
+      .map((s) => s.mindmap.order)
+      .sort((a, b) => a - b)
+    expect(orders).toEqual([0, 1, 2])
+  })
+
+  it('is one undo step covering the move and the re-flow', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
+    const live = store.shapeById(ids[1])
+    const before = { parentId: live.mindmap.parentId, x: live.x, y: live.y }
+    store.moveMindmapNode(ids[1], { kind: 'onto', parentId: ids[0] })
+    store.undo()
+    const restored = store.shapeById(ids[1])
+    expect(restored.mindmap.parentId).toBe(before.parentId)
+    expect([restored.x, restored.y]).toEqual([before.x, before.y])
+    expect(store.state.connectors.find((c) => c.to?.shapeId === ids[1]).from.shapeId).toBe(
+      before.parentId,
+    )
+  })
+
+  it('does nothing for a slot whose parent has gone', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right'])
+    const before = store.shapeById(ids[0]).mindmap.parentId
+    store.moveMindmapNode(ids[0], { kind: 'onto', parentId: 'nope' })
+    expect(store.shapeById(ids[0]).mindmap.parentId).toBe(before)
+  })
+})

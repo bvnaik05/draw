@@ -20,18 +20,22 @@
 
 import { isMindmapShape } from './freeFloating.js'
 import { mindmapModelFromShapes } from './freeFloatingGraph.js'
-
-// --- geometry constants (identical to MindMapNodeLayer.vue) ------------------
-export const ADD_R = 11 // "+" circle radius
-export const ADD_OFFSET = 28 // gap from the node edge to the "+" centre
-export const GLYPH = 4.5 // half-length of the white "+" strokes inside a circle
-// Vertical breathing room for the two extreme gap handles: the "above the first
-// child" "+" sits GAP/2 above the top child's edge, the "below the last child" one
-// GAP/2 below the bottom child's edge (about one "+" radius clear of the boxes).
-export const GAP = 24
+import { gapHandlePoints, ADD_R, ADD_OFFSET, GAP, HANDLE_INSET } from './mindmapHandleSlots.js'
+// --- geometry constants ------------------------------------------------------
+// The mark is small and quiet; the TARGET is large (#427 items 1 and 7). They are
+// separate numbers on purpose — an affordance that competes with the branches for
+// attention is not the same problem as one that is hard to hit, and the old single
+// radius could only ever trade one against the other.
+//
+// The sizes the "+" placement itself reasons about live in mindmapHandleSlots and
+// are re-exported here, so a caller still has one module to import from.
+export { ADD_R, ADD_OFFSET, GAP, HANDLE_INSET }
+export const ADD_HIT_R = 15 // invisible hit radius around that circle
+export const GLYPH = 3.5 // half-length of the white "+" strokes inside a circle
 // The hover region reaches this far past the branch edge, so sliding the pointer
-// off the node onto a "+" keeps the handles alive.
-export const HOVER_OUT = ADD_OFFSET + ADD_R + 12 // 51
+// off the node onto a "+" keeps the handles alive. Derived from the HIT radius,
+// not the drawn one, so the region always covers what is clickable.
+export const HOVER_OUT = ADD_OFFSET + ADD_HIT_R + 12
 
 function boxOf(shape) {
   return { x: shape.x, y: shape.y, w: shape.w, h: shape.h }
@@ -128,30 +132,18 @@ function childBoxesOnSide(nodeId, ctx, side) {
     .sort((a, b) => a.y - b.y)
 }
 
-// The N+1 gap y's for the sorted children on a side: one above the top child, one
-// in each gap between adjacent children (midpoint of their vertical centres), one
-// below the bottom child — so the handles interleave with the children (H,C,H,…,H).
-function gapCenters(childBoxes) {
-  const mid = (box) => box.y + box.h / 2
-  const ys = [childBoxes[0].y - GAP / 2]
-  for (let i = 0; i < childBoxes.length - 1; i += 1) ys.push((mid(childBoxes[i]) + mid(childBoxes[i + 1])) / 2)
-  const last = childBoxes[childBoxes.length - 1]
-  ys.push(last.y + last.h + GAP / 2)
-  return ys
-}
-
 // One "+" handle in absolute logical coords for inserting a child at ordinal `index`
-// on `side`. `cy` is the gap position; the stub always leaves the node's own edge at
-// mid-height. `straight` marks the lone childless-node handle (a straight stub); the
-// gap handles curve from the node edge to their offset y.
-function makeHandle(nodeId, box, side, index, cy, straight) {
-  const { cxLocal, stubLocalX } = sideGeometry(box, side)
+// on `side`. `cy` is the gap position, `cx` the column it stands in; the stub always
+// leaves the node's own edge at mid-height. `straight` marks the lone childless-node
+// handle, the only one that draws a stub.
+function makeHandle(nodeId, box, side, index, cx, cy, straight) {
+  const { stubLocalX } = sideGeometry(box, side)
   return {
     key: `add-${nodeId}-${side}-${index}`,
     nodeId,
     side,
     index,
-    cx: box.x + cxLocal,
+    cx,
     cy,
     stubX: box.x + stubLocalX,
     stubY: box.y + box.h / 2,
@@ -163,16 +155,38 @@ function makeHandle(nodeId, box, side, index, cy, straight) {
 // side there are N+1 slots: index 0 above the top child … index N below the bottom
 // one. A childless side gets a single straight "+" at the node's mid-height — "add
 // the first child at the same level".
+//
+// Where each of the N+1 marks lands is gapHandlePoints' job: it measures the actual
+// branch curves and puts every "+" in the whitespace between them, which no single
+// column could do once a node has enough children for its branches to pack together.
 function sideHandles(nodeId, box, side, ctx) {
   const childBoxes = childBoxesOnSide(nodeId, ctx, side)
-  if (!childBoxes.length) return [makeHandle(nodeId, box, side, 0, box.y + box.h / 2, true)]
-  return gapCenters(childBoxes).map((cy, index) => makeHandle(nodeId, box, side, index, cy, false))
+  if (!childBoxes.length) {
+    const { cxLocal } = sideGeometry(box, side)
+    return [makeHandle(nodeId, box, side, 0, box.x + cxLocal, box.y + box.h / 2, true)]
+  }
+  return gapHandlePoints(box, side, childBoxes).map(({ cx, cy }, index) =>
+    makeHandle(nodeId, box, side, index, cx, cy, false),
+  )
 }
 
 // Every "+" handle to draw for one node, in absolute logical coords. A root offers a
 // gap column on BOTH sides; any other node only on its branch side. Empty for a shape
 // id that is not a migrated mind-map node.
+//
+// Memoised per context. Placing the marks samples the branch curves, and the hover
+// state machine asks for them on every pointer move; a context is rebuilt whenever
+// the shapes change, so caching against it can never answer for a stale tree.
+const handleCache = new WeakMap()
+
 export function handlesForNode(nodeId, ctx) {
+  let byNode = handleCache.get(ctx)
+  if (!byNode) handleCache.set(ctx, (byNode = new Map()))
+  if (!byNode.has(nodeId)) byNode.set(nodeId, computeHandles(nodeId, ctx))
+  return byNode.get(nodeId)
+}
+
+function computeHandles(nodeId, ctx) {
   const box = ctx.boxes[nodeId]
   if (!ctx.byId[nodeId] || !box) return []
   return addSidesFor(nodeId, ctx).flatMap((side) => sideHandles(nodeId, box, side, ctx))
@@ -199,6 +213,31 @@ export function nodeAtPoint(point, shapes) {
   return best ? best.id : null
 }
 
+// The handle of `nodeId` under `point`, or null. The target is the hit radius, so
+// a click lands without pixel-perfect aim (#427 item 1).
+export function handleAtPoint(point, nodeId, ctx) {
+  for (const handle of handlesForNode(nodeId, ctx)) {
+    const dx = point.x - handle.cx
+    const dy = point.y - handle.cy
+    if (dx * dx + dy * dy <= ADD_HIT_R * ADD_HIT_R) return handle
+  }
+  return null
+}
+
+// Which node owns the hover after the pointer moves to `point` (#427 item 1).
+//
+// The order matters, and rule 1 is the fix: a "+" belongs to the node that
+// offered it, so while the pointer is ON one of the current node's handles that
+// node KEEPS the hover — even when the point also falls inside a neighbouring
+// node's box, which used to steal it and make the "+" vanish under the cursor.
+export function nextHoverTarget({ point, currentId = null, ctx, shapes }) {
+  if (currentId && ctx.boxes[currentId] && handleAtPoint(point, currentId, ctx)) return currentId
+  const direct = nodeAtPoint(point, shapes)
+  if (direct) return direct
+  if (currentId && pointInBox(point, hoverRegionOf(currentId, ctx))) return currentId
+  return null
+}
+
 // The padded region that keeps a node "hovered" while the pointer slides off it
 // toward any "+", so the handles do not vanish in the gap (#264). It reaches out
 // HOVER_OUT on the branch side(s) to cover the circles, and spans the FULL vertical
@@ -210,19 +249,89 @@ export function hoverRegionOf(nodeId, ctx) {
   if (!box) return null
   const root = isRootNode(nodeId, ctx)
   const side = branchSideOf(nodeId, ctx)
-  const left = root || side === 'left' ? HOVER_OUT : 6
-  const right = root || side === 'right' ? HOVER_OUT : 6
+  // The region is measured from the handles themselves rather than a fixed reach:
+  // a gap column stands out by the children it slots between (#427), so a constant
+  // would stop covering the "+" the moment the layout spaced things differently.
+  let left = box.x - (root || side === 'left' ? HOVER_OUT : 6)
+  let right = box.x + box.w + (root || side === 'right' ? HOVER_OUT : 6)
   let top = box.y
   let bottom = box.y + box.h
   for (const handle of handlesForNode(nodeId, ctx)) {
-    top = Math.min(top, handle.cy - ADD_R)
-    bottom = Math.max(bottom, handle.cy + ADD_R)
+    left = Math.min(left, handle.cx - ADD_HIT_R)
+    right = Math.max(right, handle.cx + ADD_HIT_R)
+    top = Math.min(top, handle.cy - ADD_HIT_R)
+    bottom = Math.max(bottom, handle.cy + ADD_HIT_R)
   }
   const margin = 8
   return {
-    x: box.x - left,
+    x: left - margin,
     y: top - margin,
-    w: box.w + left + right,
+    w: right - left + margin * 2,
     h: bottom - top + margin * 2,
   }
+}
+
+// --- slot hover ---------------------------------------------------------------
+//
+// A slot's own catchment: the whitespace between the two branches it sits between,
+// from the node's edge out past its "+". Hovering the fork between two branches is
+// how you say "another child, here" — it should offer THAT slot's "+" without
+// first hovering the parent and tracing the corridor, and it should offer only
+// that one, not the node's whole column.
+
+// The band is at least tall enough to aim at and never taller than the gap it
+// belongs to, so two neighbouring slots cannot both claim the same pixel.
+const SLOT_BAND_MIN = 20
+const SLOT_BAND_MAX = 44
+// The furthest a node's own "+" can stand from its box (a column gap plus a child's
+// width). Nodes further than this from the pointer cannot own the slot under it, so
+// they are skipped before their handles are placed.
+const SLOT_REACH = 360
+
+// The vertical room a slot has: the gap between the two children it sits between,
+// or the standing GAP for the first, last and childless-node slots.
+function slotGapHeight(handle, childBoxes) {
+  const above = childBoxes[handle.index - 1]
+  const below = childBoxes[handle.index]
+  if (!above || !below) return GAP
+  return below.y - (above.y + above.h)
+}
+
+function slotZone(handle, box, side, childBoxes) {
+  const height = Math.min(Math.max(slotGapHeight(handle, childBoxes), SLOT_BAND_MIN), SLOT_BAND_MAX)
+  const inner = side === 'right' ? box.x + box.w : box.x
+  const outer = side === 'right' ? handle.cx + ADD_HIT_R : handle.cx - ADD_HIT_R
+  return {
+    x: Math.min(inner, outer),
+    y: handle.cy - height / 2,
+    w: Math.abs(outer - inner),
+    h: height,
+  }
+}
+
+// Every slot of one node paired with the whitespace it answers for.
+export function slotZonesForNode(nodeId, ctx) {
+  const box = ctx.boxes[nodeId]
+  if (!box) return []
+  const bySide = {}
+  for (const side of addSidesFor(nodeId, ctx)) bySide[side] = childBoxesOnSide(nodeId, ctx, side)
+  return handlesForNode(nodeId, ctx).map((handle) => ({
+    handle,
+    zone: slotZone(handle, box, handle.side, bySide[handle.side] || []),
+  }))
+}
+
+// The one "+" the pointer is asking for, or null. Ties go to the nearest mark, so
+// where two slots' bands touch the pointer gets the one it is actually closest to.
+export function slotAtPoint(point, ctx) {
+  let best = null
+  for (const [nodeId, box] of Object.entries(ctx.boxes)) {
+    if (!pointInBox(point, { x: box.x - SLOT_REACH, y: box.y - SLOT_REACH, w: box.w + SLOT_REACH * 2, h: box.h + SLOT_REACH * 2 })) continue
+    for (const { handle, zone } of slotZonesForNode(nodeId, ctx)) {
+      if (!pointInBox(point, zone)) continue
+      const distance = Math.hypot(point.x - handle.cx, point.y - handle.cy)
+      if (!best || distance < best.distance) best = { handle, distance }
+    }
+  }
+  return best?.handle || null
 }

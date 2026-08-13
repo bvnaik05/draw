@@ -19,6 +19,8 @@ import {
 } from '@/diagram/freeFloating.js'
 import { mindmapModelFromShapes, flowchartModelFromShapes } from '@/diagram/freeFloatingGraph.js'
 import { buildMindmapChild, buildMindmapSibling, buildFlowchartChild, flowchartLayoutPatches, mindmapLayoutPatches } from '@/diagram/freeFloatingOps.js'
+import { mindmapSizeForShape } from '@/diagram/mindmapNodeSize.js'
+import { dropPatches } from '@/diagram/mindmapDrop.js'
 import { DEFAULT_NODE_STYLE } from '@/diagram/mindmapNodeStyle.js'
 import { useAppSettings } from '@/composables/useAppSettings.js'
 import {
@@ -215,12 +217,20 @@ function attachMindMap(store, state, history) {
   // Write a set of mind-map layout patches back onto the live shapes/connectors.
   // Shared by the auto-tidy on add (#273) and the explicit Tidy up; the caller runs
   // it INSIDE a commit() so the re-flow lands in the same undoable unit as the edit.
+  // Sizes ride along with positions: the layout spaced the tree against boxes it
+  // measured from each node's text, so the shapes must carry those same boxes or
+  // the spacing describes a tree nobody can see (#427). A patch that matches what
+  // the shape already holds is skipped, so an idempotent re-flow writes nothing —
+  // no autosave churn, no phantom diff for a collaborator.
   const applyMindmapPatches = (patches) => {
     for (const patch of patches.nodes) {
       const shape = state.shapes.find((s) => s.id === patch.id)
       if (!shape) continue
+      if (shape.x === patch.x && shape.y === patch.y && shape.w === patch.w && shape.h === patch.h) continue
       shape.x = patch.x
       shape.y = patch.y
+      if (patch.w) shape.w = patch.w
+      if (patch.h) shape.h = patch.h
     }
     for (const patch of patches.edges) {
       const connector = state.connectors.find((c) => c.id === patch.id)
@@ -351,6 +361,84 @@ function attachMindMap(store, state, history) {
       const node = state.mindmap?.nodes.find((n) => n.id === id)
       if (node) applyPatch(node, patch)
     })
+  // Re-fit mind-map nodes to their own labels and settle the trees they belong to.
+  // The single answer to "this node's text changed, or the style it is set in did"
+  // (#427) — used by the toolbar's font controls through updateShape(s) as well as
+  // by the text editor. Must run inside a caller's commit(); ids that are not
+  // mind-map nodes are skipped, so callers need not care what they are holding.
+  store.fitMindmapNodes = (ids) => {
+    const fitted = []
+    for (const id of ids || []) {
+      const shape = state.shapes.find((s) => s.id === id)
+      if (!shape || shape.role !== ROLE.mindmapNode) continue
+      applyPatch(shape, mindmapSizeForShape(shape))
+      fitted.push(id)
+    }
+    for (const id of fitted) reflowTree(id)
+  }
+
+  // Both writes below share this label so history's coalescer (same label, within
+  // 450ms, and it must start with "Update ") folds them into one step.
+  const NODE_TEXT_EDIT = 'Update node text'
+  // Resize a node to its label WHILE the label is being typed. It carries the same
+  // history label as the commit below on purpose: history coalesces consecutive
+  // commits that share a label, so a burst of typing plus the final commit collapse
+  // into one undo step instead of leaving a step that holds the new box with the
+  // old text (#427).
+  store.resizeMindmapNodeToText = (id, size) =>
+    history.commit(NODE_TEXT_EDIT, () => applyPatch(state.shapes.find((s) => s.id === id), size))
+  // Land an edited label on a free-floating node: the text, the box that text
+  // measures to, and the re-flow that box needs, as ONE undoable unit (#427).
+  // Typing itself never re-flows — a tree that rearranged on every keystroke is
+  // what made editing feel like fighting the layout — so the tree settles once,
+  // here, when the editor closes.
+  store.commitMindmapNodeText = (id, text) => {
+    const shape = state.shapes.find((s) => s.id === id)
+    if (!shape) return
+    history.commit(NODE_TEXT_EDIT, () => {
+      applyPatch(shape, { text })
+      store.fitMindmapNodes([id])
+    })
+  }
+  // Move a node to a new place in the tree by dropping it (#427 item 4). A mind map
+  // is auto-laid-out, so a drag never sets coordinates: it rewrites the node's
+  // parent / side / order tags, drags its subtree along, re-points the branch to
+  // the new parent, and lets the layout place everything. All in ONE commit, so a
+  // single undo puts the branch back exactly where it was.
+  //
+  // The branch connector keeps its id even though the id encodes the old parent: a
+  // new id would read as a delete plus an insert to undo and to collaborators.
+  store.moveMindmapNode = (nodeId, slot) => {
+    const patches = dropPatches(state.shapes, nodeId, slot)
+    if (!patches.nodes.length) return
+    const oldParentId = state.shapes.find((s) => s.id === nodeId)?.mindmap?.parentId
+    history.commit('Move node', () => {
+      for (const { id, ...tags } of patches.nodes) {
+        const shape = state.shapes.find((s) => s.id === id)
+        if (shape) applyPatch(shape.mindmap, tags)
+      }
+      repointBranch(nodeId, slot.parentId)
+      renumberChildShapes(oldParentId)
+      renumberChildShapes(slot.parentId)
+      reflowTree(slot.parentId)
+      // A canvas can hold several maps (#48) and a node can be dropped into a
+      // different one, which leaves a gap — and stale branch anchors — behind in
+      // the map it came from. Re-flowing both settles the tree it left as well as
+      // the tree it joined; on the usual same-tree move the second pass is a no-op.
+      if (oldParentId) reflowTree(oldParentId)
+    })
+  }
+
+  // Hang the node's branch connector off its new parent. Anchors are left to the
+  // re-flow, which recomputes them from the settled boxes.
+  const repointBranch = (nodeId, parentId) => {
+    const branch = state.connectors.find(
+      (c) => c.role === ROLE.mindmapBranch && c.to?.shapeId === nodeId,
+    )
+    if (!branch) return
+    branch.from.shapeId = parentId
+    if (branch.mindmap) branch.mindmap.parentId = parentId
+  }
   // Delete migrated mind-map SHAPES and their whole subtrees (free-floating #122):
   // reconstruct the tree from the tags, expand each id to its descendants, then drop
   // those shapes and any connector touching them — one undoable unit, no dangling
@@ -767,12 +855,21 @@ function attachShapeMutations(store, state, history) {
     history.commit('Add shape', () => state.shapes.push(shape))
     return shape.id
   }
+  // A mind-map node's box is derived from its label, so any patch that touches the
+  // text — the words OR the style they are set in — has to re-fit the box in the
+  // same commit (#427). Without this, raising the font size grew the letters inside
+  // a box that stayed put, and the node only snapped to its real size later, when
+  // something else happened to re-measure it.
   store.updateShape = (id, patch) =>
-    history.commit('Update shape', () => applyPatch(store.shapeById(id), patch))
+    history.commit('Update shape', () => {
+      applyPatch(store.shapeById(id), patch)
+      if (patch.text) store.fitMindmapNodes?.([id])
+    })
   store.updateShapes = (ids, patch) =>
-    history.commit('Update shapes', () =>
-      ids.forEach((id) => applyPatch(store.shapeById(id), patch)),
-    )
+    history.commit('Update shapes', () => {
+      ids.forEach((id) => applyPatch(store.shapeById(id), patch))
+      if (patch.text) store.fitMindmapNodes?.(ids)
+    })
   store.removeShapes = (ids) =>
     history.commit('Delete shapes', () => removeShapesInternal(state, ids))
   store.removeConnectors = (ids) =>

@@ -9,8 +9,7 @@ import { sanitizeRichText } from '@/utils/sanitizeHtml.js'
 import { safeHref, safeImageSrc } from '@/utils/safeUrl.js'
 import { nodeShape } from '@/diagram/flowchartShapes.js'
 import { polygonPointsString } from '@/diagram/polygon.js'
-import { shapeCornerRadius } from '@/diagram/shapeGeometry.js'
-import { curveRadius } from '@/diagram/mindmapNodeStyle.js'
+import { cornerRadiusOf } from '@/diagram/shapeGeometry.js'
 import { NODE_BORDER_ZONE } from '@/diagram/mindmapNodeShape.js'
 
 const props = defineProps({
@@ -93,18 +92,22 @@ const transform = computed(() => {
   return parts.length ? parts.join(' ') : null
 })
 
-// Corner radius for the rect branch, from the shared helper so the draw preview
-// (which ghosts through this same component) renders identical corners (#130).
-const cornerRadius = computed(() => {
-  // A mind-map node's corner roundness follows its own curve setting (#260); every
-  // other shape uses the shared box radius. isMindmapNode is declared below — safe
-  // here because the getter only runs at render time (same TDZ pattern as autofit).
-  const curve = props.shape.mindmap?.curve
-  if (isMindmapNode.value && curve) return curveRadius(curve)
-  return shapeCornerRadius(props.shape.type, props.shape.cornerRadius)
-})
+// Corner radius from the shared helper, so the draw preview (which ghosts through
+// this same component) renders identical corners (#130) and nothing that traces a
+// shape draws corners the shape does not have (#427 item 3). A mind-map node's
+// radius comes from its own curve setting (#260), every other shape's from type.
+const cornerRadius = computed(() => cornerRadiusOf(props.shape))
 
-const border = computed(() => props.shape.border || {})
+// A selected mind-map node reads as selected by drawing its OWN border heavier and
+// darker, rather than having a dashed box drawn around it (#427). One box per node
+// keeps a dense map legible; the node also keeps its own colour, so a coloured
+// branch still looks like itself while selected.
+const SELECTED_NODE_BORDER = { width: 2.5, color: '#525252' }
+const border = computed(() => {
+  const own = props.shape.border || {}
+  if (!props.selected || !isMindmapNode.value) return own
+  return { ...own, ...SELECTED_NODE_BORDER, color: own.color || SELECTED_NODE_BORDER.color }
+})
 const dashArray = computed(() => {
   const w = border.value.width || 1
   if (border.value.dash === 'dashed') return `${w * 3} ${w * 2}`
@@ -456,13 +459,30 @@ useAutoFitText(richEl, () => ({
       </svg>
     </a>
 
+    <!-- A mind-map node's plain label wraps (#427 item 5). An SVG <text> is one
+         unwrapped line, so a long label simply spilled out of the node however
+         big the box was. It renders in the same padded area, and wraps at the
+         same width, that the box was measured against — so what is drawn fits. -->
+    <foreignObject
+      v-if="!isEditingThis && !richHtml && isMindmapNode && (shape.text?.content || mindmapPlaceholder)"
+      :x="textArea.x"
+      :y="textArea.y"
+      :width="textArea.w"
+      :height="textArea.h"
+      style="overflow: visible"
+    >
+      <div class="fd-richtext" :style="{ ...richStyle, color: labelFill }">
+        {{ mindmapPlaceholder ? 'New idea' : shape.text.content }}
+      </div>
+    </foreignObject>
+
     <!-- Legacy plain text (shapes with only a plain `content` string, no rich
          html). Must be its own v-if guarded by !richHtml: a shape with BOTH html
          and content (e.g. whiteboard text) would otherwise render the rich
          foreignObject AND this <text>, showing the text twice (Q2). The prior
          v-else-if chained to the hyperlink <a>, not the foreignObject. -->
     <text
-      v-if="!isEditingThis && !richHtml && (shape.text?.content || mindmapPlaceholder)"
+      v-if="!isEditingThis && !richHtml && !isMindmapNode && shape.text?.content"
       :x="center.x"
       :y="center.y"
       text-anchor="middle"
@@ -474,9 +494,8 @@ useAutoFitText(richEl, () => ({
       :text-decoration="textStyle.underline ? 'underline' : 'none'"
       :opacity="shape.opacity"
       :font-family="textStyle.font || 'Inter, sans-serif'"
-      :style="isMindmapNode ? { pointerEvents: 'none' } : null"
     >
-      {{ mindmapPlaceholder ? 'New idea' : shape.text.content }}
+      {{ shape.text.content }}
     </text>
   </g>
 </template>

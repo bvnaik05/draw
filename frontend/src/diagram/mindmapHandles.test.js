@@ -12,6 +12,11 @@ import {
   nodeAtPoint,
   hoverRegionOf,
   pointInBox,
+  ADD_HIT_R,
+  HANDLE_INSET,
+  handleAtPoint,
+  nextHoverTarget,
+  slotAtPoint,
 } from './mindmapHandles.js'
 import { ROLE, flattenSubmodels } from './freeFloating.js'
 import { createMindMap, addChild } from './mindmapModel.js'
@@ -55,10 +60,16 @@ function nodeWithChildren(n) {
 
 describe('geometry constants', () => {
   it('keeps the "+" sizes and reach', () => {
-    expect(ADD_R).toBe(11)
+    expect(ADD_R).toBe(7)
     expect(ADD_OFFSET).toBe(28)
-    expect(GLYPH).toBe(4.5)
-    expect(HOVER_OUT).toBe(ADD_OFFSET + ADD_R + 12)
+    expect(GLYPH).toBe(3.5)
+    expect(HOVER_OUT).toBe(ADD_OFFSET + ADD_HIT_R + 12)
+  })
+
+  // #427 items 1 and 7: the mark got smaller, the target bigger. One radius could
+  // only trade those against each other, so they are separate numbers now.
+  it('gives the "+" a target larger than the mark it draws', () => {
+    expect(ADD_HIT_R).toBeGreaterThan(ADD_R)
   })
 })
 
@@ -112,7 +123,32 @@ describe('handlesForNode', () => {
     expect(handles[0].cy).toBeLessThan(grandCentre) // above
     expect(handles[1].cy).toBeGreaterThan(grandCentre) // below
     // The stub always leaves the node's OWN edge at its mid-height, whatever the gap y.
-    expect(handles.every((h) => h.stubX === 440 && h.stubY === 120 && h.cx === 440 + ADD_OFFSET)).toBe(true)
+    expect(handles.every((h) => h.stubX === 440 && h.stubY === 120)).toBe(true)
+    // #427: a gap handle stands in the CHILD column, not beside the parent. Every
+    // branch leaves the parent from one point, so a "+" parked there sits on the
+    // bundle of curves; out by the children, each curve has reached its own child.
+    const grandBox = ctx.boxes['grand']
+    expect(handles.every((h) => h.cx > 440 + ADD_OFFSET)).toBe(true)
+    expect(handles.every((h) => h.cx + ADD_R < grandBox.x)).toBe(true)
+  })
+
+  it('keeps a gap "+" clear of the child box it precedes', () => {
+    const ctx = buildContext(nodeWithChildren(3))
+    const children = ['c0', 'c1', 'c2'].map((id) => ctx.boxes[id])
+    const columnEdge = Math.min(...children.map((child) => child.x))
+    for (const handle of handlesForNode('p', ctx)) {
+      expect(columnEdge - (handle.cx + ADD_R)).toBeGreaterThanOrEqual(HANDLE_INSET - ADD_R)
+    }
+  })
+
+  it('never lets a gap column crowd the parent, however close the children are', () => {
+    const shapes = [mmNode('root', null, 0, 100, 120, 44), mmNode('p', 'root', 300, 100, 140, 40)]
+    // Children pulled hard against their parent — closer than the handle column wants.
+    shapes.push(mmNode('c0', 'p', 448, 60, 140, 40), mmNode('c1', 'p', 448, 140, 140, 40))
+    const ctx = buildContext(shapes)
+    for (const handle of handlesForNode('p', ctx)) {
+      expect(handle.cx).toBeGreaterThanOrEqual(440 + ADD_OFFSET)
+    }
   })
 
   it('shows N+1 handles for N children on a side', () => {
@@ -242,9 +278,10 @@ describe('hoverRegionOf', () => {
     const ctx = buildContext(treeWithGrandchild())
     const region = hoverRegionOf('right', ctx)
     const box = ctx.boxes['right']
-    // Reaches out on the branch (right) side to cover the "+", only a hair on the other.
-    expect(region.x).toBe(box.x - 6)
-    expect(region.x + region.w).toBe(box.x + box.w + HOVER_OUT)
+    // Only a hair on the non-branch side; on the branch side it reaches however far
+    // the handles actually stand, which is out by the children (#427).
+    expect(region.x).toBeLessThanOrEqual(box.x - 6)
+    expect(region.x + region.w).toBeGreaterThanOrEqual(box.x + box.w + HOVER_OUT)
     // Covers the extreme handle y's — the top ("above the child") and bottom ("below
     // the child") — with margin, so the pointer never drops the hover in the gap.
     const cys = handlesForNode('right', ctx).map((h) => h.cy)
@@ -259,8 +296,9 @@ describe('hoverRegionOf', () => {
     const ctx = buildContext(sampleTree())
     const region = hoverRegionOf('root', ctx)
     const box = ctx.boxes['root']
-    expect(region.x).toBe(box.x - HOVER_OUT)
-    expect(region.x + region.w).toBe(box.x + box.w + HOVER_OUT)
+    // At least the base reach on each side, and further wherever the handles stand.
+    expect(region.x).toBeLessThanOrEqual(box.x - HOVER_OUT)
+    expect(region.x + region.w).toBeGreaterThanOrEqual(box.x + box.w + HOVER_OUT)
     for (const h of handlesForNode('root', ctx)) {
       expect(pointInBox({ x: h.cx, y: h.cy }, region)).toBe(true)
     }
@@ -292,3 +330,122 @@ function docWith(partial) {
     ...partial,
   }
 }
+
+// #427 item 1. The "+" used to disappear as the pointer travelled toward it: any
+// node box the pointer crossed stole the hover outright, and leaving the node's
+// own element counted as leaving. Hover ownership is decided here now.
+describe('handleAtPoint', () => {
+  it('hits a handle anywhere inside the target radius, not just on the mark', () => {
+    const ctx = buildContext(sampleTree())
+    const [handle] = handlesForNode('right', ctx)
+    const offCentre = { x: handle.cx + ADD_HIT_R - 1, y: handle.cy }
+    expect(handleAtPoint(offCentre, 'right', ctx)?.key).toBe(handle.key)
+  })
+
+  it('misses beyond the target radius', () => {
+    const ctx = buildContext(sampleTree())
+    const [handle] = handlesForNode('right', ctx)
+    expect(handleAtPoint({ x: handle.cx + ADD_HIT_R + 2, y: handle.cy }, 'right', ctx)).toBeNull()
+  })
+
+  it('is null for a node that offers no handles', () => {
+    const ctx = buildContext(sampleTree())
+    expect(handleAtPoint({ x: 0, y: 0 }, 'nope', ctx)).toBeNull()
+  })
+})
+
+describe('nextHoverTarget', () => {
+  it('keeps the hover on the node whose handle the pointer is over', () => {
+    const shapes = sampleTree()
+    const ctx = buildContext(shapes)
+    const [handle] = handlesForNode('root', ctx)
+    const target = nextHoverTarget({ point: { x: handle.cx, y: handle.cy }, currentId: 'root', ctx, shapes })
+    expect(target).toBe('root')
+  })
+
+  // The regression itself: a handle drawn over a neighbouring node's box still
+  // belongs to the node that offered it.
+  it('does not hand the hover to a node sitting under the current node handle', () => {
+    const shapes = sampleTree()
+    const ctx = buildContext(shapes)
+    const [handle] = handlesForNode('root', ctx)
+    // Park an unrelated node (its own tree) right on top of that handle.
+    shapes.push(mmNode('intruder', null, handle.cx - 20, handle.cy - 20, 40, 40))
+    const moved = buildContext(shapes)
+    const point = { x: handle.cx, y: handle.cy }
+    expect(nextHoverTarget({ point, currentId: 'root', ctx: moved, shapes })).toBe('root')
+    // With no node hovered yet, the box under the pointer wins as before.
+    expect(nextHoverTarget({ point, currentId: null, ctx: moved, shapes })).toBe('intruder')
+  })
+
+  it('takes the node directly under the pointer', () => {
+    const shapes = sampleTree()
+    const ctx = buildContext(shapes)
+    expect(nextHoverTarget({ point: { x: 350, y: 120 }, currentId: null, ctx, shapes })).toBe('right')
+  })
+
+  it('holds the hover inside the padded region, with nothing under the pointer', () => {
+    const shapes = sampleTree()
+    const ctx = buildContext(shapes)
+    const region = hoverRegionOf('right', ctx)
+    const inCorridor = { x: region.x + region.w - 2, y: region.y + region.h / 2 }
+    expect(nodeAtPoint(inCorridor, shapes)).toBeNull()
+    expect(nextHoverTarget({ point: inCorridor, currentId: 'right', ctx, shapes })).toBe('right')
+  })
+
+  it('drops the hover once the pointer leaves the region entirely', () => {
+    const shapes = sampleTree()
+    const ctx = buildContext(shapes)
+    expect(nextHoverTarget({ point: { x: 5000, y: 5000 }, currentId: 'right', ctx, shapes })).toBeNull()
+  })
+})
+
+
+// #427 item 1: the corridor is painted so the pointer never crosses dead canvas on
+// its way to a "+" — but it must not cover the node, whose own cursor zones say
+// "click here to edit" (#123).
+// Hovering the whitespace where two branches split offers THAT slot's "+", without
+// hovering the parent first — and offers only that one, not the node's whole
+// column (#427). The zone is the band between the two branches, from the node's
+// edge out past the mark.
+describe('slotAtPoint', () => {
+  const ctx = () => buildContext(nodeWithChildren(4))
+
+  it('offers the slot whose whitespace the pointer is in', () => {
+    const context = ctx()
+    const [, second] = handlesForNode('p', context)
+    const handle = slotAtPoint({ x: second.cx, y: second.cy }, context)
+    expect(handle.key).toBe(second.key)
+  })
+
+  // The point that matters: the fork itself, back where the branches leave the
+  // parent, long before the column the marks stand in.
+  it('answers from the fork, not only from the mark', () => {
+    const context = ctx()
+    const [, second] = handlesForNode('p', context)
+    const parent = context.boxes.p
+    const handle = slotAtPoint({ x: parent.x + parent.w + 6, y: second.cy }, context)
+    expect(handle.key).toBe(second.key)
+  })
+
+  it('picks one slot, and it is the nearest', () => {
+    const context = ctx()
+    const handles = handlesForNode('p', context)
+    for (const handle of handles) {
+      expect(slotAtPoint({ x: handle.cx, y: handle.cy }, context).key).toBe(handle.key)
+    }
+  })
+
+  it('offers nothing out in open canvas', () => {
+    expect(slotAtPoint({ x: 4000, y: 4000 }, ctx())).toBe(null)
+  })
+
+  // A childless node's single "+" is a slot like any other, so approaching the
+  // empty side of a leaf offers it.
+  it('offers a childless node its one slot', () => {
+    const context = buildContext(sampleTree())
+    const box = context.boxes.right
+    const handle = slotAtPoint({ x: box.x + box.w + 10, y: box.y + box.h / 2 }, context)
+    expect(handle.nodeId).toBe('right')
+  })
+})

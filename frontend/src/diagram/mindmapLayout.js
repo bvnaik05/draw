@@ -6,45 +6,29 @@
 // rightward and (mirrored) leftward, with the root centred between the sides.
 
 import { childrenOf, nodeById, subtreeIds, rootNodes, treeOrigin } from './mindmapModel.js'
-import { wrapLineCount, charsPerLine } from './textMetrics.js'
+import { mindmapNodeSize, NODE_PAD_X, LINE_HEIGHT } from './mindmapNodeSize.js'
 import { unionBounds } from './geometry.js'
+import { tidySubtree, tidyGroup } from './mindmapTidy.js'
 
 const H_GAP = 70 // horizontal gap between depth columns
-const V_GAP = 18 // vertical gap between sibling subtrees
+// Vertical gap between sibling subtrees. Wide enough to hold an add-node "+" with
+// air on both sides (#427): with a denser stack the marks fit only by touching the
+// boxes they sit between, and the map itself reads as a wall rather than a tree.
+const V_GAP = 26
 const PAD = 60 // margin around the whole tree after normalising
 
-const CHAR_W = 8.5
-// Exported so the renderer insets its text box (and thus wraps) at exactly the
+// Re-exported so the renderer insets its text box (and thus wraps) at exactly the
 // width the layout measured against — keeps rendered lines and measured height
 // in lockstep, so text never overflows the pill (spec A9, no-overflow rule).
-export const PAD_X = 28
-const PAD_Y = 18
-export const LINE_H = 22
-const MIN_W = 140 // default node width (2× the old 70 — wider resting pill)
-const MAX_W = 200 // horizontal cap: text wraps to a new line past this, then grows down
+export const PAD_X = NODE_PAD_X
+export const LINE_H = LINE_HEIGHT
 
-// Deterministic node box from its text (no DOM measurement, so it is unit
-// testable). Width grows with text up to MAX_W; beyond that the text wraps and
-// the box grows downward (more lines) with no vertical limit — the renderer
-// wraps at the same width so what's drawn always fits (no overflow).
+// A node's box, derived from its text. Delegates to mindmapNodeSize so the framed
+// layout and the free-floating shapes can never drift apart (#427): one heuristic,
+// one set of constants, measured once and used by creation, layout, renderer and
+// editor alike.
 export function measureNodeSize(node, isRoot = false) {
-  // Scale the character/line metrics by the node's chosen font size (default 14)
-  // so a larger pill grows to fit bigger text (spec A9 font-size control).
-  const fontScale = (node.fontSize || (isRoot ? 17 : 14)) / 14
-  const charWidth = CHAR_W * fontScale
-  const lineHeight = LINE_H * fontScale
-  const text = node.text || ''
-  const singleLineWidth = text.length * charWidth + PAD_X
-  const width = clamp(singleLineWidth, MIN_W * fontScale, MAX_W * fontScale)
-  // How many lines the text wraps to inside the padded box, packing whole words
-  // (mirroring CSS normal wrapping) so the height fits the rendered text.
-  const lines = wrapLineCount(text, charsPerLine(width - PAD_X, charWidth))
-  const height = lines * lineHeight + PAD_Y
-  return { w: Math.round(width), h: Math.round(height) }
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value))
+  return mindmapNodeSize({ text: node.text, fontSize: node.fontSize, isRoot })
 }
 
 // Lay out every tree on the map (#48), each around its own root and shifted by
@@ -54,7 +38,6 @@ export function layoutMindMap(model) {
   const roots = rootNodes(model)
   if (!roots.length) return { positions: {}, bbox: { x: 0, y: 0, w: 0, h: 0 } }
   const sizes = sizeNodes(model)
-  const metrics = makeSubtreeMetrics(model, sizes)
   const positions = {}
   // The anchor is the first tree's layout BEFORE its own origin is applied, so it
   // is fixed for a given set of nodes: moving ANY tree — the first one included —
@@ -62,7 +45,7 @@ export function layoutMindMap(model) {
   let anchor = null
   for (const root of roots) {
     const tree = {}
-    placeRoot(model, root, sizes, metrics, tree)
+    placeRoot(model, root, sizes, tree)
     if (!anchor) anchor = bounds(Object.values(tree))
     const origin = treeOrigin(root)
     for (const id in tree) {
@@ -109,29 +92,19 @@ export function mindmapTreeRects(model, positions, pad = 0) {
   return rects
 }
 
-// Memoised subtree heights + the stacked-band height of a sibling group.
-// A node's subtree height is its own height or its children band, whichever is
-// taller; collapsed nodes count as leaves.
-function makeSubtreeMetrics(model, sizes) {
-  const memo = new Map()
-  function height(node) {
-    if (memo.has(node.id)) return memo.get(node.id)
-    const children = node.collapsed ? [] : childrenOf(model, node.id)
-    let value = sizes[node.id].h
-    if (children.length) value = Math.max(value, band(children))
-    memo.set(node.id, value)
-    return value
-  }
-  function band(children) {
-    const total = children.reduce((sum, child) => sum + height(child), 0)
-    return total + (children.length - 1) * V_GAP
-  }
-  return { height, band }
+// The vertical shape of one branch, packed by contour (mindmapTidy): where every
+// node under it sits relative to the branch itself.
+function tidyBranch(model, branch, sizes) {
+  return tidySubtree(branch, {
+    sizeOf: (node) => sizes[node.id],
+    childrenOf: (node) => (node.collapsed ? [] : childrenOf(model, node.id)),
+    gap: V_GAP,
+  })
 }
 
 // Root centred at the origin; first-level branches split left/right (alternating
 // by order for a deterministic, roughly balanced split), each side mirrored.
-function placeRoot(model, root, sizes, metrics, positions) {
+function placeRoot(model, root, sizes, positions) {
   const rootSize = sizes[root.id]
   positions[root.id] = { x: -rootSize.w / 2, y: -rootSize.h / 2, ...rootSize }
 
@@ -148,36 +121,35 @@ function placeRoot(model, root, sizes, metrics, positions) {
     else (autoIndex++ % 2 === 0 ? right : left).push(branch)
   }
 
-  placeSide(model, right, rootSize.w / 2 + H_GAP, 1, sizes, metrics, positions)
-  placeSide(model, left, -rootSize.w / 2 - H_GAP, -1, sizes, metrics, positions)
+  placeSide(model, right, rootSize.w / 2 + H_GAP, 1, sizes, positions)
+  placeSide(model, left, -rootSize.w / 2 - H_GAP, -1, sizes, positions)
 }
 
-// Stack a side's branch subtrees, vertically centred on the root (y=0).
-function placeSide(model, branches, attachX, dir, sizes, metrics, positions) {
+// Stack a side's branches, each clearing the ones already placed at the depths they
+// share, with the group centred on the root (y=0).
+function placeSide(model, branches, attachX, dir, sizes, positions) {
   if (!branches.length) return
-  let top = -metrics.band(branches) / 2
-  for (const branch of branches) {
-    const height = metrics.height(branch)
-    place(model, branch, attachX, top + height / 2, dir, sizes, metrics, positions)
-    top += height + V_GAP
-  }
+  const tidied = branches.map((branch) => tidyBranch(model, branch, sizes))
+  const shifts = tidyGroup(tidied, V_GAP)
+  branches.forEach((branch, index) => {
+    place(model, branch, attachX, shifts[index], dir, sizes, tidied[index], positions)
+  })
 }
 
-// Position one node (its edge nearest the root at `attachX`), then recurse to its
-// children one column further out in direction `dir` (+1 right, -1 left).
-function place(model, node, attachX, centerY, dir, sizes, metrics, positions) {
-  const size = sizes[node.id]
-  const x = dir > 0 ? attachX : attachX - size.w
-  positions[node.id] = { x, y: centerY - size.h / 2, ...size }
-
-  const children = node.collapsed ? [] : childrenOf(model, node.id)
-  if (!children.length) return
-  const childAttachX = dir > 0 ? x + size.w + H_GAP : x - H_GAP
-  let top = centerY - metrics.band(children) / 2
-  for (const child of children) {
-    const height = metrics.height(child)
-    place(model, child, childAttachX, top + height / 2, dir, sizes, metrics, positions)
-    top += height + V_GAP
+// Position a branch and everything under it. `centerY` is the branch's own centre;
+// each descendant sits at its packed offset from it, and each depth is one column
+// further out in direction `dir` (+1 right, -1 left).
+function place(model, node, attachX, centerY, dir, sizes, tidied, positions) {
+  const columnX = { [node.id]: attachX }
+  for (const [id, dy] of tidied.offsets) {
+    const size = sizes[id]
+    const attach = columnX[id]
+    const x = dir > 0 ? attach : attach - size.w
+    positions[id] = { x, y: centerY + dy - size.h / 2, ...size }
+    const nodeAt = nodeById(model, id)
+    const children = nodeAt?.collapsed ? [] : childrenOf(model, id)
+    const childAttach = dir > 0 ? x + size.w + H_GAP : x - H_GAP
+    for (const child of children) columnX[child.id] = childAttach
   }
 }
 
@@ -223,8 +195,17 @@ export function hiddenDescendantCount(model, id) {
 // horizontally (tangents flat at both ends) and mirrors for up vs down branches.
 // Shared by the legacy layout and the free-floating branch connector (#266).
 export function branchPathPoints(start, end) {
+  const [p0, p1, p2, p3] = branchControlPoints(start, end)
+  return `M ${p0.x} ${p0.y} C ${p1.x} ${p1.y} ${p2.x} ${p2.y} ${p3.x} ${p3.y}`
+}
+
+// The same curve as four points instead of a path string, so code that has to
+// REASON about where a branch runs — the "+" placement, which keeps out of the
+// branches' way (#427) — measures the curve that is actually drawn rather than an
+// approximation of it.
+export function branchControlPoints(start, end) {
   const midX = (start.x + end.x) / 2
-  return `M ${start.x} ${start.y} C ${midX} ${start.y} ${midX} ${end.y} ${end.x} ${end.y}`
+  return [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end]
 }
 
 // A smooth cubic-bezier path from a parent box edge to a child box edge, fanning
