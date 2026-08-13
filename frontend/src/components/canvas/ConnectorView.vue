@@ -6,12 +6,15 @@
 // When selected, draggable endpoint handles allow re-attach/detach, and curved
 // connectors expose a draggable midpoint control handle.
 import { ref, computed, nextTick } from 'vue'
+import { TextInput } from 'frappe-ui'
 import { anchorPoint } from '@/diagram/geometry.js'
-import { ROLE, edgeAnchors } from '@/diagram/freeFloating.js'
+import { ROLE } from '@/diagram/freeFloating.js'
 import { branchPathPoints } from '@/diagram/mindmapLayout.js'
+import { flowchartPathData } from '@/diagram/flowchartPath.js'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import { useConnectorDrawing } from '@/composables/useConnectorDrawing.js'
+import { useFlowchartRoutes } from '@/composables/useFlowchartRoutes.js'
 import ConnectorMarker from './ConnectorMarker.vue'
 
 const props = defineProps({ connector: { type: Object, required: true } })
@@ -27,22 +30,16 @@ const store = useDiagramStore()
 const editorUi = useEditorUi()
 const drawing = useConnectorDrawing(store, editorUi)
 
-// A flowchart edge's from/to anchor (top/bottom/left/right) is stored on the
-// connector, but it is only ever WRITTEN at creation time (or by an explicit whole-
-// chart Tidy/flip). Dragging one of its two nodes anywhere else never updates it, so
-// a stored anchor goes stale the moment the user rearranges a chart by hand — the
-// route then leaves/arrives on whichever side used to be correct, reading as an
-// arrow that doubles back instead of flowing forward (#410). Recomputing it live
-// from the two nodes' CURRENT boxes, the same formula Tidy/flip already use, keeps
-// every flowchart edge self-correcting on every render regardless of how its nodes
-// got to their current spot.
-const liveFlowchartAnchors = computed(() => {
-  if (props.connector.role !== ROLE.flowchartEdge) return null
-  const fromShape = store?.shapeById(props.connector.from?.shapeId)
-  const toShape = store?.shapeById(props.connector.to?.shapeId)
-  if (!fromShape || !toShape) return null
-  return edgeAnchors(fromShape, toShape)
-})
+// A flowchart edge is routed by the whole-chart pass in useFlowchartRoutes, which
+// is the only place that can see the other nodes it must avoid, the sibling edges
+// it must spread away from, and the routes it crosses (#441 items 7, 8, 9, 16, 19).
+// Its endpoints come from that route rather than from a stored anchor: an anchor
+// written at creation time goes stale the moment the user drags a node, which is
+// what used to leave arrows doubling back into the wrong side of a shape (#410).
+const flowchartRoutes = useFlowchartRoutes(store)
+const flowchartRoute = computed(() =>
+  props.connector.role === ROLE.flowchartEdge ? flowchartRoutes.value[props.connector.id] : null,
+)
 
 // Resolve an endpoint to a concrete world point (attached anchor or free point).
 function resolve(endpoint, anchorOverride) {
@@ -53,8 +50,14 @@ function resolve(endpoint, anchorOverride) {
   return { x: endpoint?.x || 0, y: endpoint?.y || 0 }
 }
 
-const start = computed(() => resolve(props.connector.from, liveFlowchartAnchors.value?.from))
-const end = computed(() => resolve(props.connector.to, liveFlowchartAnchors.value?.to))
+// A routed flowchart edge already knows exactly where it begins and ends; anything
+// else resolves its own endpoints. Falling back to `resolve` covers a flowchart
+// edge whose nodes have gone (mid-delete) so it never renders at 0,0.
+const routePoints = computed(() => flowchartRoute.value?.points || null)
+const start = computed(() => routePoints.value?.[0] || resolve(props.connector.from))
+const end = computed(
+  () => routePoints.value?.[routePoints.value.length - 1] || resolve(props.connector.to),
+)
 
 // Curved connectors carry an optional control point; default to the apex above.
 const control = computed(() => {
@@ -92,6 +95,11 @@ const dashArray = computed(() => {
 const pathData = computed(() => {
   const a = start.value
   const b = end.value
+  // A routed flowchart edge draws the polyline the router produced, hopping any
+  // route it crosses (#441 item 9). Its corners are rounded by the same rule the
+  // generic elbow uses, so the two still look like one family of connector.
+  const route = flowchartRoute.value
+  if (route) return flowchartPathData(route.points, route.crossings, style.value.corner)
   // A mind-map branch is a structural edge: draw the symmetric cubic that leaves the
   // parent and eases into the child horizontally (both tangents flat), so up/down
   // branches mirror — not the generic quadratic whose lone control sits at the
@@ -121,14 +129,37 @@ function elbowPath(a, b, midX, corner) {
   )
 }
 
-// Label pill sits at the geometric midpoint of the route.
+// Label pill sits at the geometric midpoint of the route. For a routed flowchart
+// edge that is the midpoint ALONG the polyline, not the midpoint of a straight line
+// between its ends — on a route that bends around a node those are different points,
+// and only the first is guaranteed to land on the line.
 const labelAnchor = computed(() => {
+  const route = flowchartRoute.value
+  if (route) return midpointAlong(route.points)
   if (props.connector.type === 'curved') {
     const q = control.value
     return { x: (start.value.x + 2 * q.x + end.value.x) / 4, y: (start.value.y + 2 * q.y + end.value.y) / 4 }
   }
   return { x: (start.value.x + end.value.x) / 2, y: (start.value.y + end.value.y) / 2 }
 })
+
+// The point half the polyline's length along it.
+function midpointAlong(points) {
+  let total = 0
+  for (let i = 0; i < points.length - 1; i += 1) total += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y)
+  let remaining = total / 2
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i]
+    const b = points[i + 1]
+    const segment = Math.hypot(b.x - a.x, b.y - a.y)
+    if (segment >= remaining) {
+      const t = segment === 0 ? 0 : remaining / segment
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+    }
+    remaining -= segment
+  }
+  return points[points.length - 1]
+}
 
 const startMarkerId = computed(() => `mk-start-${props.connector.id}`)
 const endMarkerId = computed(() => `mk-end-${props.connector.id}`)
@@ -181,7 +212,8 @@ function onConnectorDblClick(event) {
   store.select(props.connector.id)
   editingLabel.value = true
   nextTick(() => {
-    const el = labelField.value
+    // frappe-ui's TextInput exposes its native element as `el`.
+    const el = labelField.value?.el || labelField.value
     if (el) {
       el.focus()
       el.select?.()
@@ -193,6 +225,9 @@ function commitLabel(value) {
   if (value !== props.connector.label) store.updateConnector(props.connector.id, { label: value })
 }
 const editorWidth = computed(() => Math.max(72, labelWidth.value))
+// frappe-ui's `sm` control height, so the foreignObject matches the control rather
+// than the control being squeezed into an arbitrary box.
+const LABEL_EDITOR_H = 28
 </script>
 
 <template>
@@ -243,20 +278,24 @@ const editorWidth = computed(() => Math.max(72, labelWidth.value))
       </text>
     </g>
 
-    <!-- Inline label editor (centred on the connector, opaque over the line). -->
+    <!-- Inline label editor (centred on the connector, opaque over the line). It is
+         chrome drawn over the canvas, so it is a frappe-ui control rather than a
+         hand-styled input; the foreignObject is sized to the control's own height
+         instead of the height being hardcoded onto it. -->
     <foreignObject
       v-if="editingLabel"
       :x="labelAnchor.x - editorWidth / 2"
-      :y="labelAnchor.y - 12"
+      :y="labelAnchor.y - LABEL_EDITOR_H / 2"
       :width="editorWidth"
-      height="24"
+      :height="LABEL_EDITOR_H"
     >
-      <input
+      <TextInput
         ref="labelField"
-        :value="connector.label"
-        type="text"
+        size="sm"
+        variant="outline"
         placeholder="Label"
-        style="width: 100%; height: 24px; box-sizing: border-box; text-align: center; font-size: 12px; font-family: Inter, sans-serif; color: #525252; background: #FFFFFF; border: 1px solid #006EDB; border-radius: 6px; outline: none"
+        class="w-full text-center"
+        :model-value="connector.label"
         @keydown.enter.prevent="commitLabel($event.target.value)"
         @keydown.escape.prevent="editingLabel = false"
         @blur="commitLabel($event.target.value)"
@@ -265,8 +304,11 @@ const editorWidth = computed(() => Math.max(72, labelWidth.value))
       />
     </foreignObject>
 
-    <!-- Selection: draggable endpoints (re-attach/detach) + curved midpoint handle. -->
-    <g v-if="selected">
+    <!-- Selection: draggable endpoints (re-attach/detach) + curved midpoint handle.
+         A routed flowchart edge shows none of them: its endpoints are derived from
+         the two nodes on every render, so dragging one would be a control that
+         visibly does nothing. Such an edge is re-pointed by moving its node. -->
+    <g v-if="selected && !flowchartRoute">
       <circle
         :cx="control.x"
         :cy="control.y"
