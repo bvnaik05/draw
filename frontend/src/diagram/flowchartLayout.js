@@ -216,21 +216,71 @@ function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
 }
 
-function avoidOverlap(model, box, direction) {
-  const step = (direction === 'LR' ? box.h : box.w) + SIBLING_GAP
-  const collides = (b) =>
-    model.nodes.some((n) => {
-      const s = nodeSize(n)
-      return rectsOverlap(b, { x: n.x, y: n.y, w: s.w, h: s.h })
-    })
-  const pos = { ...box }
-  let guard = 0
-  while (collides(pos) && guard < 40) {
-    if (direction === 'LR') pos.y += step
-    else pos.x += step
-    guard += 1
+// A node's slot must be clear of every existing node, with a real gap around it —
+// not merely non-overlapping (#441 round 2). Boxes that touch read as a collision
+// to the eye, and a connector then has nowhere to run between them.
+const CLEAR_GAP = 20
+
+function collidesWith(model, box, ignoreIds) {
+  return model.nodes.some((node) => {
+    if (ignoreIds?.has(node.id)) return false
+    const size = nodeSize(node)
+    return rectsOverlap(
+      { x: box.x - CLEAR_GAP, y: box.y - CLEAR_GAP, w: box.w + CLEAR_GAP * 2, h: box.h + CLEAR_GAP * 2 },
+      { x: node.x, y: node.y, w: size.w, h: size.h },
+    )
+  })
+}
+
+// Search outward for the nearest clear slot, alternating either side of the wanted
+// position along the CROSS axis first (which keeps the child on its parent's level)
+// and only then stepping further along the main axis.
+//
+// The old version marched in ONE direction in fixed sibling steps, so a new node
+// slid right until it found a gap — past everything already there, and often far
+// from the parent it belonged to. Alternating keeps the chart compact and balanced,
+// which is what makes repeated adds stay legible.
+function avoidOverlap(model, box, direction, ignoreIds = null) {
+  if (!collidesWith(model, box, ignoreIds)) return { x: Math.round(box.x), y: Math.round(box.y) }
+  const lateral = direction === 'LR' ? 'y' : 'x'
+  const forward = direction === 'LR' ? 'x' : 'y'
+  const lateralStep = (direction === 'LR' ? box.h : box.w) + SIBLING_GAP
+  const forwardStep = (direction === 'LR' ? box.w : box.h) + SIBLING_GAP
+  for (let rank = 0; rank < 12; rank += 1) {
+    for (let side = 1; side <= (rank === 0 ? 1 : 2); side += 1) {
+      for (let lane = rank === 0 ? 0 : 1; lane <= 8; lane += 1) {
+        const candidate = { ...box }
+        candidate[lateral] += (side === 1 ? lane : -lane) * lateralStep
+        candidate[forward] += rank * forwardStep
+        if (!collidesWith(model, candidate, ignoreIds)) {
+          return { x: Math.round(candidate.x), y: Math.round(candidate.y) }
+        }
+      }
+    }
   }
-  return { x: Math.round(pos.x), y: Math.round(pos.y) }
+  return { x: Math.round(box.x), y: Math.round(box.y) }
+}
+
+// The order sides are handed to a decision's branches. Shared with the handle
+// overlay so the "+" a user presses and the place the child lands agree.
+export const BRANCH_SIDES = ['bottom', 'right', 'left', 'top']
+
+// Place a child one level away from its parent on a named SIDE, so a node created
+// from a decision's "No" handle appears where that handle pointed (#441 round 2).
+// `crossSteps` fans repeated children along the side.
+export function placeOnSide(model, parentId, childSize, side, crossSteps = 0) {
+  const parent = flowchartNodeById(model, parentId)
+  if (!parent) return { x: 0, y: 0 }
+  const parentSize = nodeSize(parent)
+  const center = nodeCenter(parent)
+  const vertical = side === 'top' || side === 'bottom'
+  const cross = crossSteps * ((vertical ? childSize.w : childSize.h) + SIBLING_GAP)
+  let base
+  if (side === 'bottom') base = { x: center.x - childSize.w / 2 + cross, y: parent.y + parentSize.h + LEVEL_GAP }
+  else if (side === 'top') base = { x: center.x - childSize.w / 2 + cross, y: parent.y - LEVEL_GAP - childSize.h }
+  else if (side === 'right') base = { x: parent.x + parentSize.w + LEVEL_GAP, y: center.y - childSize.h / 2 + cross }
+  else base = { x: parent.x - LEVEL_GAP - childSize.w, y: center.y - childSize.h / 2 + cross }
+  return avoidOverlap(model, { ...base, w: childSize.w, h: childSize.h }, vertical ? 'TB' : 'LR')
 }
 
 // Where the n-th outgoing flow of a plain node should sit, in sibling-steps either

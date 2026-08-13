@@ -91,3 +91,41 @@ describe('flowchartTextArea', () => {
     expect(insetsFor('nonsense')).toEqual(insetsFor('process'))
   })
 })
+
+// #441 round 2: raising the font size has to grow the box. The letters used to grow
+// inside a box that stayed put, so a bigger label spilled straight out of the shape.
+describe('font size drives the box', () => {
+  it('grows a node when its text is set larger', () => {
+    const small = flowchartNodeSize({ nodeType: 'process', text: 'Some label here', fontSize: 12 })
+    const large = flowchartNodeSize({ nodeType: 'process', text: 'Some label here', fontSize: 28 })
+    // A single line grows sideways first — the default 72px box already has the
+    // height for one line at any of these sizes — so compare the whole box.
+    expect(large.w * large.h).toBeGreaterThan(small.w * small.h)
+    expect(large.w).toBeGreaterThan(small.w)
+  })
+
+  it('grows downward too once the bigger text has to wrap', () => {
+    const small = flowchartNodeSize({ nodeType: 'process', text: 'A rather longer label that has to wrap over several lines even when it is set small', fontSize: 12 })
+    const large = flowchartNodeSize({ nodeType: 'process', text: 'A rather longer label that has to wrap over several lines even when it is set small', fontSize: 30 })
+    expect(large.h).toBeGreaterThan(small.h)
+  })
+
+  it('keeps the label inside the shape at any size', () => {
+    for (const fontSize of [12, 16, 20, 28, 36]) {
+      const size = flowchartNodeSize({ nodeType: 'decision', text: 'Is it ready?', fontSize })
+      const area = flowchartTextArea({ x: 0, y: 0, ...size, flowchart: { nodeType: 'decision' } })
+      // One line of this label must fit the inscribed rect at every size. The
+      // solver sizes the box to exactly what the text needs (ceiled), so this is
+      // an at-least, not a strictly-greater.
+      const needed = 'Is it ready?'.length * 6.4 * (fontSize / 12)
+      // Tolerance is for binary floating point only (128 vs 128.00000000000003),
+      // not for slack in the box: the solver sizes to exactly what the text needs.
+      expect(area.w).toBeGreaterThan(needed - 1e-6)
+    }
+  })
+
+  it('retains the junction\'s circle as the font grows', () => {
+    const size = flowchartNodeSize({ nodeType: 'connector', text: 'A', fontSize: 32 })
+    expect(size.w).toBe(size.h)
+  })
+})

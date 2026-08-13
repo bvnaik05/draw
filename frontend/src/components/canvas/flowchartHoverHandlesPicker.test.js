@@ -25,7 +25,7 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
   })
 
   it('choosing a type creates it and drops straight into naming it', () => {
-    expect(menu).toContain('store.addFlowchartChildShape(parentId, nodeType)')
+    expect(menu).toContain('store.addFlowchartChildShape(parentId, nodeType, port)')
     expect(menu).toContain('editing.beginTextEdit(id, { selectAll: true })')
   })
 
@@ -49,7 +49,7 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
   })
 
   it('records the open menu in the shared store instead', () => {
-    expect(src).toContain('openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId))')
+    expect(src).toContain('openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId), handle.port)')
     expect(menu).toContain('v-if="flowchartUi.picker"')
     expect(menu).toContain('class="fixed z-50"')
   })
@@ -81,13 +81,12 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
     expect(handles).toBeGreaterThan(whiteboard)
   })
 
-  // A connector's label pill is decorative — the route's own wide hit path handles
-  // selection and double-click-to-edit — so it must not eat clicks aimed above it.
-  it('leaves the connector label non-interactive', () => {
+  // #441 round 2: the label pill is double-click-to-rename, so it takes pointer
+  // events. That is safe only because the handles paint after the connectors — SVG
+  // hit-testing follows paint order, so a "+" over a label still wins the click.
+  it('makes the connector label double-click-to-rename', () => {
     const connector = readFileSync(path.join(dir, './ConnectorView.vue'), 'utf8')
-    expect(connector).toContain(
-      '<g v-if="connector.label && !editingLabel" style="pointer-events: none">',
-    )
+    expect(connector).toContain('@dblclick.stop="onConnectorDblClick"')
   })
 
   // The subtle one. The outside-close listener is on the CAPTURE phase, so it has

@@ -378,6 +378,78 @@ function rebuild(cameFrom, endKey, at, startPoint) {
   return points
 }
 
+// ----- separating parallel runs -----------------------------------------------
+
+const SEPARATION = 12 // lateral gap between two routes sharing a lane
+
+// Nudge apart any two routes that would be drawn along the SAME line.
+//
+// Two flows crossing get a jumper, but two flows running on top of each other get
+// nothing — they are not a crossing, they are one visible line where there should
+// be two, which is strictly worse than an ambiguous crossing. It happens readily:
+// two edges whose mid-lines coincide (mirror-image flows, a pair of siblings
+// returning to the same lane) both turn at exactly the same coordinate.
+//
+// Only INTERIOR segments move. The first and last segment of every route carry its
+// port stubs, and shifting those would pull the line off the node it is attached to.
+export function separateOverlappingRuns(routes, order) {
+  const lanes = new Map()
+  for (const id of order) {
+    const points = routes[id]
+    if (!points || points.length < 4) continue
+    // Segment i joins points[i] and points[i+1]; skip the first and the last.
+    for (let i = 1; i < points.length - 2; i += 1) {
+      const a = points[i]
+      const b = points[i + 1]
+      const vertical = Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) > 0.01
+      const horizontal = Math.abs(a.y - b.y) < 0.01 && Math.abs(a.x - b.x) > 0.01
+      if (!vertical && !horizontal) continue
+      const key = vertical ? `v:${Math.round(a.x)}` : `h:${Math.round(a.y)}`
+      const span = vertical
+        ? [Math.min(a.y, b.y), Math.max(a.y, b.y)]
+        : [Math.min(a.x, b.x), Math.max(a.x, b.x)]
+      const list = lanes.get(key) || []
+      list.push({ id, index: i, vertical, span })
+      lanes.set(key, list)
+    }
+  }
+
+  for (const list of lanes.values()) {
+    const clusters = overlappingClusters(list)
+    for (const cluster of clusters) {
+      if (cluster.length < 2) continue
+      cluster.forEach((run, position) => {
+        const shift = (position - (cluster.length - 1) / 2) * SEPARATION
+        if (!shift) return
+        const points = routes[run.id]
+        const axis = run.vertical ? 'x' : 'y'
+        points[run.index] = { ...points[run.index], [axis]: points[run.index][axis] + shift }
+        points[run.index + 1] = { ...points[run.index + 1], [axis]: points[run.index + 1][axis] + shift }
+      })
+    }
+  }
+  return routes
+}
+
+// Group runs in one lane into sets whose spans actually overlap; runs that merely
+// share a coordinate but sit end to end are not on top of each other.
+function overlappingClusters(list) {
+  const sorted = [...list].sort((one, other) => one.span[0] - other.span[0])
+  const clusters = []
+  let current = []
+  let reach = -Infinity
+  for (const run of sorted) {
+    if (current.length && run.span[0] >= reach) {
+      clusters.push(current)
+      current = []
+    }
+    current.push(run)
+    reach = Math.max(reach, run.span[1])
+  }
+  if (current.length) clusters.push(current)
+  return clusters
+}
+
 // ----- jumpers ----------------------------------------------------------------
 
 // Where two routes cross, one of them hops (#441 item 9). Only a horizontal
@@ -460,10 +532,14 @@ export function routeFlowchartEdges(boxes, edges) {
     routes[edge.id] = { points, fromSide: port.fromSide, toSide: port.toSide }
   }
 
-  const crossings = findCrossings(
-    Object.fromEntries(order.map((id) => [id, routes[id].points])),
-    order,
-  )
+  // Pull apart any runs that ended up on the same line BEFORE looking for
+  // crossings: separating them is what turns an invisible overlap into a visible
+  // crossing, which is then what earns a jumper.
+  const geometry = Object.fromEntries(order.map((id) => [id, routes[id].points]))
+  separateOverlappingRuns(geometry, order)
+  for (const id of order) routes[id].points = geometry[id]
+
+  const crossings = findCrossings(geometry, order)
   for (const id of order) routes[id].crossings = crossings[id]
   return routes
 }

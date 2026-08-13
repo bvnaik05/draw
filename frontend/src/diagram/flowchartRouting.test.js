@@ -4,10 +4,12 @@ import {
   assignPorts,
   elbowThroughNormals,
   findCrossings,
+  separateOverlappingRuns,
   routeFlowchartEdges,
 } from './flowchartRouting.js'
 
 const box = (x, y, w = 160, h = 72) => ({ x, y, w, h })
+const P = (x, y) => ({ x, y })
 
 // The direction the LAST segment travels, in degrees — which is exactly what SVG's
 // `marker orient="auto"` uses to aim the arrowhead. Every claim about arrow
@@ -183,5 +185,57 @@ describe('findCrossings (#441 item 9)', () => {
       b: [{ x: 100, y: 100 }, { x: 100, y: 200 }],
     }
     expect(findCrossings(routes, ['a', 'b']).b).toEqual([])
+  })
+})
+
+// #441 round 2: two flows drawn along the same line are worse than an ambiguous
+// crossing — they look like ONE line. Found by building two mirror-image flows in
+// the app and seeing both routes turn at exactly x=625.
+describe('separateOverlappingRuns', () => {
+  it('pulls apart two routes sharing a vertical lane', () => {
+    const a = [P(0, 0), P(100, 0), P(100, 400), P(200, 400)]
+    const b = [P(0, 10), P(100, 10), P(100, 390), P(200, 390)]
+    const routes = { a: a.map((p) => ({ ...p })), b: b.map((p) => ({ ...p })) }
+    separateOverlappingRuns(routes, ['a', 'b'])
+    expect(routes.a[1].x).not.toBe(routes.b[1].x)
+    expect(routes.a[1].x).toBe(routes.a[2].x) // still vertical
+    expect(routes.b[1].x).toBe(routes.b[2].x)
+  })
+
+  it('leaves the port stubs alone', () => {
+    const a = [P(0, 0), P(100, 0), P(100, 400), P(200, 400)]
+    const b = [P(0, 10), P(100, 10), P(100, 390), P(200, 390)]
+    const routes = { a: a.map((p) => ({ ...p })), b: b.map((p) => ({ ...p })) }
+    separateOverlappingRuns(routes, ['a', 'b'])
+    // First and last points are the ports — moving them would detach the route.
+    expect(routes.a[0]).toEqual(P(0, 0))
+    expect(routes.a[3]).toEqual(P(200, 400))
+    expect(routes.b[0]).toEqual(P(0, 10))
+    expect(routes.b[3]).toEqual(P(200, 390))
+  })
+
+  it('ignores runs that merely share a coordinate end to end', () => {
+    const a = [P(0, 0), P(100, 0), P(100, 100), P(200, 100)]
+    const b = [P(0, 300), P(100, 300), P(100, 400), P(200, 400)]
+    const routes = { a: a.map((p) => ({ ...p })), b: b.map((p) => ({ ...p })) }
+    separateOverlappingRuns(routes, ['a', 'b'])
+    expect(routes.a[1].x).toBe(100)
+    expect(routes.b[1].x).toBe(100)
+  })
+
+  it('separates the mirror-image pair that shared a 400px lane in the app', () => {
+    // The exact shape seen while testing: two opposed flows both turned at x=625
+    // and ran down the same line for 400px, drawn as one visible route.
+    const boxes = { p1: box(220, 90), c1: box(870, 520), p2: box(870, 90), c2: box(220, 520) }
+    const routes = routeFlowchartEdges(boxes, [
+      { id: 'e1', fromId: 'p1', toId: 'c1' },
+      { id: 'e2', fromId: 'p2', toId: 'c2' },
+    ])
+    const verticalLane = (points) =>
+      points.find((p, i) => i > 0 && i < points.length - 1 && p.x === points[i + 1]?.x)?.x
+    expect(verticalLane(routes.e1.points)).not.toBe(verticalLane(routes.e2.points))
+    // Both still start and end on their own ports.
+    expect(routes.e1.points[0]).toEqual({ x: 380, y: 126 })
+    expect(routes.e2.points[0]).toEqual({ x: 870, y: 126 })
   })
 })

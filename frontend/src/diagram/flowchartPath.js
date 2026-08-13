@@ -11,6 +11,8 @@
 
 const CORNER_RADIUS = 10
 const JUMP_RADIUS = 5
+// Below this an arc is smaller than the stroke and reads as a wobble, not a hop.
+const MIN_JUMP_RADIUS = 2
 
 function isHorizontal(a, b) {
   return Math.abs(a.y - b.y) < Math.abs(a.x - b.x)
@@ -36,16 +38,36 @@ function radiusAt(points, i) {
   return Math.min(CORNER_RADIUS, before / 2, after / 2)
 }
 
-// The jumper arcs that fall on the segment a→b, ordered along it and far enough
-// from both ends that an arc cannot spill past the corner.
-function jumpsOn(a, b, crossings) {
-  const horizontal = isHorizontal(a, b)
-  const span = length(a, b)
-  return (crossings || [])
-    .filter((point) => onSegment(a, b, point, horizontal))
+// The jumper arcs that fall on the drawn part of the segment a→b, each with the
+// largest radius that fits — capped at JUMP_RADIUS, but shrunk near a corner or a
+// neighbouring hop rather than dropped.
+//
+// This is why jumpers used to appear at only some crossings (#441 round 2). They
+// were matched against the segment AFTER it had been trimmed for its rounded
+// corner, and any hop that could not fit a fixed 5px radius inside what was left
+// was silently discarded. Routes leave a port on a 16px stub and turn 10px later,
+// so a crossing anywhere near a node fell in exactly that dead zone.
+function jumpsOn(a, drawnEnd, crossings, startTrim) {
+  const horizontal = isHorizontal(a, drawnEnd)
+  const drawn = length(a, drawnEnd)
+  const found = (crossings || [])
+    .filter((point) => onSegment(a, drawnEnd, point, horizontal))
     .map((point) => ({ point, at: length(a, point) }))
-    .filter((jump) => jump.at > JUMP_RADIUS + 1 && jump.at < span - JUMP_RADIUS - 1)
+    // `startTrim` is how much of this segment the PREVIOUS corner's arc already
+    // covered, so a hop inside it would be drawn on top of that arc.
+    .filter((jump) => jump.at > startTrim && jump.at < drawn)
     .sort((one, other) => one.at - other.at)
+
+  return found
+    .map((jump, index) => {
+      // Against the segment's own ends the whole distance is available; against a
+      // NEIGHBOURING hop the two share the gap, so each may take half of it.
+      const left = index > 0 ? (jump.at - found[index - 1].at) / 2 : jump.at - startTrim
+      const right =
+        index < found.length - 1 ? (found[index + 1].at - jump.at) / 2 : drawn - jump.at
+      return { ...jump, radius: Math.min(JUMP_RADIUS, left, right) }
+    })
+    .filter((jump) => jump.radius >= MIN_JUMP_RADIUS)
 }
 
 function onSegment(a, b, point, horizontal) {
@@ -65,9 +87,9 @@ function onSegment(a, b, point, horizontal) {
 
 // A half-circle over one crossing. `sweep` alternates with direction so the bump
 // always sits on the same side of the line however the route is travelling.
-function jumpArc(from, to, entry, exit) {
+function jumpArc(from, to, entry, exit, radius) {
   const sweep = to.x > from.x || to.y < from.y ? 1 : 0
-  return `L ${round(entry.x)} ${round(entry.y)} A ${JUMP_RADIUS} ${JUMP_RADIUS} 0 0 ${sweep} ${round(exit.x)} ${round(exit.y)}`
+  return `L ${round(entry.x)} ${round(entry.y)} A ${round(radius)} ${round(radius)} 0 0 ${sweep} ${round(exit.x)} ${round(exit.y)}`
 }
 
 function round(value) {
@@ -88,11 +110,13 @@ export function flowchartPathData(points, crossings = [], corner = 'rounded') {
     // after the previous corner's arc has already carried us past `from`.
     const endTrim = rounded && i + 2 < points.length ? radiusAt(points, i + 1) : 0
     const segmentEnd = endTrim ? advance(to, from, endTrim) : to
+    // How much of this segment the PREVIOUS corner's arc already drew over.
+    const startTrim = rounded && i > 0 ? radiusAt(points, i) : 0
 
-    for (const jump of jumpsOn(from, segmentEnd, crossings)) {
-      const entry = advance(from, segmentEnd, jump.at - JUMP_RADIUS)
-      const exit = advance(from, segmentEnd, jump.at + JUMP_RADIUS)
-      parts.push(jumpArc(from, segmentEnd, entry, exit))
+    for (const jump of jumpsOn(from, segmentEnd, crossings, startTrim)) {
+      const entry = advance(from, segmentEnd, jump.at - jump.radius)
+      const exit = advance(from, segmentEnd, jump.at + jump.radius)
+      parts.push(jumpArc(from, segmentEnd, entry, exit, jump.radius))
     }
     parts.push(`L ${round(segmentEnd.x)} ${round(segmentEnd.y)}`)
 

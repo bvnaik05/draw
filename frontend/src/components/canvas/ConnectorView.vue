@@ -254,11 +254,20 @@ const LABEL_EDITOR_H = 28
       :marker-end="endType !== 'none' ? `url(#${endMarkerId})` : null"
     />
 
-    <!-- The label pill is decorative: the connector's own wide hit path already
-         handles selecting and double-click-to-edit, so the pill taking pointer
-         events only let it swallow clicks aimed at whatever sits above it — a
-         branch label landing on a node's "+" made that "+" unclickable (#441). -->
-    <g v-if="connector.label && !editingLabel" style="pointer-events: none">
+    <!-- Double-clicking the label pill renames it, so a branch can carry a specific
+         sentence rather than just Yes/No (#441 round 2). The pill has to take
+         pointer events for that: it is far taller than the route's 14px hit path,
+         so a double-click aimed at the words used to fall in the gap beside the
+         line and do nothing. It can afford to be interactive now that the "+"
+         handles paint AFTER the connectors — SVG hit-testing follows paint order,
+         so a handle sitting over a label still wins the click. -->
+    <g
+      v-if="connector.label && !editingLabel"
+      class="cursor-pointer"
+      @click.stop="onConnectorClick"
+      @dblclick.stop="onConnectorDblClick"
+      @pointerdown.stop
+    >
       <rect
         :x="labelAnchor.x - labelWidth / 2"
         :y="labelAnchor.y - 11"

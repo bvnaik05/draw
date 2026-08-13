@@ -15,11 +15,16 @@ export const flowchartUi = reactive({
   // SVG-namespaced <div>s — which have no CSS box at all: `position: fixed` never
   // applies and the whole menu collapses to zero width. Teleport moves such a node
   // but cannot change the namespace it was created in.
-  picker: null, // { nodeId, box: { x, y, w, h } }
+  // `port` is the decision branch the handle belongs to, so the node created from
+  // it extends THAT branch rather than whichever one happens to be free.
+  picker: null, // { nodeId, box: { x, y, w, h }, port }
+
+  // Which connector label is being renamed inline, or null.
+  editingLabelId: null,
 })
 
-export function openFlowchartPicker(nodeId, box) {
-  flowchartUi.picker = box ? { nodeId, box } : null
+export function openFlowchartPicker(nodeId, box, port = null) {
+  flowchartUi.picker = box ? { nodeId, box, port } : null
 }
 
 export function closeFlowchartPicker() {

@@ -34,6 +34,7 @@ import {
   flowchartEdgeById,
   swapNodeType,
   outgoingEdges,
+  terminatorText,
 } from '@/diagram/flowchartModel.js'
 import {
   addStroke,
@@ -414,6 +415,19 @@ function attachMindMap(store, state, history) {
       applyPatch(shape, { text, ...flowchartSizeForShape({ ...shape, text }) })
     })
   }
+  // "This node's text changed, or the style it is set in did" for a flowchart node
+  // — the counterpart of fitMindmapNodes, and the reason raising the font size now
+  // grows the node (#441 round 2). Without it the letters grew inside a box that
+  // stayed put, so a bigger label spilled out of the shape. Must run inside a
+  // caller's commit(); ids that are not flowchart nodes are skipped. Nothing
+  // re-flows: a flowchart is manually placed, so only this node's own box moves.
+  store.fitFlowchartNodes = (ids) => {
+    for (const id of ids || []) {
+      const shape = state.shapes.find((s) => s.id === id)
+      if (!shape || shape.role !== ROLE.flowchartNode) continue
+      applyPatch(shape, flowchartSizeForShape(shape))
+    }
+  }
   // Move a node to a new place in the tree by dropping it (#427 item 4). A mind map
   // is auto-laid-out, so a drag never sets coordinates: it rewrites the node's
   // parent / side / order tags, drags its subtree along, re-points the branch to
@@ -513,8 +527,10 @@ function attachFlowchart(store, state, history) {
   // (free-floating #122), one undoable unit. Used when the parent is a migrated
   // flowchart SHAPE (state.flowchart is null after the flip), so the keyboard/handle
   // build path has a home the way addChildShape does for mind maps.
-  store.addFlowchartChildShape = (parentShapeId, nodeType) => {
-    const built = buildFlowchartChild(state.shapes, state.connectors, parentShapeId, nodeType)
+  // `port` targets a specific decision branch (the "+" that was pressed knows which
+  // one it belongs to); null lets the op pick the next free branch as before.
+  store.addFlowchartChildShape = (parentShapeId, nodeType, port = null) => {
+    const built = buildFlowchartChild(state.shapes, state.connectors, parentShapeId, nodeType, port)
     if (!built) return null
     built.shape.zIndex = nextZIndex(state)
     const parent = state.shapes.find((s) => s.id === parentShapeId)
@@ -674,7 +690,14 @@ function attachFlowchart(store, state, history) {
   // view and drops the node exactly there.
   store.insertFlowchartStarter = (view = null, nodeType = 'terminator', origin = null) => {
     const flowchart = createFlowchart()
-    addFlowchartNode(flowchart, nodeType, '', 0, 0)
+    // A dropped Terminal is a Start or an End depending on what is already on the
+    // canvas (#441 round 2). The starter model is built empty and holds only this
+    // one node, so the count has to come from the canvas's own shapes.
+    const terminators = (state.shapes || []).filter(
+      (shape) => shape.role === ROLE.flowchartNode && shape.flowchart?.nodeType === 'terminator',
+    ).length
+    const text = nodeType === 'terminator' ? terminatorText(terminators) : ''
+    addFlowchartNode(flowchart, nodeType, text, 0, 0)
     commitStarter(store, state, history, 'Insert flowchart', { flowchart }, view, origin)
   }
 }
@@ -890,12 +913,18 @@ function attachShapeMutations(store, state, history) {
   store.updateShape = (id, patch) =>
     history.commit('Update shape', () => {
       applyPatch(store.shapeById(id), patch)
-      if (patch.text) store.fitMindmapNodes?.([id])
+      if (patch.text) {
+        store.fitMindmapNodes?.([id])
+        store.fitFlowchartNodes?.([id])
+      }
     })
   store.updateShapes = (ids, patch) =>
     history.commit('Update shapes', () => {
       ids.forEach((id) => applyPatch(store.shapeById(id), patch))
-      if (patch.text) store.fitMindmapNodes?.(ids)
+      if (patch.text) {
+        store.fitMindmapNodes?.(ids)
+        store.fitFlowchartNodes?.(ids)
+      }
     })
   store.removeShapes = (ids) =>
     history.commit('Delete shapes', () => removeShapesInternal(state, ids))

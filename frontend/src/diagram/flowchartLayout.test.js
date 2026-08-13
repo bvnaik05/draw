@@ -13,6 +13,7 @@ import {
   flowchartContentBounds,
   nodeCenter,
   placeChild,
+  placeOnSide,
   placePicker,
 } from './flowchartLayout.js'
 import { nodeSize } from './flowchartModel.js'
@@ -204,5 +205,53 @@ describe('flowchart content bounds', () => {
     const bounds = flowchartContentBounds(model)
     expect(bounds.w).toBeGreaterThan(0)
     expect(bounds.h).toBeGreaterThan(0)
+  })
+})
+
+// #441 round 2: a child lands on the SIDE its handle pointed from, and never on top
+// of an existing node.
+describe('placeOnSide', () => {
+  function chart() {
+    const model = createFlowchart()
+    const a = addFlowchartNode(model, 'decision', 'Q?', 0, 0)
+    return { model, a }
+  }
+
+  it('puts a bottom child below and a right child beside', () => {
+    const { model, a } = chart()
+    const size = { w: 160, h: 72 }
+    const below = placeOnSide(model, a, size, 'bottom')
+    const beside = placeOnSide(model, a, size, 'right')
+    expect(below.y).toBeGreaterThan(0)
+    expect(beside.x).toBeGreaterThan(0)
+    // Each is centred on the side it grows from.
+    expect(Math.abs(below.x + size.w / 2 - 75)).toBeLessThan(2) // decision is 150 wide
+    expect(beside.x).toBeGreaterThan(150)
+  })
+
+  it('finds a clear slot rather than landing on an existing node', () => {
+    const { model, a } = chart()
+    const size = { w: 160, h: 72 }
+    const first = placeOnSide(model, a, size, 'bottom')
+    addFlowchartNode(model, 'process', 'One', first.x, first.y)
+    const second = placeOnSide(model, a, size, 'bottom')
+    const overlaps =
+      second.x < first.x + size.w && second.x + size.w > first.x &&
+      second.y < first.y + size.h && second.y + size.h > first.y
+    expect(overlaps).toBe(false)
+  })
+
+  it('stays near the parent instead of marching off in one direction', () => {
+    const { model, a } = chart()
+    const size = { w: 160, h: 72 }
+    // Fill the slot straight below, then two more children.
+    for (let i = 0; i < 3; i += 1) {
+      const spot = placeOnSide(model, a, size, 'bottom', 0)
+      addFlowchartNode(model, 'process', `n${i}`, spot.x, spot.y)
+    }
+    const xs = model.nodes.slice(1).map((n) => n.x)
+    // Alternating either side keeps the spread balanced around the parent's centre.
+    expect(Math.min(...xs)).toBeLessThan(0)
+    expect(Math.max(...xs)).toBeGreaterThan(0)
   })
 })

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   createFlowchart,
+  terminatorText,
+  defaultNodeText,
   addFlowchartNode,
   addFlowchartEdge,
   removeFlowchartNode,
@@ -155,5 +157,29 @@ describe('flowchart model', () => {
     autoNumberFlow(model) // off
     expect(flowchartNodeById(model, id).text).toBe('3. 14 kg batch') // user content intact
     expect(isFlowNumbered(model)).toBe(false)
+  })
+})
+
+// #441 round 2: the first Terminal on a chart starts the flow, the second ends it.
+describe('terminatorText', () => {
+  it('alternates Start, End, Start, …', () => {
+    expect(terminatorText(0)).toBe('Start')
+    expect(terminatorText(1)).toBe('End')
+    expect(terminatorText(2)).toBe('Start')
+    expect(terminatorText(3)).toBe('End')
+  })
+
+  it('names the second terminator of a chart "End"', () => {
+    const model = createFlowchart()
+    addFlowchartNode(model, 'terminator', defaultNodeText('terminator', model), 0, 0)
+    expect(model.nodes[0].text).toBe('Start')
+    addFlowchartNode(model, 'terminator', defaultNodeText('terminator', model), 0, 200)
+    expect(model.nodes[1].text).toBe('End')
+  })
+
+  it('leaves every other type on its own default', () => {
+    const model = createFlowchart()
+    expect(defaultNodeText('process', model)).toBe('Process')
+    expect(defaultNodeText('decision', model)).toBe('Decision?')
   })
 })

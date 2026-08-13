@@ -19,7 +19,7 @@ import {
   addDecisionBranch,
   outgoingEdges,
 } from './flowchartModel.js'
-import { placeChild, fanSteps } from './flowchartLayout.js'
+import { placeOnSide, fanSteps, BRANCH_SIDES } from './flowchartLayout.js'
 import { ROLE, flowchartNodeShape, flowchartEdgeConnector, edgeAnchors } from './freeFloating.js'
 
 const GAP_X = 60
@@ -200,14 +200,14 @@ export function mindmapLayoutPatches(shapes, connectors, rootId) {
 // fan-out) runs, then returns a shape + connector identical to a migrated one.
 // Returns null when the parent is not a flowchart shape. The caller assigns zIndex
 // and commits both objects as one undoable unit.
-export function buildFlowchartChild(shapes, connectors, parentShapeId, nodeType) {
+export function buildFlowchartChild(shapes, connectors, parentShapeId, nodeType, wantedPort = null) {
   const parentShape = (shapes || []).find((s) => s.id === parentShapeId && s.role === ROLE.flowchartNode)
   if (!parentShape) return null
   const model = flowchartModelFromShapes(shapes, connectors)
   const parentNode = model.nodes.find((n) => n.id === parentShapeId)
   if (!parentNode) return null
 
-  const draft = makeFlowchartNode(nodeType, defaultNodeText(nodeType), 0, 0)
+  const draft = makeFlowchartNode(nodeType, defaultNodeText(nodeType, model), 0, 0)
   const isDecision = parentNode.nodeType === 'decision'
   // Extend a decision node through a free branch port (Yes/No/…), carrying its label
   // onto the edge and fanning the child into that branch's lane — so the new edge
@@ -216,22 +216,30 @@ export function buildFlowchartChild(shapes, connectors, parentShapeId, nodeType)
   // Once every branch is taken, GROW one (#441 item 15). Falling back to the first
   // branch, as this used to, silently gave the new edge a "Yes" label that already
   // belonged to another flow — a decision could never cleanly have a third outcome.
-  let branch = pickFreeBranch(parentNode, model)
+  // A "+" on a decision belongs to one specific branch, and pressing it must extend
+  // THAT branch — otherwise the labelled preview lies about what it will do.
+  let branch = wantedPort ? parentNode.branches?.find((b) => b.port === wantedPort) : null
+  if (!branch) branch = pickFreeBranch(parentNode, model)
   let addedBranch = null
-  if (isDecision && isBranchTaken(model, parentNode, branch)) {
+  // Only grow a branch when the caller had no particular one in mind. A named port
+  // that is already taken means the user pressed the "+" of a branch that already
+  // has a flow, and a decision may legitimately fan several nodes off one outcome.
+  if (isDecision && !wantedPort && isBranchTaken(model, parentNode, branch)) {
     const port = addDecisionBranch(model, parentNode.id, `Option ${parentNode.branches.length}`)
     branch = parentNode.branches.find((b) => b.port === port)
     addedBranch = branch
   }
 
-  const outgoing = outgoingEdges(model, parentShapeId).length
-  const branchCount = isDecision ? parentNode.branches.length : 1
-  const branchIndex = branch ? parentNode.branches.findIndex((b) => b.port === branch.port) : null
-  // A plain node has no branch to fan on, so its repeated flows walk out either side
-  // of it instead of all landing in one lane (#441 item 15).
-  const laneSteps = isDecision ? null : fanSteps(outgoing)
+  const branchIndex = branch ? parentNode.branches.findIndex((b) => b.port === branch.port) : -1
   const size = nodeSize(draft)
-  const pos = placeChild(model, parentShapeId, { ...draft, ...size }, branchIndex, branchCount, laneSteps)
+  // The child lands on the SIDE its handle pointed from, so a decision's Yes goes
+  // down and its No goes right — matching the labelled previews (#441 round 2).
+  // A plain node always extends downward, fanning repeated flows either side.
+  const side = branchIndex >= 0 ? BRANCH_SIDES[branchIndex % BRANCH_SIDES.length] : 'bottom'
+  const alreadyOnSide = outgoingEdges(model, parentShapeId).filter(
+    (edge) => !branch || edge.from.port === branch.port,
+  ).length
+  const pos = placeOnSide(model, parentShapeId, size, side, fanSteps(alreadyOnSide))
   const childBox = { x: pos.x, y: pos.y, w: size.w, h: size.h }
 
   const shape = flowchartNodeShape(draft, childBox)

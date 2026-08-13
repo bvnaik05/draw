@@ -40,7 +40,7 @@ const layer = ref(null)
 let svg = null
 
 // The migrated flowchart index (boxes by id), rebuilt whenever shapes change.
-const ctx = computed(() => buildContext(store.state.shapes, store.state.connectors))
+const ctx = computed(() => buildContext(store.state.shapes))
 const hasNodes = computed(() => Object.keys(ctx.value.boxes).length > 0)
 const selectTool = computed(() => editorUi.state.tool === 'select')
 
@@ -138,7 +138,23 @@ function glyphPath(handle) {
 // applies and the menu collapses to zero width. A <Teleport> relocates such a node
 // but cannot change the namespace it was created in.
 function openPicker(handle) {
-  openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId))
+  // The branch this handle belongs to travels with the request, so choosing a type
+  // from a decision's "No" handle extends the No branch rather than whichever one
+  // happened to be free next.
+  openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId), handle.port)
+}
+
+// A decision's handles preview the branch they would create ("Yes", "No", …). The
+// pill sits just beyond the "+", pushed along the side the handle grows from so it
+// never lands back on the node.
+const LABEL_GAP = 13
+function labelAnchor(handle) {
+  if (handle.side === 'right') return { x: handle.cx + LABEL_GAP, y: handle.cy, anchor: 'start' }
+  if (handle.side === 'left') return { x: handle.cx - LABEL_GAP, y: handle.cy, anchor: 'end' }
+  return { x: handle.cx + LABEL_GAP, y: handle.cy, anchor: 'start' }
+}
+function labelWidth(handle) {
+  return (handle.label?.length || 0) * 6 + 12
 }
 
 // The source node's box in SCREEN pixels, straight off its rendered group — so the
@@ -166,7 +182,32 @@ function screenBoxOf(nodeId) {
       @click.stop="openPicker(handle)"
       @pointerdown.stop
     >
-      <title>Add step</title>
+      <title>{{ handle.label ? `Add step on "${handle.label}"` : 'Add step' }}</title>
+      <!-- A decision previews the branch each handle would extend, so the user can
+           see that Yes goes down and No goes right before committing to either. -->
+      <g v-if="handle.label" style="pointer-events: none">
+        <rect
+          :x="labelAnchor(handle).anchor === 'end' ? labelAnchor(handle).x - labelWidth(handle) : labelAnchor(handle).x"
+          :y="handle.cy - 9"
+          :width="labelWidth(handle)"
+          height="18"
+          rx="5"
+          fill="#FFFFFF"
+          :stroke="HANDLE_COLOR"
+          stroke-width="1"
+        />
+        <text
+          :x="labelAnchor(handle).x + (labelAnchor(handle).anchor === 'end' ? -labelWidth(handle) / 2 : labelWidth(handle) / 2)"
+          :y="handle.cy"
+          text-anchor="middle"
+          dominant-baseline="central"
+          font-size="11"
+          font-family="Inter, sans-serif"
+          :fill="HANDLE_INK"
+        >
+          {{ handle.label }}
+        </text>
+      </g>
       <line
         :x1="handle.stubX"
         :y1="handle.stubY"

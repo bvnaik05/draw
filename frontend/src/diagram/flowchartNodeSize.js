@@ -141,11 +141,15 @@ export function flowchartNodeSize({
   const lines = paragraphs.reduce((total, line) => total + wrapLineCount(line, perLine), 0)
   const h = Math.max(meta.h, solveAxis(lines * lineHeight, inset.top, inset.bottom, meta.h))
 
+  // Ceil, never round: these numbers are the room the text REQUIRES, and rounding
+  // one down can leave the box a fraction of a pixel too small for the line it was
+  // just measured for — which is a wrap, or a clipped descender, for the sake of
+  // half a pixel.
   if (SQUARE_TYPES.has(nodeType)) {
-    const side = Math.round(Math.max(w, h))
+    const side = Math.ceil(Math.max(w, h))
     return { w: side, h: side }
   }
-  return { w: Math.round(w), h: Math.round(h) }
+  return { w: Math.ceil(w), h: Math.ceil(h) }
 }
 
 // The usable text span along one axis of a box `length` long.

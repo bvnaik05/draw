@@ -67,49 +67,71 @@ describe('geometry constants match the mind-map handles', () => {
   })
 })
 
-// #441 item 12: the "+" hangs below the bottom edge, which is where the outgoing
-// connectors run — so with a fixed centred handle it sat on the line as soon as the
-// node had one child. It now stands in the clearest part of the edge.
-describe('the "+" keeps clear of the connectors already leaving a node', () => {
-  it('centres the handle on a node with no outgoing edge', () => {
-    const ctx = buildContext([fcNode('a', 0, 0, 160, 72)], [])
-    expect(handlesForNode('a', ctx)[0].cx).toBe(80)
-  })
-
-  it('steps aside once an edge occupies the middle of the bottom edge', () => {
-    const shapes = [fcNode('a', 0, 0, 160, 72), fcNode('b', 0, 300, 160, 72)]
-    const connectors = [
-      { id: 'e1', role: ROLE.flowchartEdge, from: { shapeId: 'a' }, to: { shapeId: 'b' } },
-    ]
-    const ctx = buildContext(shapes, connectors)
-    const handle = handlesForNode('a', ctx)[0]
-    // The lone edge leaves at the centre (80); the handle must not be there.
-    expect(ctx.exits.a).toEqual([80])
-    expect(Math.abs(handle.cx - 80)).toBeGreaterThan(ADD_R)
-    // And it stays on the node's own edge rather than floating off it.
-    expect(handle.cx).toBeGreaterThanOrEqual(0)
-    expect(handle.cx).toBeLessThanOrEqual(160)
-  })
-
-  it('still finds a gap when several edges already leave the same edge', () => {
-    const shapes = [
-      fcNode('a', 0, 0, 160, 72),
-      fcNode('b', -200, 300, 160, 72),
-      fcNode('c', 200, 300, 160, 72),
-    ]
-    const connectors = [
-      { id: 'e1', role: ROLE.flowchartEdge, from: { shapeId: 'a' }, to: { shapeId: 'b' } },
-      { id: 'e2', role: ROLE.flowchartEdge, from: { shapeId: 'a' }, to: { shapeId: 'c' } },
-    ]
-    const handle = handlesForNode('a', buildContext(shapes, connectors))[0]
-    for (const taken of [53.33, 106.67]) {
-      expect(Math.abs(handle.cx - taken)).toBeGreaterThan(6)
-    }
-  })
-
-  it('falls back to the centre when no connectors are supplied', () => {
+// #441 round 2: the "+" PROTRUDES FROM THE CENTRE of the side it extends from.
+// An earlier pass slid it to whichever part of the edge was clearest so it would
+// miss the outgoing connector; that put the handle in a different place on every
+// node, which read as arbitrary. It is centred again, and it stays legible over a
+// route because it paints above the connectors on a white disc.
+describe('the "+" protrudes from the centre of its side', () => {
+  it('centres a plain node\'s handle below its bottom edge', () => {
     const ctx = buildContext([fcNode('a', 0, 0, 160, 72)])
-    expect(handlesForNode('a', ctx)[0].cx).toBe(80)
+    const [handle] = handlesForNode('a', ctx)
+    expect(handle.cx).toBe(80) // the node's centre line
+    expect(handle.cy).toBe(72 + ADD_OFFSET)
+    expect(handle.side).toBe('bottom')
+  })
+
+  it('stays centred whether or not the node already has a child', () => {
+    const shapes = [fcNode('a', 0, 0, 160, 72), fcNode('b', 0, 300, 160, 72)]
+    const alone = handlesForNode('a', buildContext([shapes[0]]))[0]
+    const withChild = handlesForNode('a', buildContext(shapes))[0]
+    expect(withChild.cx).toBe(alone.cx)
+  })
+})
+
+// #441 round 2: a decision is the one type whose point is more than one outgoing
+// flow, so it previews each branch on its own side rather than hiding them behind
+// a single "+" that silently cycled through them.
+describe('a decision offers one labelled handle per branch', () => {
+  function decision(id, x, y) {
+    return fcNode(id, x, y, 150, 96, 'decision', {
+      flowchart: {
+        nodeType: 'decision',
+        branches: [
+          { port: 'yes', label: 'Yes' },
+          { port: 'no', label: 'No' },
+        ],
+      },
+    })
+  }
+
+  it('puts Yes and No on two different sides, each carrying its label', () => {
+    const handles = handlesForNode('d', buildContext([decision('d', 0, 0)]))
+    expect(handles).toHaveLength(2)
+    expect(handles.map((h) => h.label)).toEqual(['Yes', 'No'])
+    expect(handles.map((h) => h.side)).toEqual(['bottom', 'right'])
+    // Distinct sides mean distinct positions, so neither preview hides the other.
+    expect(new Set(handles.map((h) => `${h.cx},${h.cy}`)).size).toBe(2)
+  })
+
+  it('carries the branch port, so pressing one extends THAT branch', () => {
+    const handles = handlesForNode('d', buildContext([decision('d', 0, 0)]))
+    expect(handles.map((h) => h.port)).toEqual(['yes', 'no'])
+  })
+
+  it('centres each handle on the side it grows from', () => {
+    const [down, right] = handlesForNode('d', buildContext([decision('d', 0, 0)]))
+    expect(down.cx).toBe(75) // half of 150
+    expect(down.cy).toBe(96 + ADD_OFFSET)
+    expect(right.cx).toBe(150 + ADD_OFFSET)
+    expect(right.cy).toBe(48) // half of 96
+  })
+
+  it('gives a plain node a single unlabelled handle', () => {
+    const handles = handlesForNode('a', buildContext([fcNode('a', 0, 0)]))
+    expect(handles).toHaveLength(1)
+    expect(handles[0].label).toBe('')
+    expect(handles[0].port).toBeNull()
   })
 })
 
@@ -212,15 +234,20 @@ describe('nodeAtPoint', () => {
 })
 
 describe('hoverRegionOf', () => {
-  it('extends below the node to cover the "+", a hair on the sides', () => {
+  it('covers every handle, measured from the handles themselves', () => {
     const ctx = buildContext([fcNode('a', 100, 200, 160, 72)])
     const region = hoverRegionOf('a', ctx)
+    // The whole hit circle of every handle is inside, with margin to spare. The old
+    // fixed-reach region left ~4px of slack, so a real pointer overshooting on its
+    // way to the "+" dropped the hover and the handle blinked out.
+    for (const handle of handlesForNode('a', ctx)) {
+      for (const [dx, dy] of [[0, 0], [ADD_HIT_R, 0], [-ADD_HIT_R, 0], [0, ADD_HIT_R], [0, -ADD_HIT_R]]) {
+        expect(pointInBox({ x: handle.cx + dx, y: handle.cy + dy }, region)).toBe(true)
+      }
+    }
+    // And the node itself still counts as hovered.
     const box = ctx.boxes['a']
-    expect(region).toEqual({ x: box.x - 6, y: box.y - 8, w: box.w + 12, h: box.h + HOVER_OUT })
-    // The "+" centre and its circle's bottom edge both fall inside the region.
-    const [handle] = handlesForNode('a', ctx)
-    expect(pointInBox({ x: handle.cx, y: handle.cy }, region)).toBe(true)
-    expect(pointInBox({ x: handle.cx, y: handle.cy + ADD_R }, region)).toBe(true)
+    expect(pointInBox({ x: box.x + box.w / 2, y: box.y + box.h / 2 }, region)).toBe(true)
   })
 
   it('is null for an unknown id', () => {

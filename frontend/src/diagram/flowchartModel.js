@@ -13,8 +13,23 @@ import { flowchartNodeSize } from './flowchartNodeSize.js'
 
 export { NODE_TYPES, NODE_TYPE_META }
 
-export function defaultNodeText(nodeType) {
+// A terminator is the one type whose default label depends on the chart around it
+// (#441 round 2): the first one is where the flow starts, the second is where it
+// ends. Alternating on the COUNT means a third goes back to "Start", which is what
+// a user building two separate flows on one canvas wants — and it stays a plain
+// default, so renaming any of them is untouched.
+export function defaultNodeText(nodeType, model = null) {
+  if (nodeType === 'terminator' && model) {
+    return terminatorText(model.nodes.filter((node) => node.nodeType === 'terminator').length)
+  }
   return NODE_TYPE_META[nodeType]?.text ?? ''
+}
+
+// The label for the nth terminator on a chart: Start, End, Start, End, …
+// Exported so the free-drop path, which builds a fresh single-node model and so
+// cannot count from it, can count the canvas instead and get the same answer.
+export function terminatorText(existingCount) {
+  return existingCount % 2 === 1 ? 'End' : 'Start'
 }
 
 // Node box, measured through the shared per-shape frame (#441 items 5/14). It used

@@ -14,16 +14,20 @@
 // into the viewport <g>. The radius/glyph/colour conventions mirror the mind-map
 // handles so the two migrated-shape overlays read as one feature.
 //
-// A single "+" sits at the node's EXIT (bottom-centre for the default TB flow the
-// migrated add-path uses — see buildFlowchartChild/placeChild, which drop the new
-// step one level DOWN). The exit point matches FlowchartLayer's portPoint(node,
-// 'out', 'TB'): for every node type the outgoing TB port is the bottom-centre of
-// the box (a decision's diamond bottom vertex included), so one formula covers all
-// types. addFlowchartChildShape routes a decision through its next free Yes/No
-// branch, so a single "+" is enough there too.
+// Handles PROTRUDE FROM THE CENTRE of the side they extend from (#441 round 2):
+// a plain node offers one below its bottom edge, and a DECISION offers one per
+// branch on a distinct side — Yes below, No to the right — each previewing the
+// branch label it would create. A decision is the one node type whose whole point
+// is more than one outgoing flow, so making the user discover that through a
+// single "+" that silently cycled branches was hiding the feature.
+//
+// An earlier pass moved the "+" to whichever part of the edge was clearest, to keep
+// it off the outgoing connector. That is dropped: it put the handle somewhere
+// different on every node, which reads as arbitrary. The "+" now paints above the
+// connectors and carries a white disc, so a route passing under it stays legible.
 
 import { isFlowchartShape } from './freeFloating.js'
-import { assignPorts } from './flowchartRouting.js'
+import { BRANCH_SIDES } from './flowchartLayout.js'
 
 // --- geometry constants (shared with the mind-map handles for visual parity) ----
 //
@@ -55,98 +59,73 @@ export function pointInBox(point, box) {
   )
 }
 
-// Where along a node's bottom edge the "+" should hang: the clearest spot, meaning
-// the candidate furthest from every connector already leaving that edge (#441 item
-// 12 — the "+" must never sit on the node or on its connectors). With nothing in the
-// way that is the centre, which is where a first "+" has always been.
-const HANDLE_MARGIN = 14 // keeps the handle off the node's own corners
+// --- where the handles sit ----------------------------------------------------
 
-export function exitPoint(box, occupied = []) {
-  const y = box.y + box.h
-  if (!occupied.length) return { x: box.x + box.w / 2, y }
-  const low = box.x + HANDLE_MARGIN
-  const high = box.x + box.w - HANDLE_MARGIN
-  if (high <= low) return { x: box.x + box.w / 2, y }
-  let best = low
-  let bestClearance = -1
-  const STEPS = 12
-  for (let i = 0; i <= STEPS; i += 1) {
-    const x = low + ((high - low) * i) / STEPS
-    const clearance = Math.min(...occupied.map((taken) => Math.abs(taken - x)))
-    if (clearance > bestClearance) {
-      bestClearance = clearance
-      best = x
-    }
+// Yes goes down, because that is the flow the eye follows; No goes right. Beyond
+// four branches the sides repeat, which is rare enough to accept and still better
+// than stacking. BRANCH_SIDES comes from the layout, so the "+" a user presses and
+// the place the child lands can never disagree.
+
+// The point on a side's CENTRE where a handle's stub leaves the node, and the
+// direction it grows in.
+function sideAnchor(box, side) {
+  const cx = box.x + box.w / 2
+  const cy = box.y + box.h / 2
+  if (side === 'top') return { x: cx, y: box.y, dx: 0, dy: -1 }
+  if (side === 'left') return { x: box.x, y: cy, dx: -1, dy: 0 }
+  if (side === 'right') return { x: box.x + box.w, y: cy, dx: 1, dy: 0 }
+  return { x: cx, y: box.y + box.h, dx: 0, dy: 1 }
+}
+
+function makeHandle(box, nodeId, side, { port = null, label = '' } = {}) {
+  const anchor = sideAnchor(box, side)
+  return {
+    key: `add-${nodeId}-${side}`,
+    kind: 'child',
+    nodeId,
+    side,
+    port,
+    label,
+    cx: Math.round(anchor.x + anchor.dx * ADD_OFFSET),
+    cy: Math.round(anchor.y + anchor.dy * ADD_OFFSET),
+    stubX: anchor.x,
+    stubY: anchor.y,
   }
-  return { x: Math.round(best), y }
 }
 
 // A reusable index of the migrated flowchart: each node's absolute box keyed by id
-// (for placement + hit-testing), plus where along each node's BOTTOM edge its
-// existing outgoing connectors already leave. Built once per render from the shared
-// shapes and threaded through the pure helpers below.
-//
-// The exits matter because the "+" hangs below the bottom edge, which is exactly
-// where those connectors run: with a single centred handle, the moment a node had
-// one outgoing edge the "+" sat on top of the line (#441 item 12). Passing the
-// connectors is optional — without them the handle simply centres, which is the
-// right answer for a node that has no outgoing edge yet.
-export function buildContext(shapes, connectors = null) {
+// (for placement + hit-testing), plus the branch set of any decision node, which is
+// what lets a decision offer one labelled handle per branch.
+export function buildContext(shapes) {
   const boxes = {}
+  const branches = {}
   for (const shape of shapes || []) {
-    if (isFlowchartShape(shape)) boxes[shape.id] = boxOf(shape)
+    if (!isFlowchartShape(shape)) continue
+    boxes[shape.id] = boxOf(shape)
+    if (shape.flowchart?.nodeType === 'decision') {
+      branches[shape.id] = (shape.flowchart.branches || []).map((b) => ({ ...b }))
+    }
   }
-  return { boxes, exits: bottomExits(boxes, connectors) }
+  return { boxes, branches }
 }
 
-// The x of every port sitting on a node's bottom edge, from the same distribution
-// the router uses — so the handle dodges the lines that will actually be drawn.
-function bottomExits(boxes, connectors) {
-  const exits = {}
-  if (!connectors) return exits
-  const edges = []
-  for (const connector of connectors) {
-    const fromId = connector.from?.shapeId
-    const toId = connector.to?.shapeId
-    if (!boxes[fromId] || !boxes[toId] || fromId === toId) continue
-    edges.push({ id: connector.id, fromId, toId })
-  }
-  if (!edges.length) return exits
-  const ports = assignPorts(boxes, edges)
-  for (const edge of edges) {
-    const port = ports[edge.id]
-    if (!port) continue
-    if (port.fromSide === 'bottom') addExit(exits, edge.fromId, port.from.x)
-    if (port.toSide === 'bottom') addExit(exits, edge.toId, port.to.x)
-  }
-  return exits
-}
-
-function addExit(exits, nodeId, x) {
-  exits[nodeId] = exits[nodeId] || []
-  exits[nodeId].push(x)
-}
-
-// The "+" handle(s) to draw for one node, in absolute logical coords: a single
-// add-child "+" centred ADD_OFFSET below the node's exit edge, with a short stub
-// from the exit point down to the circle. Returned as an array (always length 1
-// for a flowchart node) so the component renders it with the same flatMap pass as
-// the mind-map overlay. Empty for a shape id that is not a migrated flowchart node.
+// The "+" handle(s) for one node, in absolute logical coords. A decision gets one
+// per branch, each on its own side and carrying that branch's label so the user can
+// see which outcome they are about to extend; everything else gets a single handle
+// below its bottom edge. Empty for an id that is not a migrated flowchart node.
 export function handlesForNode(nodeId, ctx) {
   const box = ctx.boxes[nodeId]
   if (!box) return []
-  const exit = exitPoint(box, ctx.exits?.[nodeId] || [])
-  return [
-    {
-      key: `add-${nodeId}`,
-      kind: 'child',
-      nodeId,
-      cx: exit.x,
-      cy: exit.y + ADD_OFFSET,
-      stubX: exit.x,
-      stubY: exit.y,
-    },
-  ]
+  const branches = ctx.branches?.[nodeId]
+  if (branches?.length) {
+    return branches.map((branch, index) =>
+      makeHandle(box, nodeId, BRANCH_SIDES[index % BRANCH_SIDES.length], {
+        port: branch.port,
+        label: branch.label,
+      }),
+    )
+  }
+  return [makeHandle(box, nodeId, 'bottom')]
 }
 
 // Whether a node should currently reveal its handle: only with the select tool,
@@ -168,16 +147,35 @@ export function nodeAtPoint(point, shapes) {
   return best ? best.id : null
 }
 
-// The padded region that keeps a node "hovered" while the pointer slides off its
-// bottom edge toward the "+", so the handle does not vanish in the gap (mirrors
-// the mind-map hoverRegionOf). It only extends downward, past the "+" circle.
+// The padded region that keeps a node "hovered" while the pointer travels from the
+// node to one of its handles, so the "+" does not vanish in the gap.
+//
+// Measured from the HANDLES rather than from a fixed reach, exactly as the mind map
+// does (#427). The old fixed box was the bug users hit: it reached a constant
+// distance below the node, which left about four pixels of slack around the hit
+// circle — a straight synthetic pointer path survived it, and a real hand
+// overshooting by a few pixels on the way to the "+" did not, so the handle blinked
+// out just as it was being aimed at. Deriving the region means it covers every
+// handle wherever they sit, which also makes it correct for a decision's handles on
+// three or four different sides.
 export function hoverRegionOf(nodeId, ctx) {
   const box = ctx.boxes[nodeId]
   if (!box) return null
+  let left = box.x
+  let right = box.x + box.w
+  let top = box.y
+  let bottom = box.y + box.h
+  for (const handle of handlesForNode(nodeId, ctx)) {
+    left = Math.min(left, handle.cx - ADD_HIT_R)
+    right = Math.max(right, handle.cx + ADD_HIT_R)
+    top = Math.min(top, handle.cy - ADD_HIT_R)
+    bottom = Math.max(bottom, handle.cy + ADD_HIT_R)
+  }
+  const margin = 12
   return {
-    x: box.x - 6,
-    y: box.y - 8,
-    w: box.w + 12,
-    h: box.h + HOVER_OUT,
+    x: left - margin,
+    y: top - margin,
+    w: right - left + margin * 2,
+    h: bottom - top + margin * 2,
   }
 }
