@@ -254,7 +254,11 @@ const LABEL_EDITOR_H = 28
       :marker-end="endType !== 'none' ? `url(#${endMarkerId})` : null"
     />
 
-    <g v-if="connector.label && !editingLabel">
+    <!-- The label pill is decorative: the connector's own wide hit path already
+         handles selecting and double-click-to-edit, so the pill taking pointer
+         events only let it swallow clicks aimed at whatever sits above it — a
+         branch label landing on a node's "+" made that "+" unclickable (#441). -->
+    <g v-if="connector.label && !editingLabel" style="pointer-events: none">
       <rect
         :x="labelAnchor.x - labelWidth / 2"
         :y="labelAnchor.y - 11"

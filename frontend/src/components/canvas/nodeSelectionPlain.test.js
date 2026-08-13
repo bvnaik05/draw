@@ -37,6 +37,15 @@ describe('flowchart nodes select through their own border (#441 item 3)', () => 
     expect(shapeViewSrc).toContain('if (!props.selected || !isNodeRole.value) return own')
   })
 
+  // The pass that actually paints shapes on the UNIFIED canvas is WhiteboardLayer's,
+  // not the block layer's. It rendered ShapeView without `selected`, so the heavier
+  // border could never appear there — and once the dashed box was taken away from a
+  // node, a selected node had no feedback at all.
+  it('tells ShapeView which shapes are selected on the unified canvas', () => {
+    const whiteboard = readFileSync(path.join(dir, './WhiteboardLayer.vue'), 'utf8')
+    expect(whiteboard).toContain(':selected="store.state.selection.includes(item.object.id)"')
+  })
+
   // The label wraps inside the measured area for both roles. An SVG <text> is one
   // unwrapped line, which is how a flowchart label used to lie across its own shape.
   it('wraps a node label in the measured text area rather than an SVG <text>', () => {
