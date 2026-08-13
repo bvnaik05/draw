@@ -55,9 +55,11 @@ const position = computed(() => {
 function chooseType(nodeType) {
   const parentId = flowchartUi.picker?.nodeId
   const port = flowchartUi.picker?.port || null
+  // The side the pressed "+" grew from, so the child lands where it pointed.
+  const side = flowchartUi.picker?.side || null
   closeFlowchartPicker()
   if (!parentId) return
-  const id = store.addFlowchartChildShape(parentId, nodeType, port)
+  const id = store.addFlowchartChildShape(parentId, nodeType, port, side)
   if (!id) return
   // beginTextEdit selects the node itself, so there is no separate store.select here.
   editing.beginTextEdit(id, { selectAll: true })

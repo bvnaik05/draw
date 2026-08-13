@@ -13,10 +13,10 @@
 // only binds below ~100px, so every on-canvas node is pixel-identical to before.
 const SKEW_RATIO = 0.18
 const SKEW_MAX = 18
-const BAR_RATIO = 0.12
-const BAR_MAX = 10
+export const BAR_RATIO = 0.12
+export const BAR_MAX = 10
 
-function skewOf(w) {
+export function skewOf(w) {
   return Math.min(SKEW_MAX, w * SKEW_RATIO)
 }
 

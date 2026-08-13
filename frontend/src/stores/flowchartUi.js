@@ -17,14 +17,14 @@ export const flowchartUi = reactive({
   // but cannot change the namespace it was created in.
   // `port` is the decision branch the handle belongs to, so the node created from
   // it extends THAT branch rather than whichever one happens to be free.
-  picker: null, // { nodeId, box: { x, y, w, h }, port }
+  picker: null, // { nodeId, box: { x, y, w, h }, port, side }
 
   // Which connector label is being renamed inline, or null.
   editingLabelId: null,
 })
 
-export function openFlowchartPicker(nodeId, box, port = null) {
-  flowchartUi.picker = box ? { nodeId, box, port } : null
+export function openFlowchartPicker(nodeId, box, port = null, side = null) {
+  flowchartUi.picker = box ? { nodeId, box, port, side } : null
 }
 
 export function closeFlowchartPicker() {

@@ -6,6 +6,7 @@ import {
   FLOWCHART_FONT_SIZE,
 } from './flowchartNodeSize.js'
 import { NODE_TYPES, NODE_TYPE_META } from './flowchartModel.js'
+import { wrapLineCount, charsPerLine } from './textMetrics.js'
 
 // The contract this module exists to keep (#441 items 5/14): the box a node is
 // given always leaves room for its text INSIDE the shape, not merely inside the
@@ -24,16 +25,29 @@ describe('flowchartNodeSize', () => {
     }
   })
 
-  it('grows downward once the text passes the width cap', () => {
+  // #441 round 3: a node that outgrows its label scales up AS A WHOLE. It used to
+  // widen to 1.5x and then grow only downward, which left a Process as a letterbox
+  // and a Decision as a lozenge — the box stopped looking like its own shape.
+  it('grows both axes together, keeping the type\'s proportions', () => {
     const short = flowchartNodeSize({ nodeType: 'process', text: 'Go' })
     const long = flowchartNodeSize({
       nodeType: 'process',
-      // Long enough to pass the three lines the default 72px box already holds.
-      text: 'this is a document i am writing to make the label wrap over a good many lines so the box has to grow downward to pay for all of them rather than stretching sideways forever',
+      text: 'this is a document i am writing to make the label wrap over a good many lines so the box has to grow to pay for all of them',
     })
+    expect(long.w).toBeGreaterThan(short.w)
     expect(long.h).toBeGreaterThan(short.h)
-    // Width is capped, so a long label makes the node tall rather than endless.
-    expect(long.w).toBeLessThanOrEqual(NODE_TYPE_META.process.w * 1.5)
+    // Same shape, just bigger. Ceiling of each axis is the only slack allowed.
+    const meta = NODE_TYPE_META.process
+    expect(long.w / long.h).toBeCloseTo(meta.w / meta.h, 1)
+  })
+
+  it('scales every type about its own aspect ratio', () => {
+    const wordy = 'a label long enough that this node has to grow well past its default box'
+    for (const nodeType of Object.keys(NODE_TYPE_META)) {
+      const size = flowchartNodeSize({ nodeType, text: wordy })
+      const meta = NODE_TYPE_META[nodeType]
+      expect(size.w / size.h).toBeCloseTo(meta.w / meta.h, 1)
+    }
   })
 
   it('keeps a junction circular', () => {
@@ -111,16 +125,18 @@ describe('font size drives the box', () => {
   })
 
   it('keeps the label inside the shape at any size', () => {
+    // The invariant is that the WRAPPED label fits the inscribed rect — not that it
+    // fits on one line. Growing proportionally means a long label may wrap rather
+    // than stretch the box sideways, which is the point: the shape stays itself.
+    const label = 'Is it ready?'
     for (const fontSize of [12, 16, 20, 28, 36]) {
-      const size = flowchartNodeSize({ nodeType: 'decision', text: 'Is it ready?', fontSize })
+      const size = flowchartNodeSize({ nodeType: 'decision', text: label, fontSize })
       const area = flowchartTextArea({ x: 0, y: 0, ...size, flowchart: { nodeType: 'decision' } })
-      // One line of this label must fit the inscribed rect at every size. The
-      // solver sizes the box to exactly what the text needs (ceiled), so this is
-      // an at-least, not a strictly-greater.
-      const needed = 'Is it ready?'.length * 6.4 * (fontSize / 12)
+      const scale = fontSize / 12
+      const lines = wrapLineCount(label, charsPerLine(area.w, 6.4 * scale))
       // Tolerance is for binary floating point only (128 vs 128.00000000000003),
       // not for slack in the box: the solver sizes to exactly what the text needs.
-      expect(area.w).toBeGreaterThan(needed - 1e-6)
+      expect(area.h).toBeGreaterThan(lines * 16 * scale - 1e-6)
     }
   })
 

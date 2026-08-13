@@ -23,7 +23,12 @@ export function useFlowchartRoutes(store) {
     const boxes = {}
     for (const shape of store.state.shapes || []) {
       if (shape.role === ROLE.flowchartNode) {
-        boxes[shape.id] = { x: shape.x, y: shape.y, w: shape.w, h: shape.h }
+        // nodeType rides along so a port can be pulled in to the shape's real
+        // outline rather than left on the bounding box (#441 round 3).
+        boxes[shape.id] = {
+          x: shape.x, y: shape.y, w: shape.w, h: shape.h,
+          nodeType: shape.flowchart?.nodeType,
+        }
       }
     }
     if (!Object.keys(boxes).length) return {}

@@ -43,6 +43,11 @@ export const GLYPH = 3.5 // half-length of the "+" strokes inside a circle
 // node's bottom edge onto its "+" keeps the handle alive. Measured against the HIT
 // radius, not the drawn one, so the region covers the whole target.
 export const HOVER_OUT = ADD_OFFSET + ADD_HIT_R + 12
+// How far from a node the pointer starts to count as "at" it. The handles reveal on
+// APPROACH, not on contact: coming near a node is enough to see what it offers, so
+// the "+" is already there to aim at rather than appearing only once the pointer has
+// landed on the node and then having to be chased.
+export const APPROACH_PAD = 24
 
 function boxOf(shape) {
   return { x: shape.x, y: shape.y, w: shape.w, h: shape.h }
@@ -130,18 +135,52 @@ export function handlesForNode(nodeId, ctx) {
   const box = ctx.boxes[nodeId]
   if (!box) return []
   const branches = ctx.branches?.[nodeId]
-  if (branches?.length) {
-    return branches.map((branch, index) =>
-      makeHandle(box, nodeId, 'bottom', {
-        port: branch.port,
-        label: branch.label,
-        lane: branchLane(box, index, branches.length),
-        key: branch.port,
-      }),
-    )
-  }
-  return [makeHandle(box, nodeId, 'bottom')]
+  // The bottom edge is the flow direction, so it carries a decision's labelled
+  // branches; every other side offers a plain "+". A chart is not always a column,
+  // and forcing every child below its parent is what pushed later additions into
+  // long routes across the chart (#441 round 3).
+  const bottom = branches?.length
+    ? branches.map((branch, index) =>
+        makeHandle(box, nodeId, 'bottom', {
+          port: branch.port,
+          label: branch.label,
+          lane: branchLane(box, index, branches.length),
+          key: branch.port,
+        }),
+      )
+    : [makeHandle(box, nodeId, 'bottom')]
+  const all = [...bottom, ...SIDES.map((side) => makeHandle(box, nodeId, side))]
+  // Drop any "+" that would land on ANOTHER node (#441 round 3). With a handle on
+  // every side, a node in a built-up chart offered several that sat on top of its
+  // neighbours — pointing at space that is already taken, and covering the node
+  // underneath with a stray mark and, on a decision, a branch pill too.
+  //
+  // If every side is blocked the full set comes back rather than nothing: a node
+  // hemmed in on all four sides must still be extendable, and placement will find
+  // room even when the handle's own spot has none.
+  const clear = all.filter((handle) => !handleHitsAnotherNode(handle, nodeId, ctx))
+  return clear.length ? clear : all
 }
+
+// Whether a handle's mark overlaps some other node's box.
+function handleHitsAnotherNode(handle, nodeId, ctx) {
+  for (const [otherId, box] of Object.entries(ctx.boxes || {})) {
+    if (otherId === nodeId) continue
+    if (
+      handle.cx + ADD_R >= box.x &&
+      handle.cx - ADD_R <= box.x + box.w &&
+      handle.cy + ADD_R >= box.y &&
+      handle.cy - ADD_R <= box.y + box.h
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+// The sides that always offer a plain "+", whatever the node type. Bottom is not
+// among them: it is built above, because a decision spreads its branches there.
+const SIDES = ['right', 'left', 'top']
 
 // Whether a node should currently reveal its handle: only with the select tool,
 // and only while it is hovered or the sole selection (mirrors the mind-map
@@ -176,7 +215,32 @@ export function nextHoverTarget({ point, currentId = null, ctx, shapes }) {
   const direct = nodeAtPoint(point, shapes)
   if (direct) return direct
   if (currentId && pointInBox(point, hoverRegionOf(currentId, ctx))) return currentId
-  return null
+  return nodeInReach(point, ctx)
+}
+
+// The nearest node whose hover region `point` has reached, or null. This is what
+// makes the "+" reveal on APPROACH: hovering AROUND a node is enough to see the
+// handle, so it is already on screen to aim at. Without it the handle appeared only
+// once the pointer was on the node — and then had to be chased into open canvas.
+//
+// Regions of neighbouring nodes can overlap, so nearest-centre decides, which is
+// also what keeps the choice stable as the pointer moves through the gap between
+// two of them.
+export function nodeInReach(point, ctx) {
+  let best = null
+  let bestDistance = Infinity
+  for (const nodeId of Object.keys(ctx.boxes || {})) {
+    if (!pointInBox(point, hoverRegionOf(nodeId, ctx))) continue
+    const box = ctx.boxes[nodeId]
+    const dx = point.x - (box.x + box.w / 2)
+    const dy = point.y - (box.y + box.h / 2)
+    const distance = dx * dx + dy * dy
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = nodeId
+    }
+  }
+  return best
 }
 
 // The topmost migrated flowchart node (by zIndex) whose box is under `point`, or
@@ -190,8 +254,9 @@ export function nodeAtPoint(point, shapes) {
   return best ? best.id : null
 }
 
-// The padded region that keeps a node "hovered" while the pointer travels from the
-// node to one of its handles, so the "+" does not vanish in the gap.
+// The padded region a node answers for: the pointer reaching it REVEALS the node's
+// handles (nodeInReach), and staying inside it keeps them alive while the pointer
+// travels from the node to one of them, so the "+" does not vanish in the gap.
 //
 // Measured from the HANDLES rather than from a fixed reach, exactly as the mind map
 // does (#427). The old fixed box was the bug users hit: it reached a constant
@@ -214,11 +279,13 @@ export function hoverRegionOf(nodeId, ctx) {
     top = Math.min(top, handle.cy - ADD_HIT_R)
     bottom = Math.max(bottom, handle.cy + ADD_HIT_R)
   }
-  const margin = 12
+  // Padded on every side, not just where the handles hang: the region is what the
+  // pointer must reach for the "+" to reveal, and a node is approached from
+  // whichever direction the user happens to come from.
   return {
-    x: left - margin,
-    y: top - margin,
-    w: right - left + margin * 2,
-    h: bottom - top + margin * 2,
+    x: left - APPROACH_PAD,
+    y: top - APPROACH_PAD,
+    w: right - left + APPROACH_PAD * 2,
+    h: bottom - top + APPROACH_PAD * 2,
   }
 }

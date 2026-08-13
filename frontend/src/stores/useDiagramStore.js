@@ -21,6 +21,7 @@ import { mindmapModelFromShapes, flowchartModelFromShapes } from '@/diagram/free
 import { buildMindmapChild, buildMindmapSibling, buildFlowchartChild, flowchartLayoutPatches, mindmapLayoutPatches } from '@/diagram/freeFloatingOps.js'
 import { mindmapSizeForShape } from '@/diagram/mindmapNodeSize.js'
 import { flowchartSizeForShape } from '@/diagram/flowchartNodeSize.js'
+import { separateBoxes } from '@/diagram/flowchartLayout.js'
 import { dropPatches } from '@/diagram/mindmapDrop.js'
 import { DEFAULT_NODE_STYLE } from '@/diagram/mindmapNodeStyle.js'
 import { useAppSettings } from '@/composables/useAppSettings.js'
@@ -407,12 +408,16 @@ function attachMindMap(store, state, history) {
   // so the neighbours of an edited node must stay exactly where the user put them
   // (#441 item 18). Only the node's own box follows its text.
   store.resizeFlowchartNodeToText = (id, size) =>
-    history.commit(NODE_TEXT_EDIT, () => applyPatch(state.shapes.find((s) => s.id === id), size))
+    history.commit(NODE_TEXT_EDIT, () => {
+      applyPatch(state.shapes.find((s) => s.id === id), size)
+      shiftCrowdedNeighbours(id)
+    })
   store.commitFlowchartNodeText = (id, text) => {
     const shape = state.shapes.find((s) => s.id === id)
     if (!shape) return
     history.commit(NODE_TEXT_EDIT, () => {
       applyPatch(shape, { text, ...flowchartSizeForShape({ ...shape, text }) })
+      shiftCrowdedNeighbours(id)
     })
   }
   // "This node's text changed, or the style it is set in did" for a flowchart node
@@ -426,6 +431,23 @@ function attachMindMap(store, state, history) {
       const shape = state.shapes.find((s) => s.id === id)
       if (!shape || shape.role !== ROLE.flowchartNode) continue
       applyPatch(shape, flowchartSizeForShape(shape))
+      shiftCrowdedNeighbours(id)
+    }
+  }
+  // A node that grew to fit its label grows INTO its neighbours (#441 round 3), so
+  // the ones it now crowds step aside to keep the gap they had. Only crowded nodes
+  // move, and only far enough to clear: a flowchart is manually placed, so this must
+  // never turn into a re-flow of the whole chart. Must run inside a caller's commit.
+  const shiftCrowdedNeighbours = (anchorId) => {
+    const nodes = state.shapes.filter((s) => s.role === ROLE.flowchartNode)
+    if (nodes.length < 2) return
+    const shifted = separateBoxes(
+      nodes.map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h })),
+      { anchorId },
+    )
+    for (const [id, position] of Object.entries(shifted)) {
+      const shape = nodes.find((s) => s.id === id)
+      if (shape) applyPatch(shape, position)
     }
   }
   // Move a node to a new place in the tree by dropping it (#427 item 4). A mind map
@@ -529,8 +551,8 @@ function attachFlowchart(store, state, history) {
   // build path has a home the way addChildShape does for mind maps.
   // `port` targets a specific decision branch (the "+" that was pressed knows which
   // one it belongs to); null lets the op pick the next free branch as before.
-  store.addFlowchartChildShape = (parentShapeId, nodeType, port = null) => {
-    const built = buildFlowchartChild(state.shapes, state.connectors, parentShapeId, nodeType, port)
+  store.addFlowchartChildShape = (parentShapeId, nodeType, port = null, side = null) => {
+    const built = buildFlowchartChild(state.shapes, state.connectors, parentShapeId, nodeType, port, side)
     if (!built) return null
     built.shape.zIndex = nextZIndex(state)
     const parent = state.shapes.find((s) => s.id === parentShapeId)

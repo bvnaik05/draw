@@ -41,10 +41,17 @@ const BASE_FONT_SIZE = 12
 const CHAR_WIDTH = 6.4
 const LINE_HEIGHT = 16
 
-// How much wider than its type's default box a node may grow before its text
-// wraps and the box grows downward instead. Past this a long label makes a node
-// tall, not endless — a 600px-wide Process would wreck the column it sits in.
-const MAX_WIDTH_FACTOR = 1.5
+// A node that outgrows its label scales UP AS A WHOLE, keeping the proportions of
+// its type (#441 round 3). It used to grow sideways to 1.5x and then only downward,
+// which turned a Process into a letterbox and a Decision into a lozenge — the box
+// stopped looking like the shape it was supposed to be. Growing both axes by the
+// same factor is what keeps a diamond a diamond.
+//
+// The search is a bisect rather than a formula because the fit is not continuous:
+// widening the box changes how many characters fit per line, so the line count —
+// and with it the height needed — falls in steps.
+const MAX_GROWTH = 12 // a paragraph makes a node big, not unbounded
+const GROWTH_STEPS = 20 // ~0.001 resolution over the doubled range
 
 // Dead space per side, as {k: fraction of that axis, c: constant px}. `k` covers
 // the part of the box the SHAPE itself takes away (it scales with the box); `c` is
@@ -92,9 +99,6 @@ function metaFor(nodeType) {
   return NODE_TYPE_META[nodeType] || NODE_TYPE_META.process
 }
 
-function clamp(value, minimum, maximum) {
-  return Math.min(maximum, Math.max(minimum, value))
-}
 
 // Solve one axis: the box length that leaves `content` px between its two insets.
 // Guarded against a pathological k pair summing to >= 1, which would divide by
@@ -130,16 +134,27 @@ export function flowchartNodeSize({
   // line), and those are lines the box has to pay for — wrapping alone would fold
   // them into one and clip everything below the first.
   const paragraphs = String(text || '').split(/\r?\n/)
-  const longest = Math.max(...paragraphs.map((line) => line.length))
 
-  const wanted = solveAxis(longest * charWidth, inset.left, inset.right, meta.w)
-  const w = clamp(wanted, meta.w, Math.max(meta.w, meta.w * MAX_WIDTH_FACTOR * scale))
+  // The longest single word is a hard floor on the width: growing proportionally
+  // means the box would rather wrap than widen, and left to itself it will happily
+  // break a word in half to avoid growing — which is "Juncti / on" from the issue,
+  // reintroduced. A line may wrap between words; it may never wrap inside one.
+  const words = paragraphs.flatMap((line) => line.split(/\s+/)).filter(Boolean)
+  const longestWord = words.length ? Math.max(...words.map((word) => word.length)) : 1
 
-  // Re-wrap at the width actually granted, so the height pays for the real lines.
-  const textW = textSpan(w, inset.left, inset.right)
-  const perLine = charsPerLine(textW, charWidth)
-  const lines = paragraphs.reduce((total, line) => total + wrapLineCount(line, perLine), 0)
-  const h = Math.max(meta.h, solveAxis(lines * lineHeight, inset.top, inset.bottom, meta.h))
+  // Does the label fit a box `growth` times the type's default, at its proportions?
+  // The width decides the wrap, and the wrapped line count decides the height the
+  // text needs — which has to be no more than the height that same box offers.
+  const fitsAt = (growth) => {
+    const perLine = charsPerLine(textSpan(meta.w * growth, inset.left, inset.right), charWidth)
+    if (perLine < longestWord) return false
+    const lines = paragraphs.reduce((total, line) => total + wrapLineCount(line, perLine), 0)
+    return solveAxis(lines * lineHeight, inset.top, inset.bottom, meta.h * growth) <= meta.h * growth
+  }
+
+  const growth = smallestGrowthThatFits(fitsAt)
+  const w = meta.w * growth
+  const h = meta.h * growth
 
   // Ceil, never round: these numbers are the room the text REQUIRES, and rounding
   // one down can leave the box a fraction of a pixel too small for the line it was
@@ -150,6 +165,25 @@ export function flowchartNodeSize({
     return { w: side, h: side }
   }
   return { w: Math.ceil(w), h: Math.ceil(h) }
+}
+
+// The smallest uniform scale (never below 1 — a node is at least its type's
+// default) at which `fits` holds. Doubles until it finds a box that works, then
+// bisects back down to the tightest one, so the node ends up as small as the label
+// allows rather than at whatever power of two cleared it.
+function smallestGrowthThatFits(fits) {
+  if (fits(1)) return 1
+  let high = 2
+  while (high < MAX_GROWTH && !fits(high)) high *= 2
+  high = Math.min(high, MAX_GROWTH)
+  if (!fits(high)) return high // a label past the cap: big, but bounded
+  let low = high / 2
+  for (let step = 0; step < GROWTH_STEPS; step += 1) {
+    const middle = (low + high) / 2
+    if (fits(middle)) high = middle
+    else low = middle
+  }
+  return high
 }
 
 // The usable text span along one axis of a box `length` long.

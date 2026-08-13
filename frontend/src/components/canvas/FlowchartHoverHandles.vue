@@ -161,19 +161,26 @@ function openPicker(handle) {
   // The branch this handle belongs to travels with the request, so choosing a type
   // from a decision's "No" handle extends the No branch rather than whichever one
   // happened to be free next.
-  openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId), handle.port)
+  openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId), handle.port, handle.side)
 }
 
-// A decision's handles preview the branch they would create ("Yes", "No", …). The
-// pill sits just beyond the "+", pushed along the side the handle grows from so it
-// never lands back on the node.
-const LABEL_GAP = 13
-function labelAnchor(handle) {
-  if (handle.side === 'left') return { x: handle.cx - LABEL_GAP, y: handle.cy, anchor: 'end' }
-  return { x: handle.cx + LABEL_GAP, y: handle.cy, anchor: 'start' }
+// A decision's handles preview the branch they would create ("Yes", "No", …).
+//
+// The pill sits BELOW its own "+", centred on it. It used to sit beside the handle,
+// which is what made the preview look shabby (#441 round 3): two branch handles are
+// only ~40px apart, so the "Yes" pill ran straight into the "No" handle — covering
+// the target the user was aiming at and reading as one smeared blob rather than two
+// labelled choices. Centred underneath, each pill stays inside its own handle's
+// column however many branches a decision grows.
+const LABEL_DROP = 15
+const LABEL_H = 17
+function labelBox(handle) {
+  const w = labelWidth(handle)
+  return { x: handle.cx - w / 2, y: handle.cy + LABEL_DROP, w, h: LABEL_H }
 }
+// Inter at 11px is ~6.1px per character on average; the pill pads that either side.
 function labelWidth(handle) {
-  return (handle.label?.length || 0) * 6 + 12
+  return Math.round((handle.label?.length || 0) * 6.1) + 14
 }
 
 // The source node's box in SCREEN pixels, straight off its rendered group — so the
@@ -206,18 +213,18 @@ function screenBoxOf(nodeId) {
            see that Yes goes down and No goes right before committing to either. -->
       <g v-if="handle.label" style="pointer-events: none">
         <rect
-          :x="labelAnchor(handle).anchor === 'end' ? labelAnchor(handle).x - labelWidth(handle) : labelAnchor(handle).x"
-          :y="handle.cy - 9"
-          :width="labelWidth(handle)"
-          height="18"
-          rx="5"
+          :x="labelBox(handle).x"
+          :y="labelBox(handle).y"
+          :width="labelBox(handle).w"
+          :height="labelBox(handle).h"
+          rx="8"
           fill="#FFFFFF"
           :stroke="HANDLE_COLOR"
           stroke-width="1"
         />
         <text
-          :x="labelAnchor(handle).x + (labelAnchor(handle).anchor === 'end' ? -labelWidth(handle) / 2 : labelWidth(handle) / 2)"
-          :y="handle.cy"
+          :x="handle.cx"
+          :y="labelBox(handle).y + labelBox(handle).h / 2"
           text-anchor="middle"
           dominant-baseline="central"
           font-size="11"

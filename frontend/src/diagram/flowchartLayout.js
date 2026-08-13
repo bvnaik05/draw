@@ -265,18 +265,102 @@ function avoidOverlap(model, box, direction, ignoreIds = null) {
 // from a decision's "No" handle appears where that handle pointed (#441 round 2).
 // `crossSteps` fans repeated children along the side.
 export function placeOnSide(model, parentId, childSize, side, crossSteps = 0) {
+  const base = sideSlot(model, parentId, childSize, side, crossSteps)
+  if (!base) return { x: 0, y: 0 }
+  const vertical = side === 'top' || side === 'bottom'
+  return avoidOverlap(model, { ...base, w: childSize.w, h: childSize.h }, vertical ? 'TB' : 'LR')
+}
+
+// Push overlapping boxes apart until every pair has a real gap between them, and
+// report only the ones that had to move (#441 round 3).
+//
+// This exists because a node that GROWS to fit its label grows into its neighbours.
+// A flowchart is manually placed, so the rule is deliberately minimal: nothing moves
+// unless it is actually crowded, and then it moves the shortest distance that clears
+// — along whichever axis it is least overlapped on, which preserves the arrangement
+// the user built instead of re-flowing the chart out from under them.
+//
+// `anchorId` is the node that just changed size. It never moves: it is the one box
+// whose position the user is currently looking at.
+const SEPARATION_PASSES = 24
+export function separateBoxes(boxes, { anchorId = null, gap = CLEAR_GAP } = {}) {
+  const working = (boxes || []).map((box) => ({ ...box }))
+  for (let pass = 0; pass < SEPARATION_PASSES; pass += 1) {
+    let moved = false
+    for (let i = 0; i < working.length; i += 1) {
+      for (let j = i + 1; j < working.length; j += 1) {
+        if (pushApart(working[i], working[j], gap, anchorId)) moved = true
+      }
+    }
+    if (!moved) break
+  }
+  const shifted = {}
+  for (const box of working) {
+    const original = boxes.find((candidate) => candidate.id === box.id)
+    if (Math.round(box.x) !== Math.round(original.x) || Math.round(box.y) !== Math.round(original.y)) {
+      shifted[box.id] = { x: Math.round(box.x), y: Math.round(box.y) }
+    }
+  }
+  return shifted
+}
+
+// Separate one pair if they are closer than `gap`, along their shallower axis.
+// Returns whether anything moved.
+function pushApart(a, b, gap, anchorId) {
+  const half = gap / 2
+  const overlapX = Math.min(a.x + a.w + half, b.x + b.w + half) - Math.max(a.x - half, b.x - half)
+  const overlapY = Math.min(a.y + a.h + half, b.y + b.h + half) - Math.max(a.y - half, b.y - half)
+  if (overlapX <= 0 || overlapY <= 0) return false
+  const axis = overlapX < overlapY ? 'x' : 'y'
+  const span = axis === 'x' ? 'w' : 'h'
+  const push = axis === 'x' ? overlapX : overlapY
+  // Which way each one goes: away from the other's centre.
+  const sign = a[axis] + a[span] / 2 <= b[axis] + b[span] / 2 ? -1 : 1
+  const aFixed = a.id === anchorId
+  const bFixed = b.id === anchorId
+  if (aFixed && bFixed) return false
+  if (aFixed) b[axis] -= sign * push
+  else if (bFixed) a[axis] += sign * push
+  else {
+    a[axis] += (sign * push) / 2
+    b[axis] -= (sign * push) / 2
+  }
+  return true
+}
+
+// The side of `parentId` a new child should take when the user has not named one.
+//
+// A flowchart reads top-to-bottom, so `bottom` is tried first and keeps the slot
+// whenever it is clear. Only when the natural side is occupied does this look
+// sideways — which is the point (#441 round 3): dropping a child into taken space
+// forced its connector to detour around everything already on the canvas, and every
+// detour that crossed another run became a jumper. A child placed where there is
+// actually room needs no detour at all.
+//
+// "Free" means the slot the child would take is clear WITHOUT avoidOverlap having
+// to move it, so this asks the same collision question the placement will.
+const SIDE_PREFERENCE = ['bottom', 'right', 'left', 'top']
+export function freestSide(model, parentId, childSize, crossSteps = 0) {
+  for (const side of SIDE_PREFERENCE) {
+    const slot = sideSlot(model, parentId, childSize, side, crossSteps)
+    if (slot && !collidesWith(model, { ...slot, ...childSize }, null)) return side
+  }
+  return 'bottom'
+}
+
+// Where a child would sit on `side` before any overlap search — the raw slot, which
+// is what makes "is this side free?" answerable.
+function sideSlot(model, parentId, childSize, side, crossSteps) {
   const parent = flowchartNodeById(model, parentId)
-  if (!parent) return { x: 0, y: 0 }
+  if (!parent) return null
   const parentSize = nodeSize(parent)
   const center = nodeCenter(parent)
   const vertical = side === 'top' || side === 'bottom'
   const cross = crossSteps * ((vertical ? childSize.w : childSize.h) + SIBLING_GAP)
-  let base
-  if (side === 'bottom') base = { x: center.x - childSize.w / 2 + cross, y: parent.y + parentSize.h + LEVEL_GAP }
-  else if (side === 'top') base = { x: center.x - childSize.w / 2 + cross, y: parent.y - LEVEL_GAP - childSize.h }
-  else if (side === 'right') base = { x: parent.x + parentSize.w + LEVEL_GAP, y: center.y - childSize.h / 2 + cross }
-  else base = { x: parent.x - LEVEL_GAP - childSize.w, y: center.y - childSize.h / 2 + cross }
-  return avoidOverlap(model, { ...base, w: childSize.w, h: childSize.h }, vertical ? 'TB' : 'LR')
+  if (side === 'bottom') return { x: center.x - childSize.w / 2 + cross, y: parent.y + parentSize.h + LEVEL_GAP }
+  if (side === 'top') return { x: center.x - childSize.w / 2 + cross, y: parent.y - LEVEL_GAP - childSize.h }
+  if (side === 'right') return { x: parent.x + parentSize.w + LEVEL_GAP, y: center.y - childSize.h / 2 + cross }
+  return { x: parent.x - LEVEL_GAP - childSize.w, y: center.y - childSize.h / 2 + cross }
 }
 
 // Where the n-th outgoing flow of a plain node should sit, in sibling-steps either

@@ -21,6 +21,8 @@
 // The output is a polyline plus the points where this edge should HOP over another
 // (item 9). Turning that into an SVG path is flowchartPath.js's job.
 
+import { boundaryPoint } from './flowchartOutline.js'
+
 const CLEARANCE = 14 // how far a route stays off a node box it is avoiding
 const STUB = 16 // straight run off a port before the route may turn
 const PORT_MARGIN = 12 // keeps distributed ports off the corners of a side
@@ -134,10 +136,15 @@ function portPoint(box, side, index, count) {
   const start = vertical ? box.x : box.y
   const usable = Math.max(0, span - PORT_MARGIN * 2)
   const offset = start + PORT_MARGIN + (usable * (index + 1)) / (count + 1)
-  if (side === 'top') return { x: offset, y: box.y }
-  if (side === 'bottom') return { x: offset, y: box.y + box.h }
-  if (side === 'left') return { x: box.x, y: offset }
-  return { x: box.x + box.w, y: offset }
+  const onBox =
+    side === 'top' ? { x: offset, y: box.y }
+    : side === 'bottom' ? { x: offset, y: box.y + box.h }
+    : side === 'left' ? { x: box.x, y: offset }
+    : { x: box.x + box.w, y: offset }
+  // Pull the port in to the node's REAL outline (#441 round 3). A diamond, a
+  // parallelogram and a document all fall away from their bounding box, so an
+  // endpoint left on the box floated in space beside the shape it pointed at.
+  return boundaryPoint(box, box.nodeType, onBox, side)
 }
 
 // ----- the plain elbow --------------------------------------------------------

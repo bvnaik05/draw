@@ -19,7 +19,7 @@ import {
   addDecisionBranch,
   outgoingEdges,
 } from './flowchartModel.js'
-import { placeOnSide, fanSteps } from './flowchartLayout.js'
+import { placeOnSide, fanSteps, freestSide } from './flowchartLayout.js'
 import { ROLE, flowchartNodeShape, flowchartEdgeConnector, edgeAnchors } from './freeFloating.js'
 
 const GAP_X = 60
@@ -200,7 +200,14 @@ export function mindmapLayoutPatches(shapes, connectors, rootId) {
 // fan-out) runs, then returns a shape + connector identical to a migrated one.
 // Returns null when the parent is not a flowchart shape. The caller assigns zIndex
 // and commits both objects as one undoable unit.
-export function buildFlowchartChild(shapes, connectors, parentShapeId, nodeType, wantedPort = null) {
+export function buildFlowchartChild(
+  shapes,
+  connectors,
+  parentShapeId,
+  nodeType,
+  wantedPort = null,
+  wantedSide = null,
+) {
   const parentShape = (shapes || []).find((s) => s.id === parentShapeId && s.role === ROLE.flowchartNode)
   if (!parentShape) return null
   const model = flowchartModelFromShapes(shapes, connectors)
@@ -244,7 +251,13 @@ export function buildFlowchartChild(shapes, connectors, parentShapeId, nodeType,
     branchIndex >= 0 && branchCount > 1
       ? branchIndex - (branchCount - 1) / 2 + fanSteps(onThisBranch)
       : fanSteps(onThisBranch)
-  const pos = placeOnSide(model, parentShapeId, size, 'bottom', lane)
+  // The side the user pressed wins. With none named, take the side that is actually
+  // free rather than always heading down (#441 round 3): a child dropped into
+  // occupied space has to be routed around everything already there, which is where
+  // the pile of jumpers came from. Choosing empty space means the connector is a
+  // short straight run and crosses nothing.
+  const side = wantedSide || freestSide(model, parentShapeId, size, lane)
+  const pos = placeOnSide(model, parentShapeId, size, side, lane)
   const childBox = { x: pos.x, y: pos.y, w: size.w, h: size.h }
 
   const shape = flowchartNodeShape(draft, childBox)

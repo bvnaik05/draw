@@ -25,7 +25,7 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
   })
 
   it('choosing a type creates it and drops straight into naming it', () => {
-    expect(menu).toContain('store.addFlowchartChildShape(parentId, nodeType, port)')
+    expect(menu).toContain('store.addFlowchartChildShape(parentId, nodeType, port, side)')
     expect(menu).toContain('editing.beginTextEdit(id, { selectAll: true })')
   })
 
@@ -49,7 +49,7 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
   })
 
   it('records the open menu in the shared store instead', () => {
-    expect(src).toContain('openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId), handle.port)')
+    expect(src).toContain('openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId), handle.port, handle.side)')
     expect(menu).toContain('v-if="flowchartUi.picker"')
     expect(menu).toContain('class="fixed z-50"')
   })
