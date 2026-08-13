@@ -14,12 +14,12 @@
 // into the viewport <g>. The radius/glyph/colour conventions mirror the mind-map
 // handles so the two migrated-shape overlays read as one feature.
 //
-// Handles PROTRUDE FROM THE CENTRE of the side they extend from (#441 round 2):
-// a plain node offers one below its bottom edge, and a DECISION offers one per
-// branch on a distinct side — Yes below, No to the right — each previewing the
-// branch label it would create. A decision is the one node type whose whole point
-// is more than one outgoing flow, so making the user discover that through a
-// single "+" that silently cycled branches was hiding the feature.
+// Handles PROTRUDE DOWNWARD from the node's bottom edge (#441 round 2): a plain
+// node offers one on its centre line, and a DECISION offers one per branch, spread
+// across that edge and each previewing the label it would create. A decision is the
+// one node type whose whole point is more than one outgoing flow, so making the
+// user discover that through a single "+" that silently cycled branches was hiding
+// the feature.
 //
 // An earlier pass moved the "+" to whichever part of the edge was clearest, to keep
 // it off the outgoing connector. That is dropped: it put the handle somewhere
@@ -27,7 +27,6 @@
 // connectors and carries a white disc, so a route passing under it stays legible.
 
 import { isFlowchartShape } from './freeFloating.js'
-import { BRANCH_SIDES } from './flowchartLayout.js'
 
 // --- geometry constants (shared with the mind-map handles for visual parity) ----
 //
@@ -61,10 +60,10 @@ export function pointInBox(point, box) {
 
 // --- where the handles sit ----------------------------------------------------
 
-// Yes goes down, because that is the flow the eye follows; No goes right. Beyond
-// four branches the sides repeat, which is rare enough to accept and still better
-// than stacking. BRANCH_SIDES comes from the layout, so the "+" a user presses and
-// the place the child lands can never disagree.
+// Every branch of a decision leaves DOWNWARD, spread across the bottom edge, so a
+// fork reads as a fork. An earlier pass put Yes below and No to the right; sending
+// one outcome sideways made the two look like different kinds of thing rather than
+// two answers to the same question.
 
 // The point on a side's CENTRE where a handle's stub leaves the node, and the
 // direction it grows in.
@@ -77,20 +76,34 @@ function sideAnchor(box, side) {
   return { x: cx, y: box.y + box.h, dx: 0, dy: 1 }
 }
 
-function makeHandle(box, nodeId, side, { port = null, label = '' } = {}) {
+// `lane` shifts a handle along the side it sits on, so a decision's branches can
+// share the bottom edge without stacking. 0 keeps it on the centre line.
+function makeHandle(box, nodeId, side, { port = null, label = '', lane = 0, key = side } = {}) {
   const anchor = sideAnchor(box, side)
+  const alongX = side === 'top' || side === 'bottom' ? lane : 0
+  const alongY = side === 'left' || side === 'right' ? lane : 0
   return {
-    key: `add-${nodeId}-${side}`,
+    key: `add-${nodeId}-${key}`,
     kind: 'child',
     nodeId,
     side,
     port,
     label,
-    cx: Math.round(anchor.x + anchor.dx * ADD_OFFSET),
-    cy: Math.round(anchor.y + anchor.dy * ADD_OFFSET),
-    stubX: anchor.x,
-    stubY: anchor.y,
+    cx: Math.round(anchor.x + anchor.dx * ADD_OFFSET + alongX),
+    cy: Math.round(anchor.y + anchor.dy * ADD_OFFSET + alongY),
+    stubX: Math.round(anchor.x + alongX),
+    stubY: Math.round(anchor.y + alongY),
   }
+}
+
+// Where the `index`-th of `count` branch handles sits along the bottom edge,
+// relative to its centre. Evenly spread across the usable width, so two branches
+// read as a fork rather than as one handle hiding another.
+const BRANCH_MARGIN = 16
+function branchLane(box, index, count) {
+  if (count <= 1) return 0
+  const usable = Math.max(0, box.w - BRANCH_MARGIN * 2)
+  return -usable / 2 + (usable * (index + 1)) / (count + 1)
 }
 
 // A reusable index of the migrated flowchart: each node's absolute box keyed by id
@@ -110,18 +123,20 @@ export function buildContext(shapes) {
 }
 
 // The "+" handle(s) for one node, in absolute logical coords. A decision gets one
-// per branch, each on its own side and carrying that branch's label so the user can
-// see which outcome they are about to extend; everything else gets a single handle
-// below its bottom edge. Empty for an id that is not a migrated flowchart node.
+// per branch, spread along its bottom edge and carrying that branch's label so the
+// user can see which outcome they are about to extend; everything else gets a
+// single centred handle. Empty for an id that is not a migrated flowchart node.
 export function handlesForNode(nodeId, ctx) {
   const box = ctx.boxes[nodeId]
   if (!box) return []
   const branches = ctx.branches?.[nodeId]
   if (branches?.length) {
     return branches.map((branch, index) =>
-      makeHandle(box, nodeId, BRANCH_SIDES[index % BRANCH_SIDES.length], {
+      makeHandle(box, nodeId, 'bottom', {
         port: branch.port,
         label: branch.label,
+        lane: branchLane(box, index, branches.length),
+        key: branch.port,
       }),
     )
   }
@@ -134,6 +149,34 @@ export function handlesForNode(nodeId, ctx) {
 // component's target set is a plain filter over this predicate.
 export function shouldShowHandles({ hovered = false, soleSelected = false, selectTool = false } = {}) {
   return Boolean(selectTool && (hovered || soleSelected))
+}
+
+// The handle of `nodeId` under `point`, or null. Measured against the HIT radius,
+// which is much wider than the drawn mark.
+export function handleAtPoint(point, nodeId, ctx) {
+  for (const handle of handlesForNode(nodeId, ctx)) {
+    const dx = point.x - handle.cx
+    const dy = point.y - handle.cy
+    if (dx * dx + dy * dy <= ADD_HIT_R * ADD_HIT_R) return handle
+  }
+  return null
+}
+
+// Which node owns the hover after the pointer moves to `point` — the flowchart
+// counterpart of the mind map's state machine (#427 item 1).
+//
+// The ORDER is the fix. A "+" belongs to the node that offered it, so while the
+// pointer is on one of the current node's handles that node KEEPS the hover, even
+// when the point also falls inside a neighbouring node's box. Testing `nodeAtPoint`
+// first — which is what the flowchart overlay used to do — let a neighbour steal
+// the hover the instant the pointer reached a "+" that happened to overlap it, and
+// the handle vanished from under the cursor.
+export function nextHoverTarget({ point, currentId = null, ctx, shapes }) {
+  if (currentId && ctx.boxes[currentId] && handleAtPoint(point, currentId, ctx)) return currentId
+  const direct = nodeAtPoint(point, shapes)
+  if (direct) return direct
+  if (currentId && pointInBox(point, hoverRegionOf(currentId, ctx))) return currentId
+  return null
 }
 
 // The topmost migrated flowchart node (by zIndex) whose box is under `point`, or

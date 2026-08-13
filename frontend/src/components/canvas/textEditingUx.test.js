@@ -31,7 +31,9 @@ describe('a flowchart node edits inside its shape (#441 items 4/5/14)', () => {
   it('drops the inset blue ring and the extra padding for either node role', () => {
     // The ring drew a rectangle inside a diamond, which read as a bug.
     expect(editor).toContain("const padding = isNode.value ? '0' : '4px 6px'")
-    expect(editor).toContain('const ring = isNode.value ? null : EDIT_RING')
+    // A canvas text element drops the ring too (#414), so assert only the node
+    // half of the condition — the two rules share one line.
+    expect(editor).toMatch(/const ring = isNode\.value \|\| [\w.]+ \? null : EDIT_RING/)
   })
 
   it('sizes the node through the shape-aware measurement, not the DOM', () => {

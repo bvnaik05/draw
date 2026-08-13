@@ -99,3 +99,37 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
     expect(menu).toContain("document.removeEventListener('pointerdown', onDocumentPointerDown, true)")
   })
 })
+
+// #441 round 2, the hover bug the user kept hitting: "I see a + icon, as soon as I
+// go to click it, it disappears." Widening the hover region did NOT fix it, because
+// the region was never consulted — the listeners were on the canvas <svg>, which is
+// pointer-events:none with only its painted children interactive. The empty gap
+// between a node and its "+" is not a painted child, so crossing into it fired
+// `pointerleave` on the SVG and cleared the hover outright. The handle vanished at
+// the exact moment the user set off toward it. The surface spans the whole canvas,
+// so the gap is just more surface and events over the shapes still bubble to it.
+describe('the "+" survives the trip from the node to the handle (#441 round 2)', () => {
+  it('listens on the canvas surface, not on the pointer-events:none <svg>', () => {
+    expect(src).toContain(`surface = svg?.closest('[role="application"]') || svg`)
+    expect(src).toContain("surface.addEventListener('pointermove', onPointerMove)")
+    expect(src).toContain("surface.addEventListener('pointerleave', onPointerLeave)")
+    expect(src).not.toMatch(/svg\.addEventListener\('pointer(move|leave)'/)
+  })
+
+  it('drops the hover on leave only after a grace period, so it cannot flicker', () => {
+    expect(src).toContain('const LEAVE_GRACE_MS =')
+    expect(src).toContain('leaveTimer = setTimeout(')
+    // Any subsequent move cancels the pending drop — a real departure has none.
+    expect(src).toMatch(/function onPointerMove\(event\) \{\s*\n\s*clearPendingLeave\(\)/)
+  })
+
+  it('routes hover through the pure state machine that defends the current node', () => {
+    expect(src).toContain('hoveredId.value = nextHoverTarget({')
+    expect(src).toContain('currentId: hoveredId.value,')
+    expect(src).not.toContain('hoveredId.value = nodeAtPoint(')
+  })
+
+  it('unmounting clears a pending leave timer instead of leaking it', () => {
+    expect(src).toMatch(/onBeforeUnmount\(\(\) => \{\s*\n\s*clearPendingLeave\(\)/)
+  })
+})

@@ -11,6 +11,8 @@ import {
   nodeAtPoint,
   hoverRegionOf,
   pointInBox,
+  handleAtPoint,
+  nextHoverTarget,
 } from './flowchartHandles.js'
 import {
   ADD_R as MM_ADD_R,
@@ -105,13 +107,16 @@ describe('a decision offers one labelled handle per branch', () => {
     })
   }
 
-  it('puts Yes and No on two different sides, each carrying its label', () => {
+  it('sends every branch DOWNWARD, spread across the bottom edge', () => {
     const handles = handlesForNode('d', buildContext([decision('d', 0, 0)]))
     expect(handles).toHaveLength(2)
     expect(handles.map((h) => h.label)).toEqual(['Yes', 'No'])
-    expect(handles.map((h) => h.side)).toEqual(['bottom', 'right'])
-    // Distinct sides mean distinct positions, so neither preview hides the other.
-    expect(new Set(handles.map((h) => `${h.cx},${h.cy}`)).size).toBe(2)
+    // Both leave downward — a fork, not two different kinds of thing.
+    expect(handles.map((h) => h.side)).toEqual(['bottom', 'bottom'])
+    expect(new Set(handles.map((h) => h.cy)).size).toBe(1)
+    // Spread along that edge, so neither preview hides the other.
+    expect(new Set(handles.map((h) => h.cx)).size).toBe(2)
+    expect(handles[0].cx).toBeLessThan(handles[1].cx)
   })
 
   it('carries the branch port, so pressing one extends THAT branch', () => {
@@ -119,12 +124,13 @@ describe('a decision offers one labelled handle per branch', () => {
     expect(handles.map((h) => h.port)).toEqual(['yes', 'no'])
   })
 
-  it('centres each handle on the side it grows from', () => {
-    const [down, right] = handlesForNode('d', buildContext([decision('d', 0, 0)]))
-    expect(down.cx).toBe(75) // half of 150
-    expect(down.cy).toBe(96 + ADD_OFFSET)
-    expect(right.cx).toBe(150 + ADD_OFFSET)
-    expect(right.cy).toBe(48) // half of 96
+  it('keeps both branch handles one drop below the node', () => {
+    const [yes, no] = handlesForNode('d', buildContext([decision('d', 0, 0)]))
+    expect(yes.cy).toBe(96 + ADD_OFFSET)
+    expect(no.cy).toBe(96 + ADD_OFFSET)
+    // Either side of the node's centre line (75 = half of 150).
+    expect(yes.cx).toBeLessThan(75)
+    expect(no.cx).toBeGreaterThan(75)
   })
 
   it('gives a plain node a single unlabelled handle', () => {
@@ -171,12 +177,12 @@ describe('handlesForNode', () => {
     expect(handle.cy - ADD_R - nodeBottom).toBe(ADD_OFFSET - ADD_R)
   })
 
-  it('puts a decision node\'s "+" at the diamond bottom vertex (still bottom-centre)', () => {
-    // portPoint(decision, 'out', 'TB') resolves to the box's bottom-centre — the
-    // diamond's bottom vertex — so one formula covers every node type.
+  it('hangs a decision\'s branch handles below the diamond, off its bottom edge', () => {
     const ctx = buildContext([fcNode('d', 0, 0, 150, 96, 'decision')])
-    const [handle] = handlesForNode('d', ctx)
-    expect(handle).toMatchObject({ cx: 75, cy: 96 + ADD_OFFSET, stubX: 75, stubY: 96 })
+    for (const handle of handlesForNode('d', ctx)) {
+      expect(handle.cy).toBe(96 + ADD_OFFSET)
+      expect(handle.stubY).toBe(96)
+    }
   })
 
   it('returns nothing for a non-flowchart / unknown id', () => {
@@ -253,6 +259,59 @@ describe('hoverRegionOf', () => {
   it('is null for an unknown id', () => {
     const ctx = buildContext([fcNode('a', 0, 0)])
     expect(hoverRegionOf('missing', ctx)).toBeNull()
+  })
+})
+
+// #441 round 2: "the + disappears as soon as I go to click it". Two separate
+// causes, and the region test above only covered the first one.
+describe('handleAtPoint / nextHoverTarget', () => {
+  it('finds a handle anywhere inside its hit radius, not just on the drawn mark', () => {
+    const ctx = buildContext([fcNode('a', 100, 200, 160, 72)])
+    const [handle] = handlesForNode('a', ctx)
+    expect(handleAtPoint({ x: handle.cx, y: handle.cy }, 'a', ctx)?.nodeId).toBe('a')
+    expect(handleAtPoint({ x: handle.cx + ADD_HIT_R - 1, y: handle.cy }, 'a', ctx)).toBeTruthy()
+    expect(handleAtPoint({ x: handle.cx + ADD_HIT_R + 2, y: handle.cy }, 'a', ctx)).toBeNull()
+    expect(handleAtPoint({ x: handle.cx, y: handle.cy }, 'missing', ctx)).toBeNull()
+  })
+
+  it('keeps the hover on the node that OFFERED the "+", even over a neighbour', () => {
+    // The neighbour sits exactly where the parent's handle hangs — the common case
+    // once a chart has two rows. Asking "which node is under the pointer?" first,
+    // which is what the overlay used to do, handed the hover to the neighbour the
+    // moment the pointer reached the "+", and the handle vanished under the cursor.
+    const parent = fcNode('parent', 100, 100, 160, 72)
+    const ctx0 = buildContext([parent])
+    const [handle] = handlesForNode('parent', ctx0)
+    const neighbour = fcNode('neighbour', handle.cx - 80, handle.cy - 20, 160, 72)
+    const shapes = [parent, neighbour]
+    const ctx = buildContext(shapes)
+    const point = { x: handle.cx, y: handle.cy }
+
+    expect(nodeAtPoint(point, shapes)).toBe('neighbour')
+    expect(nextHoverTarget({ point, currentId: 'parent', ctx, shapes })).toBe('parent')
+    // With no hover to defend, the node actually under the pointer still wins.
+    expect(nextHoverTarget({ point, currentId: null, ctx, shapes })).toBe('neighbour')
+  })
+
+  it('holds the hover across the empty gap between a node and its "+"', () => {
+    const shapes = [fcNode('a', 100, 200, 160, 72)]
+    const ctx = buildContext(shapes)
+    const [handle] = handlesForNode('a', ctx)
+    const gap = { x: handle.cx, y: (200 + 72 + handle.cy) / 2 }
+    expect(nodeAtPoint(gap, shapes)).toBeNull()
+    expect(nextHoverTarget({ point: gap, currentId: 'a', ctx, shapes })).toBe('a')
+    // Far away, the hover drops.
+    const away = { x: 1000, y: 1000 }
+    expect(nextHoverTarget({ point: away, currentId: 'a', ctx, shapes })).toBeNull()
+  })
+
+  it('defends every branch handle of a decision, not just the first', () => {
+    const shapes = [fcNode('d', 100, 100, 160, 72, 'decision')]
+    const ctx = buildContext(shapes)
+    for (const handle of handlesForNode('d', ctx)) {
+      const point = { x: handle.cx, y: handle.cy }
+      expect(nextHoverTarget({ point, currentId: 'd', ctx, shapes })).toBe('d')
+    }
   })
 })
 

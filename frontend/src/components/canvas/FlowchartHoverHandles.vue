@@ -8,11 +8,11 @@
 // the sole selection (select tool only), and clicking it opens the node-type picker
 // so the step added below is the type the user actually wants (#410).
 //
-// It mirrors MindmapHoverHandles.vue exactly — the same HoverArrows.vue structure: a
-// <g> inside the viewport transform that attaches a pointermove listener to the SVG
-// surface, converts the pointer to logical canvas units via the group's CTM, and
-// renders SVG affordances in those units — so the handle's hit-area lines up with
-// the drawn "+". All placement/visibility logic lives in the pure, unit-tested
+// It mirrors MindmapHoverHandles.vue: a <g> inside the viewport transform that
+// listens on the canvas SURFACE, converts the pointer to logical canvas units via
+// the group's CTM, and renders SVG affordances in those units — so the handle's
+// hit-area lines up with the drawn "+". Listening on the surface rather than the
+// SVG is load-bearing; see onMounted. All placement/visibility logic lives in the pure, unit-tested
 // flowchartHandles.js; this file only renders + wires the click to the existing
 // store op (it never reimplements the add). It is a no-op when there are no migrated
 // flowchart shapes, so legacy single-type flowcharts (which still render via
@@ -28,9 +28,7 @@ import {
   buildContext,
   handlesForNode,
   shouldShowHandles,
-  nodeAtPoint,
-  hoverRegionOf,
-  pointInBox,
+  nextHoverTarget,
 } from '@/diagram/flowchartHandles.js'
 
 const store = useDiagramStore()
@@ -38,6 +36,7 @@ const editorUi = useEditorUi()
 
 const layer = ref(null)
 let svg = null
+let surface = null
 
 // The migrated flowchart index (boxes by id), rebuilt whenever shapes change.
 const ctx = computed(() => buildContext(store.state.shapes))
@@ -59,44 +58,65 @@ function toLogical(event) {
   return { x: local.x, y: local.y }
 }
 
-// Hover tracking: the node the pointer is directly over wins; failing that, the
-// current node stays hovered while the pointer is within its padded region, so the
-// handle doesn't vanish as the cursor slides off the node's bottom edge toward the "+".
+// Hover tracking goes through the pure state machine, which knows that a "+"
+// belongs to the node that offered it — so travelling toward a handle never hands
+// the hover to whatever else the pointer passes over.
 function onPointerMove(event) {
+  clearPendingLeave()
   if (!hasNodes.value || !selectTool.value) {
     hoveredId.value = null
     return
   }
-  const point = toLogical(event)
-  const hit = nodeAtPoint(point, store.state.shapes)
-  if (hit) {
-    hoveredId.value = hit
-    return
-  }
-  if (hoveredId.value) {
-    const region = hoverRegionOf(hoveredId.value, ctx.value)
-    if (!pointInBox(point, region)) hoveredId.value = null
-  }
+  hoveredId.value = nextHoverTarget({
+    point: toLogical(event),
+    currentId: hoveredId.value,
+    ctx: ctx.value,
+    shapes: store.state.shapes,
+  })
+}
+
+// Leaving the surface drops the hover, but only after a beat, so a frame's worth of
+// pointer noise between two elements cannot make the "+" flicker. A real departure
+// has no follow-up pointermove and clears normally.
+const LEAVE_GRACE_MS = 120
+let leaveTimer = null
+
+function clearPendingLeave() {
+  if (leaveTimer) clearTimeout(leaveTimer)
+  leaveTimer = null
 }
 
 function onPointerLeave() {
-  hoveredId.value = null
+  clearPendingLeave()
+  leaveTimer = setTimeout(() => {
+    hoveredId.value = null
+    leaveTimer = null
+  }, LEAVE_GRACE_MS)
 }
 
 onMounted(() => {
   svg = layer.value?.ownerSVGElement
-  if (!svg) return
-  svg.addEventListener('pointermove', onPointerMove)
-  svg.addEventListener('pointerleave', onPointerLeave)
+  // The canvas SURFACE, not the SVG — and this is the whole hover bug. The canvas
+  // <svg> is pointer-events:none with only its painted children interactive, so the
+  // empty space between a node and its "+" reports nothing to it. Worse, moving off
+  // the node into that gap fires `pointerleave` on the SVG, which cleared the hover
+  // outright: the handle vanished at the exact moment the user set off toward it.
+  // The surface spans the whole canvas, so the gap is just more surface, and events
+  // over the shapes still bubble up to it.
+  surface = svg?.closest('[role="application"]') || svg
+  if (!surface) return
+  surface.addEventListener('pointermove', onPointerMove)
+  surface.addEventListener('pointerleave', onPointerLeave)
 })
 
 onBeforeUnmount(() => {
+  clearPendingLeave()
   // Leaving the canvas with a menu open would strand it, since the component that
   // renders it lives outside this overlay's lifetime.
   closeFlowchartPicker()
-  if (!svg) return
-  svg.removeEventListener('pointermove', onPointerMove)
-  svg.removeEventListener('pointerleave', onPointerLeave)
+  if (!surface) return
+  surface.removeEventListener('pointermove', onPointerMove)
+  surface.removeEventListener('pointerleave', onPointerLeave)
 })
 
 // The nodes that should show a handle right now: the hovered one AND the sole
@@ -149,7 +169,6 @@ function openPicker(handle) {
 // never lands back on the node.
 const LABEL_GAP = 13
 function labelAnchor(handle) {
-  if (handle.side === 'right') return { x: handle.cx + LABEL_GAP, y: handle.cy, anchor: 'start' }
   if (handle.side === 'left') return { x: handle.cx - LABEL_GAP, y: handle.cy, anchor: 'end' }
   return { x: handle.cx + LABEL_GAP, y: handle.cy, anchor: 'start' }
 }

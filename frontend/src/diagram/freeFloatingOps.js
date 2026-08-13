@@ -19,7 +19,7 @@ import {
   addDecisionBranch,
   outgoingEdges,
 } from './flowchartModel.js'
-import { placeOnSide, fanSteps, BRANCH_SIDES } from './flowchartLayout.js'
+import { placeOnSide, fanSteps } from './flowchartLayout.js'
 import { ROLE, flowchartNodeShape, flowchartEdgeConnector, edgeAnchors } from './freeFloating.js'
 
 const GAP_X = 60
@@ -230,16 +230,21 @@ export function buildFlowchartChild(shapes, connectors, parentShapeId, nodeType,
     addedBranch = branch
   }
 
+  const branchCount = isDecision ? parentNode.branches.length : 1
   const branchIndex = branch ? parentNode.branches.findIndex((b) => b.port === branch.port) : -1
   const size = nodeSize(draft)
-  // The child lands on the SIDE its handle pointed from, so a decision's Yes goes
-  // down and its No goes right — matching the labelled previews (#441 round 2).
-  // A plain node always extends downward, fanning repeated flows either side.
-  const side = branchIndex >= 0 ? BRANCH_SIDES[branchIndex % BRANCH_SIDES.length] : 'bottom'
-  const alreadyOnSide = outgoingEdges(model, parentShapeId).filter(
+  // Every flow leaves DOWNWARD. A decision's branches fan either side of the
+  // parent's centre in branch order, so Yes and No land left and right of each
+  // other below it — matching the handles, which are spread along the same edge.
+  // A plain node's repeated flows fan the same way, by how many it already has.
+  const onThisBranch = outgoingEdges(model, parentShapeId).filter(
     (edge) => !branch || edge.from.port === branch.port,
   ).length
-  const pos = placeOnSide(model, parentShapeId, size, side, fanSteps(alreadyOnSide))
+  const lane =
+    branchIndex >= 0 && branchCount > 1
+      ? branchIndex - (branchCount - 1) / 2 + fanSteps(onThisBranch)
+      : fanSteps(onThisBranch)
+  const pos = placeOnSide(model, parentShapeId, size, 'bottom', lane)
   const childBox = { x: pos.x, y: pos.y, w: size.w, h: size.h }
 
   const shape = flowchartNodeShape(draft, childBox)

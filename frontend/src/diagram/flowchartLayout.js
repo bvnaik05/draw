@@ -261,10 +261,6 @@ function avoidOverlap(model, box, direction, ignoreIds = null) {
   return { x: Math.round(box.x), y: Math.round(box.y) }
 }
 
-// The order sides are handed to a decision's branches. Shared with the handle
-// overlay so the "+" a user presses and the place the child lands agree.
-export const BRANCH_SIDES = ['bottom', 'right', 'left', 'top']
-
 // Place a child one level away from its parent on a named SIDE, so a node created
 // from a decision's "No" handle appears where that handle pointed (#441 round 2).
 // `crossSteps` fans repeated children along the side.
