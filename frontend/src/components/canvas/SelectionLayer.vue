@@ -51,10 +51,15 @@ const editingTextId = computed(() => {
 const selected = computed(() =>
   store.selectedShapes.filter((shape) => shape.id !== editingTextId.value),
 )
-// Everything that gets a selection box drawn around it. A mind-map node shows
-// selection through its own border instead (#427), so it is left out here.
+// Everything that gets a dashed selection box drawn around it. A mind-map or
+// flowchart node shows selection through its own border instead (#427, #441 item
+// 3), so both are left out here — a dashed rectangle cannot trace a diamond or a
+// cylinder, and drawing one anyway is what made selection look detached from the
+// shape it belonged to.
 const outlined = computed(() =>
-  selected.value.filter((shape) => shape.role !== ROLE.mindmapNode),
+  selected.value.filter(
+    (shape) => shape.role !== ROLE.mindmapNode && shape.role !== ROLE.flowchartNode,
+  ),
 )
 const single = computed(() => (selected.value.length === 1 ? selected.value[0] : null))
 // Mind-map / flowchart nodes are auto-laid-out and non-rotatable, so a selected

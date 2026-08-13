@@ -20,6 +20,7 @@ import {
 import { mindmapModelFromShapes, flowchartModelFromShapes } from '@/diagram/freeFloatingGraph.js'
 import { buildMindmapChild, buildMindmapSibling, buildFlowchartChild, flowchartLayoutPatches, mindmapLayoutPatches } from '@/diagram/freeFloatingOps.js'
 import { mindmapSizeForShape } from '@/diagram/mindmapNodeSize.js'
+import { flowchartSizeForShape } from '@/diagram/flowchartNodeSize.js'
 import { dropPatches } from '@/diagram/mindmapDrop.js'
 import { DEFAULT_NODE_STYLE } from '@/diagram/mindmapNodeStyle.js'
 import { useAppSettings } from '@/composables/useAppSettings.js'
@@ -400,6 +401,19 @@ function attachMindMap(store, state, history) {
       store.fitMindmapNodes([id])
     })
   }
+  // The flowchart counterpart of the two above (#441 items 5/14). The one
+  // difference is that nothing re-flows on commit: a flowchart is manually placed,
+  // so the neighbours of an edited node must stay exactly where the user put them
+  // (#441 item 18). Only the node's own box follows its text.
+  store.resizeFlowchartNodeToText = (id, size) =>
+    history.commit(NODE_TEXT_EDIT, () => applyPatch(state.shapes.find((s) => s.id === id), size))
+  store.commitFlowchartNodeText = (id, text) => {
+    const shape = state.shapes.find((s) => s.id === id)
+    if (!shape) return
+    history.commit(NODE_TEXT_EDIT, () => {
+      applyPatch(shape, { text, ...flowchartSizeForShape({ ...shape, text }) })
+    })
+  }
   // Move a node to a new place in the tree by dropping it (#427 item 4). A mind map
   // is auto-laid-out, so a drag never sets coordinates: it rewrites the node's
   // parent / side / order tags, drags its subtree along, re-points the branch to
@@ -503,7 +517,13 @@ function attachFlowchart(store, state, history) {
     const built = buildFlowchartChild(state.shapes, state.connectors, parentShapeId, nodeType)
     if (!built) return null
     built.shape.zIndex = nextZIndex(state)
+    const parent = state.shapes.find((s) => s.id === parentShapeId)
     history.commit('Add node', () => {
+      // A decision that has run out of branches grows one (#441 item 15); it lands
+      // in the same commit as the child so one undo takes back the whole add.
+      if (built.parentPatch && parent) {
+        parent.flowchart = { ...parent.flowchart, ...built.parentPatch }
+      }
       state.shapes.push(built.shape)
       state.connectors.push(built.connector)
     })

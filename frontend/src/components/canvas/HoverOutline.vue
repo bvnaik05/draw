@@ -75,11 +75,14 @@ const outline = computed(() => {
   if (!id || !selectTool.value || store.state.selection.includes(id)) return null
   const shape = store.shapeById(id)
   if (!shape) return null
-  // A mind-map node gets no halo (#427 item 3). Its hover affordance is the "+"
-  // column revealing itself — a second blue box around a node that is already a
-  // box was just noise on a canvas dense with branches, and it could not trace a
-  // boxless (`shaped: false`) node at all.
-  if (shape.role === 'mindmap-node') return null
+  // A mind-map or flowchart node gets no halo (#427 item 3, #441 item 3). Its
+  // hover affordance is the "+" revealing itself — a second blue box around a node
+  // that is already a box was just noise on a dense canvas, and it could not trace
+  // the node's real outline: it could not follow a boxless (`shaped: false`)
+  // mind-map node at all, and on a flowchart it drew a RECTANGLE around a diamond,
+  // a parallelogram or a cylinder, which is the detached second boundary the issue
+  // reports. A node's own border is what shows its state instead (ShapeView).
+  if (shape.role === 'mindmap-node' || shape.role === 'flowchart-node') return null
   // Text hovers to a tight, subtle grey line rather than the blue halo (#414);
   // everything else keeps the blue. selectionChrome holds the whole rule.
   const style = hoverOutline(shape)

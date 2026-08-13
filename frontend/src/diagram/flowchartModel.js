@@ -8,61 +8,29 @@
 // flowchartLayout.js, never stored here.
 
 import { nextId } from './factories.js'
-import { wrapLineCount, charsPerLine } from './textMetrics.js'
+import { NODE_TYPES, NODE_TYPE_META } from './flowchartTypes.js'
+import { flowchartNodeSize } from './flowchartNodeSize.js'
 
-// Curated node-type set (spec B3). nodeType selects the SVG shape at render.
-// The standard flowchart shape set (spec R4/P7): the six core shapes plus the
-// common Document / Database / Predefined process / Manual input / Preparation /
-// Off-page reference. The connector/junction (small circle) stays last.
-export const NODE_TYPES = [
-  'terminator',
-  'process',
-  'decision',
-  'inputOutput',
-  'document',
-  'database',
-  'predefinedProcess',
-  'manualInput',
-  'preparation',
-  'offPageRef',
-  'connector',
-]
-
-// Per-type metadata: the human label used in the picker and the default node
-// box. The connector/junction is a small circle; the rest are wider blocks.
-export const NODE_TYPE_META = {
-  terminator: { label: 'Terminal', text: 'Start', w: 150, h: 60 },
-  process: { label: 'Process', text: 'Process', w: 160, h: 72 },
-  decision: { label: 'Decision', text: 'Decision?', w: 150, h: 96 },
-  inputOutput: { label: 'Input / Output', text: 'Data', w: 160, h: 72 },
-  document: { label: 'Document', text: 'Document', w: 160, h: 84 },
-  database: { label: 'Database', text: 'Data', w: 120, h: 100 },
-  predefinedProcess: { label: 'Predefined process', text: 'Subprocess', w: 172, h: 72 },
-  manualInput: { label: 'Manual input', text: 'Input', w: 160, h: 76 },
-  preparation: { label: 'Preparation', text: 'Prepare', w: 156, h: 80 },
-  offPageRef: { label: 'Off-page reference', text: 'Off-page', w: 120, h: 88 },
-  connector: { label: 'Junction', text: 'Junction', w: 72, h: 72 },
-}
+export { NODE_TYPES, NODE_TYPE_META }
 
 export function defaultNodeText(nodeType) {
   return NODE_TYPE_META[nodeType]?.text ?? ''
 }
 
-// Node box. Height grows to fit wrapped text (like block/mind-map nodes) so a
-// long label wraps inside the shape instead of overflowing it.
-const FC_CHAR_W = 7.6
-const FC_LINE_H = 18
-const FC_PAD_Y = 22
+// Node box, measured through the shared per-shape frame (#441 items 5/14). It used
+// to grow height alone against one generic rectangle inset, which is why a node
+// born here and a node resized by the text editor were different boxes — the
+// layout then spaced the chart against boxes that were not the boxes on screen.
+// Both paths now measure in flowchartNodeSize, so they agree by construction.
+// An explicit w/h on the node is its floor, so a hand-sized node never shrinks.
 export function nodeSize(node) {
-  const meta = NODE_TYPE_META[node.nodeType] || NODE_TYPE_META.process
-  const w = node.w || meta.w
-  const baseH = node.h || meta.h
-  const text = node.text || ''
-  if (!text || node.nodeType === 'connector') return { w, h: baseH }
-  const inset = node.nodeType === 'decision' ? Math.round(w * 0.16) : 10
-  const textW = Math.max(24, w - 2 * inset)
-  const lines = wrapLineCount(text, charsPerLine(textW, FC_CHAR_W))
-  return { w, h: Math.max(baseH, lines * FC_LINE_H + FC_PAD_Y) }
+  return flowchartNodeSize({
+    nodeType: node.nodeType,
+    text: node.text,
+    fontSize: node.fontSize,
+    minW: node.w,
+    minH: node.h,
+  })
 }
 
 export function makeFlowchartNode(nodeType, text, x, y) {

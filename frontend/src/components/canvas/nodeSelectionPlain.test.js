@@ -23,6 +23,32 @@ describe('mind-map / flowchart nodes select to a plain border (#261/#262)', () =
   })
 })
 
+// #441 item 3: a flowchart node also drops the dashed box entirely. A rectangle
+// cannot trace a diamond or a cylinder, so selection is shown by the node's own
+// stroke — which is the shape's real outline whatever that shape is.
+describe('flowchart nodes select through their own border (#441 item 3)', () => {
+  it('leaves both node roles out of the dashed-outline set', () => {
+    expect(src).toContain(
+      '(shape) => shape.role !== ROLE.mindmapNode && shape.role !== ROLE.flowchartNode,',
+    )
+  })
+
+  it('draws the heavier selected border for either node role', () => {
+    expect(shapeViewSrc).toContain('if (!props.selected || !isNodeRole.value) return own')
+  })
+
+  // The label wraps inside the measured area for both roles. An SVG <text> is one
+  // unwrapped line, which is how a flowchart label used to lie across its own shape.
+  it('wraps a node label in the measured text area rather than an SVG <text>', () => {
+    expect(shapeViewSrc).toContain(
+      'v-if="!isEditingThis && !richHtml && isNodeRole && (shape.text?.content || mindmapPlaceholder)"',
+    )
+    expect(shapeViewSrc).toContain(
+      'v-if="!isEditingThis && !richHtml && !isNodeRole && shape.text?.content"',
+    )
+  })
+})
+
 // #7: even if a node somehow carries a rotation angle (paste, legacy data), ShapeView
 // must render it upright — nodes auto-size and never rotate.
 describe('mind-map / flowchart nodes never render rotated (#7)', () => {

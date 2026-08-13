@@ -26,6 +26,7 @@ import { isTextElement } from '@/diagram/selectionChrome.js'
 import { RICH_EXTENSIONS, setActiveEditor, clearActiveEditor, contentToHtml } from '@/composables/useRichText.js'
 import { sanitizeRichText } from '@/utils/sanitizeHtml.js'
 import { mindmapNodeSize } from '@/diagram/mindmapNodeSize.js'
+import { flowchartNodeSize } from '@/diagram/flowchartNodeSize.js'
 
 const store = useDiagramStore()
 const editorUi = useEditorUi()
@@ -56,6 +57,10 @@ function resolve(endpoint) {
 const isMindmapNode = computed(() => shape.value?.role === 'mindmap-node')
 // A canvas text element (#414): double-click, caret, type. No ring — see below.
 const isCanvasText = computed(() => isTextElement(shape.value))
+const isFlowchartNode = computed(() => shape.value?.role === 'flowchart-node')
+// Both node kinds are already a drawn box that sizes itself to its label, so both
+// edit "bare": no ring, no extra padding, measured rather than read off the DOM.
+const isNode = computed(() => isMindmapNode.value || isFlowchartNode.value)
 
 const EDIT_RING = { boxShadow: 'inset 0 0 0 1.5px #006EDB', borderRadius: '4px' }
 // Room either side of the measured text, so the caret at the end of a line is not
@@ -66,18 +71,21 @@ const fieldStyle = computed(() => {
   if (shape.value) {
     const text = shape.value.text || {}
     const nowrap = fitsWidthToText(shape.value) ? { whiteSpace: 'pre' } : {}
-    // A mind-map node's padding already lives in its text area, which is the box
-    // minus the frame it was measured with; padding the field again would wrap
-    // the text narrower than the box was sized for (#427).
-    const padding = isMindmapNode.value ? '0' : '4px 6px'
-    // No edit ring on a mind-map node either: the node is already a box, and a
-    // blue rectangle drawn just inside it is a second box saying the same thing.
-    // The caret and the live text are the feedback that editing is happening.
+    // A node's padding already lives in its text area, which is the box minus the
+    // frame it was measured with; padding the field again would wrap the text
+    // narrower than the box was sized for (#427, and #441 item 14 for flowcharts —
+    // where the frame also clears the shape's own geometry).
+    const padding = isNode.value ? '0' : '4px 6px'
+    // No edit ring on a node either: the node is already a box, and a blue
+    // rectangle drawn just inside it is a second box saying the same thing — on a
+    // flowchart node it was a rectangle inside a diamond, which read as a bug
+    // rather than as feedback (#441 item 4). The caret and the live text are the
+    // feedback that editing is happening.
     //
     // A canvas text element gets none for the opposite reason (#414): there is no
     // box at all, and drawing one around the words turns "type on the canvas" into
     // "fill in this field". Double-click leaves a caret and nothing else.
-    const ring = isMindmapNode.value || isCanvasText.value ? null : EDIT_RING
+    const ring = isNode.value || isCanvasText.value ? null : EDIT_RING
     return {
       ...textStyleCss(text.style, text.valign, text.align),
       ...ring,
@@ -131,6 +139,7 @@ watch(
 function autoGrow() {
   if (!shape.value || !editor.value) return
   if (isMindmapNode.value) return growMindmapNode()
+  if (isFlowchartNode.value) return growFlowchartNode()
   if (fitsWidthToText(shape.value)) return fitBoxToText()
   const dom = editor.value.view?.dom
   if (!dom) return
@@ -173,6 +182,22 @@ function growMindmapNode() {
   store.resizeMindmapNodeToText(shape.value.id, size)
 }
 
+// A flowchart node sizes to its label the same way, but through the per-shape
+// frame (#441 items 5/14): the box it lands on is the text plus whatever geometry
+// its own shape takes away, so the label stays inside the diamond / document /
+// cylinder rather than inside the bounding box the label was previously measured
+// against. Measured, not read back from the DOM, so the box being typed into is
+// the box the renderer will inset.
+function growFlowchartNode() {
+  const size = flowchartNodeSize({
+    nodeType: shape.value.flowchart?.nodeType,
+    text: editor.value.getText() || '',
+    fontSize: shape.value.text?.style?.size,
+  })
+  if (size.w === shape.value.w && size.h === shape.value.h) return
+  store.resizeFlowchartNodeToText(shape.value.id, size)
+}
+
 function growToFit(s, areaHeight) {
   const factor = s.type === 'diamond' || s.type === 'triangle' ? 0.5 : 1
   return Math.ceil(areaHeight / factor) + 8
@@ -203,6 +228,7 @@ function commitShape() {
   // A mind-map node settles its box and its tree in the same commit as the text,
   // so one undo takes back the whole edit (#427).
   if (isMindmapNode.value) return store.commitMindmapNodeText(shape.value.id, value)
+  if (isFlowchartNode.value) return store.commitFlowchartNodeText(shape.value.id, value)
   store.updateShape(shape.value.id, { text: value })
 }
 

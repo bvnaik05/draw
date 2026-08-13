@@ -98,14 +98,16 @@ const transform = computed(() => {
 // radius comes from its own curve setting (#260), every other shape's from type.
 const cornerRadius = computed(() => cornerRadiusOf(props.shape))
 
-// A selected mind-map node reads as selected by drawing its OWN border heavier and
-// darker, rather than having a dashed box drawn around it (#427). One box per node
-// keeps a dense map legible; the node also keeps its own colour, so a coloured
-// branch still looks like itself while selected.
+// A selected mind-map or flowchart node reads as selected by drawing its OWN
+// border heavier and darker, rather than having a dashed box drawn around it
+// (#427, #441 item 3). One box per node keeps a dense diagram legible, and because
+// it is the node's own stroke it traces the real geometry — the diamond, the
+// parallelogram, the cylinder — which a bounding rectangle never could. The node
+// also keeps its own colour, so a coloured node still looks like itself.
 const SELECTED_NODE_BORDER = { width: 2.5, color: '#525252' }
 const border = computed(() => {
   const own = props.shape.border || {}
-  if (!props.selected || !isMindmapNode.value) return own
+  if (!props.selected || !isNodeRole.value) return own
   return { ...own, ...SELECTED_NODE_BORDER, color: own.color || SELECTED_NODE_BORDER.color }
 })
 const dashArray = computed(() => {
@@ -194,6 +196,10 @@ const flowchartGlyph = computed(() => {
 // A free-floating mind-map node (unified canvas). Its label edits on a single
 // click and its cursor changes by hover zone (#123); both key off this.
 const isMindmapNode = computed(() => props.shape.role === 'mindmap-node')
+// Either auto-sizing node role. Both show selection through their own border.
+const isNodeRole = computed(
+  () => isMindmapNode.value || props.shape.role === 'flowchart-node',
+)
 
 // Whimsical mind map (#125): a non-root node with `mindmap.shaped === false`
 // renders as transparent text — no rect / fill / border, just its label. The
@@ -459,12 +465,15 @@ useAutoFitText(richEl, () => ({
       </svg>
     </a>
 
-    <!-- A mind-map node's plain label wraps (#427 item 5). An SVG <text> is one
-         unwrapped line, so a long label simply spilled out of the node however
-         big the box was. It renders in the same padded area, and wraps at the
-         same width, that the box was measured against — so what is drawn fits. -->
+    <!-- A mind-map or flowchart node's plain label wraps (#427 item 5, #441 items
+         5/14). An SVG <text> is one unwrapped line, so a long label simply spilled
+         out of the node however big the box was — which is exactly how a Document
+         node in the issue's video ended up with its label lying across its own
+         bottom wave. It renders in the same padded area, and wraps at the same
+         width, that the box was measured against — so what is drawn fits, and for
+         a flowchart node that area also clears the shape's own geometry. -->
     <foreignObject
-      v-if="!isEditingThis && !richHtml && isMindmapNode && (shape.text?.content || mindmapPlaceholder)"
+      v-if="!isEditingThis && !richHtml && isNodeRole && (shape.text?.content || mindmapPlaceholder)"
       :x="textArea.x"
       :y="textArea.y"
       :width="textArea.w"
@@ -482,7 +491,7 @@ useAutoFitText(richEl, () => ({
          foreignObject AND this <text>, showing the text twice (Q2). The prior
          v-else-if chained to the hyperlink <a>, not the foreignObject. -->
     <text
-      v-if="!isEditingThis && !richHtml && !isMindmapNode && shape.text?.content"
+      v-if="!isEditingThis && !richHtml && !isNodeRole && shape.text?.content"
       :x="center.x"
       :y="center.y"
       text-anchor="middle"

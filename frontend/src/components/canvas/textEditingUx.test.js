@@ -22,6 +22,28 @@ describe('drop a parent node → straight into typing (#263)', () => {
   })
 })
 
+// #441 items 4/5/14: a flowchart node edits like a mind-map node — bare, measured,
+// and inside the shape's own frame rather than inside its bounding box.
+describe('a flowchart node edits inside its shape (#441 items 4/5/14)', () => {
+  const editor = read('components/canvas/TextEditor.vue')
+  const textEditing = read('composables/useTextEditing.js')
+
+  it('drops the inset blue ring and the extra padding for either node role', () => {
+    // The ring drew a rectangle inside a diamond, which read as a bug.
+    expect(editor).toContain("const padding = isNode.value ? '0' : '4px 6px'")
+    expect(editor).toContain('const ring = isNode.value ? null : EDIT_RING')
+  })
+
+  it('sizes the node through the shape-aware measurement, not the DOM', () => {
+    expect(editor).toContain('if (isFlowchartNode.value) return growFlowchartNode()')
+    expect(editor).toContain('store.resizeFlowchartNodeToText(shape.value.id, size)')
+  })
+
+  it('lays the editor out in the frame that clears the shape geometry', () => {
+    expect(textEditing).toContain("if (shape.role === 'flowchart-node') return flowchartTextArea(shape)")
+  })
+})
+
 describe('editing text shows a text-only menu, not the shape menu (#259)', () => {
   // These controls moved from the floating BlockSelectionEditor onto the static
   // canvas toolbar (#361). The behaviour is unchanged, so the assertions follow

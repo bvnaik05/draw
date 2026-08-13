@@ -22,8 +22,13 @@ describe('hover outline (#261)', () => {
   // #427 item 3: the halo could not trace a mind-map node — it read the radius
   // from the shape TYPE while the node drew its own curve radius, and a boxless
   // node had no box to trace at all. The "+" column is the hover affordance now.
-  it('skips mind-map nodes, and traces every other shape with its drawn radius', () => {
-    expect(hover).toContain("if (shape.role === 'mindmap-node') return null")
+  // #441 item 3: nor could it trace a flowchart node, where it drew a rectangle
+  // around a diamond / parallelogram / cylinder — a second boundary detached from
+  // the shape. Both node roles are skipped; their own border shows their state.
+  it('skips both node roles, and traces every other shape with its drawn radius', () => {
+    expect(hover).toContain(
+      "if (shape.role === 'mindmap-node' || shape.role === 'flowchart-node') return null",
+    )
     expect(hover).toContain('rx: cornerRadiusOf(shape)')
   })
 

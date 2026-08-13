@@ -25,6 +25,7 @@ import { nodeById } from './mindmapModel.js'
 import { layoutMindMap, offsetPositions } from './mindmapLayout.js'
 import { DEFAULT_NODE_STYLE, nodeColors, borderProp, connectorColor } from './mindmapNodeStyle.js'
 import { nodeSize } from './flowchartModel.js'
+import { FLOWCHART_FONT_SIZE } from './flowchartNodeSize.js'
 import { nodeClickZone } from './mindmapNodeShape.js'
 
 // The schema version that first emits free-floating documents. Phase 1 keeps the
@@ -91,12 +92,12 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
-function textBlock(content, color, align = 'center') {
+function textBlock(content, color, align = 'center', size = 16) {
   return {
     content: content || '',
     align,
     valign: 'middle',
-    style: { size: 16, bold: false, italic: false, underline: false, color },
+    style: { size, bold: false, italic: false, underline: false, color },
   }
 }
 
@@ -254,7 +255,10 @@ export function flowchartNodeShape(node, box) {
     zIndex: 0,
     fill: node.fill || 'none',
     border: node.border || { ...NEUTRAL_BORDER },
-    text: textBlock(node.text, '#1F2933'),
+    // Flowchart labels default to 12px, not the 16px every other shape uses
+    // (#441 item 6): a flowchart is read as a diagram of many small boxes rather
+    // than as a page of text, and 16px crowded every standard node box.
+    text: textBlock(node.text, '#1F2933', 'center', FLOWCHART_FONT_SIZE),
     role: ROLE.flowchartNode,
     flowchart: {
       nodeType: node.nodeType,
