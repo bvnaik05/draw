@@ -20,10 +20,10 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
-import { useTextEditing } from '@/composables/useTextEditing.js'
-import { placePicker } from '@/diagram/flowchartLayout.js'
+import { openFlowchartPicker, closeFlowchartPicker } from '@/stores/flowchartUi.js'
 import {
   ADD_R,
+  ADD_HIT_R,
   GLYPH,
   buildContext,
   handlesForNode,
@@ -32,17 +32,15 @@ import {
   hoverRegionOf,
   pointInBox,
 } from '@/diagram/flowchartHandles.js'
-import FlowchartNodeTypePicker from './FlowchartNodeTypePicker.vue'
 
 const store = useDiagramStore()
 const editorUi = useEditorUi()
-const editing = useTextEditing()
 
 const layer = ref(null)
 let svg = null
 
 // The migrated flowchart index (boxes by id), rebuilt whenever shapes change.
-const ctx = computed(() => buildContext(store.state.shapes))
+const ctx = computed(() => buildContext(store.state.shapes, store.state.connectors))
 const hasNodes = computed(() => Object.keys(ctx.value.boxes).length > 0)
 const selectTool = computed(() => editorUi.state.tool === 'select')
 
@@ -86,9 +84,6 @@ function onPointerLeave() {
 }
 
 onMounted(() => {
-  // Registered before the svg guard below: the picker's outside-close does not
-  // depend on the hover tracking having found a surface to listen on.
-  document.addEventListener('pointerdown', onDocumentPointerDown, true)
   svg = layer.value?.ownerSVGElement
   if (!svg) return
   svg.addEventListener('pointermove', onPointerMove)
@@ -96,7 +91,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+  // Leaving the canvas with a menu open would strand it, since the component that
+  // renders it lives outside this overlay's lifetime.
+  closeFlowchartPicker()
   if (!svg) return
   svg.removeEventListener('pointermove', onPointerMove)
   svg.removeEventListener('pointerleave', onPointerLeave)
@@ -118,83 +115,50 @@ const targetIds = computed(() => {
 
 const handles = computed(() => targetIds.value.flatMap((id) => handlesForNode(id, ctx.value)))
 
-// The "+" takes the node's own border colour so it reads as part of the node,
-// exactly like the mind-map handles tint their circle with the node colour.
-function colorOf(nodeId) {
-  return store.shapeById(nodeId)?.border?.color || '#525252'
-}
+// One neutral colour for every "+", not the source node's border colour (#441 item
+// 12, mirroring #427 item 2). A new node is always created with the default look, so
+// a coloured parent tinting its "+" promised a colour the node would not have.
+const HANDLE_COLOR = '#A1A1A1'
+const HANDLE_INK = '#6B7280'
 
-// The white "+" glyph centred in a handle circle.
+// The "+" glyph centred in a handle circle.
 function glyphPath(handle) {
   return `M${handle.cx - GLYPH} ${handle.cy} H${handle.cx + GLYPH} M${handle.cx} ${handle.cy - GLYPH} V${handle.cy + GLYPH}`
 }
 
-// Clicking a "+" opens the node-type picker (the full standard set, spec B3/B4) at
+// Clicking a "+" opens the node-type menu (the full standard set, spec B3/B4) at
 // that handle instead of silently dropping a fixed Process step — a plain click no
-// longer forces every added node down one type (#410). Only one node's picker is
-// open at a time.
-const pickerNodeId = ref(null)
-
+// longer forces every added node down one type (#410).
+//
+// The menu itself is rendered by FlowchartNodeTypeMenu, OUTSIDE the canvas <svg>;
+// this overlay only records which node it belongs to and where that node is on
+// screen (#441 item 10). It cannot render the menu here: Vue creates elements in
+// the namespace of the surrounding template, so a <div> declared inside this SVG
+// is built as an SVG-namespaced div with no CSS box — `position: fixed` never
+// applies and the menu collapses to zero width. A <Teleport> relocates such a node
+// but cannot change the namespace it was created in.
 function openPicker(handle) {
-  pickerNodeId.value = handle.nodeId
+  openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId))
 }
 
-function closePicker() {
-  pickerNodeId.value = null
+// The source node's box in SCREEN pixels, straight off its rendered group — so the
+// anchor already accounts for pan and zoom without re-deriving the transform.
+function screenBoxOf(nodeId) {
+  const node = document.querySelector(`[data-shape-id="${CSS.escape(nodeId)}"]`)
+  if (!node) return null
+  const rect = node.getBoundingClientRect()
+  return { x: rect.x, y: rect.y, w: rect.width, h: rect.height }
 }
 
-// Create the chosen type through the existing representation-aware store op, which
-// builds the tagged shape + flow-edge connector and commits as one undoable unit (a
-// decision parent is routed through its next free Yes/No branch inside the op), then
-// drop the text cursor straight in — so the very next keystroke names the node
-// instead of being read as a flowchart keyboard shortcut (#410).
-function chooseType(nodeType) {
-  const parentId = pickerNodeId.value
-  pickerNodeId.value = null
-  const id = store.addFlowchartChildShape(parentId, nodeType)
-  if (!id) return
-  // beginTextEdit selects the node itself, so there is no separate store.select here.
-  editing.beginTextEdit(id, { selectAll: true })
-}
-
-// The picker's on-canvas position: anchored just below the source node, flipping
-// above and clamping so it always stays inside the visible view (mirrors
-// FlowchartLayer's pickerPos, #96). The box matches the <foreignObject> below.
-const PICKER_W = 260
-const PICKER_H = 240
-const pickerPos = computed(() => {
-  const box = pickerNodeId.value ? ctx.value.boxes[pickerNodeId.value] : null
-  if (!box) return { x: 0, y: 0 }
-  const view = editorUi.viewport.visibleRect()
-  // An even margin on every edge, in logical units at the current zoom.
-  const margin = 8 / (editorUi.viewport.state.zoom || 1)
-  const bounds = {
-    x: view.x + margin,
-    y: view.y + margin,
-    w: view.w - margin * 2,
-    h: view.h - margin * 2,
-  }
-  return placePicker({ box, menu: { w: PICKER_W, h: PICKER_H }, bounds, direction: 'TB' })
-})
-
-// A press anywhere outside the open picker closes it, the same as clicking off any
-// other on-canvas menu. Capture phase, so it runs before the picker's own
-// pointerdown.stop — which is exactly why the picker's own DOM is excluded here:
-// stopPropagation on the target can't stop a listener that already ran on the way
-// down to it, so without this guard choosing a type would close the picker (and null
-// out pickerNodeId) before the click handler that reads it ever fires.
-function onDocumentPointerDown(event) {
-  if (event.target?.closest?.('[data-fc-picker]')) return
-  closePicker()
-}
 </script>
 
 <template>
   <g ref="layer" data-flowchart-hover-handles>
     <!-- One "+" per handle. pointerdown is stopped so pressing a "+" never starts a
-         marquee or clears the selection; the click opens the type picker. The stub
-         line and glyph are non-interactive, so the hit-area is exactly the visible
-         circle. -->
+         marquee or clears the selection; the click opens the type picker. The hit
+         circle is a plain transparent disc wider than the mark, so the target is
+         generous while the mark stays small; the stub and glyph are
+         non-interactive. -->
     <g
       v-for="handle in handles"
       :key="handle.key"
@@ -208,33 +172,33 @@ function onDocumentPointerDown(event) {
         :y1="handle.stubY"
         :x2="handle.cx"
         :y2="handle.cy"
-        :stroke="colorOf(handle.nodeId)"
-        stroke-width="2"
+        :stroke="HANDLE_COLOR"
+        stroke-width="1.5"
         stroke-linecap="round"
+        stroke-dasharray="2 3"
         style="pointer-events: none"
       />
-      <circle :cx="handle.cx" :cy="handle.cy" :r="ADD_R" :fill="colorOf(handle.nodeId)" />
+      <circle :cx="handle.cx" :cy="handle.cy" :r="ADD_HIT_R" fill="transparent" />
+      <!-- A white disc under the mark so a connector passing behind the handle
+           reads as passing behind it, instead of through the "+". -->
+      <circle
+        :cx="handle.cx"
+        :cy="handle.cy"
+        :r="ADD_R"
+        fill="#FFFFFF"
+        :stroke="HANDLE_COLOR"
+        stroke-width="1.25"
+        style="pointer-events: none"
+      />
       <path
         :d="glyphPath(handle)"
-        stroke="#FFFFFF"
-        stroke-width="1.8"
+        :stroke="HANDLE_INK"
+        stroke-width="1.5"
         stroke-linecap="round"
         fill="none"
         style="pointer-events: none"
       />
     </g>
 
-    <!-- Node-type picker for the "+" that was pressed, positioned just below its
-         node and flipped/clamped so it stays inside the view (#410). -->
-    <foreignObject
-      v-if="pickerNodeId"
-      :x="pickerPos.x"
-      :y="pickerPos.y"
-      :width="PICKER_W"
-      :height="PICKER_H"
-      style="overflow: visible"
-    >
-      <FlowchartNodeTypePicker @choose="chooseType" @close="closePicker" />
-    </foreignObject>
   </g>
 </template>

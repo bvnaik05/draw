@@ -42,6 +42,7 @@ import HoverOutline from './HoverOutline.vue'
 import MindmapHoverHandles from './MindmapHoverHandles.vue'
 import MindmapDragLayer from './MindmapDragLayer.vue'
 import FlowchartHoverHandles from './FlowchartHoverHandles.vue'
+import FlowchartNodeTypeMenu from './FlowchartNodeTypeMenu.vue'
 import TextEditor from './TextEditor.vue'
 import MindMapNodeLayer from './MindMapNodeLayer.vue'
 import FlowchartLayer from './FlowchartLayer.vue'
@@ -810,12 +811,6 @@ const surfaceCursor = computed(() => {
           <!-- The ghost and drop indicator while a mind-map node is being dragged
                to a new place in the tree (#427). Renders only mid-gesture. -->
           <MindmapDragLayer />
-          <!-- The flowchart counterpart (#77): a single "+" below a migrated
-               flowchart node. A no-op unless the canvas holds role-tagged flowchart
-               shapes, so legacy single-type charts (FlowchartLayer, below) are
-               unaffected. -->
-          <FlowchartHoverHandles />
-
           <!-- Dashed ghost of the shape/connector being drawn (spec §7.1). The
                shape ghost reuses ShapeView so the preview matches the armed
                tool's real outline; it never takes pointer events. -->
@@ -904,6 +899,17 @@ const surfaceCursor = computed(() => {
           </template>
         </template>
 
+        <!-- The flowchart counterpart of the mind-map "+" handles (#77): a single
+             "+" below a migrated flowchart node. A no-op unless the canvas holds
+             role-tagged flowchart shapes, so legacy single-type charts
+             (FlowchartLayer, below) are unaffected.
+             It paints AFTER the whiteboard layer for the same reason the text
+             editor does (#441): on the unified canvas the shapes and connectors are
+             drawn there, so mounting the handles earlier put the "+" underneath
+             every connector — visually behind them, and unclickable wherever a
+             route or a branch label crossed it. -->
+        <FlowchartHoverHandles />
+
         <!-- The inline text editor must paint ABOVE every shape layer — including
              the whiteboard-owned shapes on the unified canvas, whose opaque node
              fills would otherwise occlude the live caret + text until blur (#258).
@@ -917,6 +923,11 @@ const surfaceCursor = computed(() => {
         <HoverOutline v-if="showBlockLayer" />
       </g>
     </svg>
+
+    <!-- The flowchart "add node" menu. It lives OUT here, not in the overlay that
+         draws the "+", because an element declared inside the <svg> is created in
+         the SVG namespace and has no CSS box at all (#441 item 10). -->
+    <FlowchartNodeTypeMenu />
 
     <!-- Empty-state hint on a blank block canvas (screen-centred, non-interactive)
          — mirrors the whiteboard/mind-map/flowchart prompts. -->

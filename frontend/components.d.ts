@@ -46,6 +46,7 @@ declare module 'vue' {
     FlowchartLayer: typeof import('./src/components/canvas/FlowchartLayer.vue')['default']
     FlowchartNodeGroup: typeof import('./src/components/toolbar/groups/FlowchartNodeGroup.vue')['default']
     FlowchartNodeTypeGroup: typeof import('./src/components/toolbar/groups/FlowchartNodeTypeGroup.vue')['default']
+    FlowchartNodeTypeMenu: typeof import('./src/components/canvas/FlowchartNodeTypeMenu.vue')['default']
     FlowchartNodeTypePicker: typeof import('./src/components/canvas/FlowchartNodeTypePicker.vue')['default']
     FlowchartOverlay: typeof import('./src/components/canvas/FlowchartOverlay.vue')['default']
     GridLayer: typeof import('./src/components/canvas/GridLayer.vue')['default']

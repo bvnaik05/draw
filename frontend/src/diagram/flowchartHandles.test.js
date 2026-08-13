@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ADD_R,
+  ADD_HIT_R,
   ADD_OFFSET,
   GLYPH,
   HOVER_OUT,
@@ -11,6 +12,12 @@ import {
   hoverRegionOf,
   pointInBox,
 } from './flowchartHandles.js'
+import {
+  ADD_R as MM_ADD_R,
+  ADD_HIT_R as MM_ADD_HIT_R,
+  ADD_OFFSET as MM_ADD_OFFSET,
+  GLYPH as MM_GLYPH,
+} from './mindmapHandles.js'
 import { ROLE, flattenSubmodels } from './freeFloating.js'
 import { createFlowchart, addFlowchartNode, addFlowchartEdge } from './flowchartModel.js'
 
@@ -43,13 +50,66 @@ function block(id, x, y, w, h, zIndex = 1) {
   return { id, type: 'rectangle', x, y, w, h, zIndex }
 }
 
+// #441 item 12: this suite was named for mind-map parity but pinned numbers that
+// were not the mind map's (an 11px disc against its 7px one). Assert against the
+// mind-map constants themselves, so the two overlays cannot drift apart again.
 describe('geometry constants match the mind-map handles', () => {
-  it('keeps the "+" size and spacing', () => {
-    expect(ADD_R).toBe(11)
-    expect(ADD_OFFSET).toBe(28)
-    expect(GLYPH).toBe(4.5)
-    // Far edge of the "+" is ADD_OFFSET + ADD_R below the node; +12 gives the margin.
-    expect(HOVER_OUT).toBe(ADD_OFFSET + ADD_R + 12)
+  it('draws the same small mark inside the same generous target', () => {
+    expect(ADD_R).toBe(MM_ADD_R)
+    expect(ADD_HIT_R).toBe(MM_ADD_HIT_R)
+    expect(GLYPH).toBe(MM_GLYPH)
+    expect(ADD_OFFSET).toBe(MM_ADD_OFFSET)
+  })
+
+  it('reaches the whole hit target with its hover region', () => {
+    // Far edge of the TARGET is ADD_OFFSET + ADD_HIT_R below the node; +12 is margin.
+    expect(HOVER_OUT).toBe(ADD_OFFSET + ADD_HIT_R + 12)
+  })
+})
+
+// #441 item 12: the "+" hangs below the bottom edge, which is where the outgoing
+// connectors run — so with a fixed centred handle it sat on the line as soon as the
+// node had one child. It now stands in the clearest part of the edge.
+describe('the "+" keeps clear of the connectors already leaving a node', () => {
+  it('centres the handle on a node with no outgoing edge', () => {
+    const ctx = buildContext([fcNode('a', 0, 0, 160, 72)], [])
+    expect(handlesForNode('a', ctx)[0].cx).toBe(80)
+  })
+
+  it('steps aside once an edge occupies the middle of the bottom edge', () => {
+    const shapes = [fcNode('a', 0, 0, 160, 72), fcNode('b', 0, 300, 160, 72)]
+    const connectors = [
+      { id: 'e1', role: ROLE.flowchartEdge, from: { shapeId: 'a' }, to: { shapeId: 'b' } },
+    ]
+    const ctx = buildContext(shapes, connectors)
+    const handle = handlesForNode('a', ctx)[0]
+    // The lone edge leaves at the centre (80); the handle must not be there.
+    expect(ctx.exits.a).toEqual([80])
+    expect(Math.abs(handle.cx - 80)).toBeGreaterThan(ADD_R)
+    // And it stays on the node's own edge rather than floating off it.
+    expect(handle.cx).toBeGreaterThanOrEqual(0)
+    expect(handle.cx).toBeLessThanOrEqual(160)
+  })
+
+  it('still finds a gap when several edges already leave the same edge', () => {
+    const shapes = [
+      fcNode('a', 0, 0, 160, 72),
+      fcNode('b', -200, 300, 160, 72),
+      fcNode('c', 200, 300, 160, 72),
+    ]
+    const connectors = [
+      { id: 'e1', role: ROLE.flowchartEdge, from: { shapeId: 'a' }, to: { shapeId: 'b' } },
+      { id: 'e2', role: ROLE.flowchartEdge, from: { shapeId: 'a' }, to: { shapeId: 'c' } },
+    ]
+    const handle = handlesForNode('a', buildContext(shapes, connectors))[0]
+    for (const taken of [53.33, 106.67]) {
+      expect(Math.abs(handle.cx - taken)).toBeGreaterThan(6)
+    }
+  })
+
+  it('falls back to the centre when no connectors are supplied', () => {
+    const ctx = buildContext([fcNode('a', 0, 0, 160, 72)])
+    expect(handlesForNode('a', ctx)[0].cx).toBe(80)
   })
 })
 

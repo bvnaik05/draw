@@ -9,10 +9,10 @@ import path from 'node:path'
 // wanted next, and #2 in that issue made converting it afterwards impossible.
 // FlowchartHoverHandles can't mount in the node env, so pin the fix by source
 // inspection (house pattern, cf. structuralConnector.test.js).
-const src = readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), './FlowchartHoverHandles.vue'),
-  'utf8',
-)
+const dir = path.dirname(fileURLToPath(import.meta.url))
+const src = readFileSync(path.join(dir, './FlowchartHoverHandles.vue'), 'utf8')
+const menu = readFileSync(path.join(dir, './FlowchartNodeTypeMenu.vue'), 'utf8')
+const canvas = readFileSync(path.join(dir, './DiagramCanvas.vue'), 'utf8')
 
 describe('the "+" handle opens the node-type picker instead of a hardcoded Process (#410)', () => {
   it('no longer creates a node directly off a "+" click', () => {
@@ -21,17 +21,73 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
 
   it('a click opens FlowchartNodeTypePicker, which offers every standard type', () => {
     expect(src).toContain('@click.stop="openPicker(handle)"')
-    expect(src).toContain('<FlowchartNodeTypePicker @choose="chooseType" @close="closePicker" />')
+    expect(menu).toContain('<FlowchartNodeTypePicker @choose="chooseType" @close="closeFlowchartPicker" />')
   })
 
   it('choosing a type creates it and drops straight into naming it', () => {
-    expect(src).toContain('store.addFlowchartChildShape(parentId, nodeType)')
-    expect(src).toContain('editing.beginTextEdit(id, { selectAll: true })')
+    expect(menu).toContain('store.addFlowchartChildShape(parentId, nodeType)')
+    expect(menu).toContain('editing.beginTextEdit(id, { selectAll: true })')
   })
 
   it('positions the picker through the shared placePicker, not by hand', () => {
-    expect(src).toContain("import { placePicker } from '@/diagram/flowchartLayout.js'")
-    expect(src).toContain('placePicker({ box, menu: { w: PICKER_W, h: PICKER_H }, bounds, direction:')
+    expect(menu).toContain("import { placePicker } from '@/diagram/flowchartLayout.js'")
+    expect(menu).toContain('placePicker({ box, menu: { w: MENU_W, h: MENU_H }, bounds, direction:')
+  })
+
+  // #441 item 10, and the sharper reason behind it. Inside the SVG the menu obeyed
+  // paint order, and on a unified document the shapes paint later (WhiteboardLayer)
+  // than this overlay — so it opened BEHIND the nodes, and SVG has no z-index to
+  // fix that with. A <Teleport> is NOT enough either: Vue creates elements in the
+  // namespace of the surrounding template, so a <div> declared in here is built as
+  // an SVG-namespaced div with no CSS box — `position: fixed` never applies and the
+  // menu collapses to zero width. It has to be DECLARED outside the <svg>.
+  it('renders no menu markup itself, only the "+" that opens one', () => {
+    // Closing/complete tags, so the prose explaining the move does not match.
+    expect(src).not.toContain('<Teleport to="body">')
+    expect(src).not.toContain('</foreignObject>')
+    expect(src).not.toContain('<FlowchartNodeTypePicker')
+  })
+
+  it('records the open menu in the shared store instead', () => {
+    expect(src).toContain('openFlowchartPicker(handle.nodeId, screenBoxOf(handle.nodeId))')
+    expect(menu).toContain('v-if="flowchartUi.picker"')
+    expect(menu).toContain('class="fixed z-50"')
+  })
+
+  // Its position is a screen point captured at open time, so anything that moves
+  // the canvas without a pointerdown has to close it.
+  it('closes on the wheel and on resize, which no pointerdown would catch', () => {
+    expect(menu).toContain("window.addEventListener('wheel', closeFlowchartPicker, true)")
+    expect(menu).toContain("window.addEventListener('resize', closeFlowchartPicker)")
+    expect(menu).toContain("window.removeEventListener('wheel', closeFlowchartPicker, true)")
+    expect(menu).toContain("window.removeEventListener('resize', closeFlowchartPicker)")
+  })
+
+  // The menu is mounted in the canvas's HTML layer, after the <svg> closes.
+  it('is mounted outside the canvas svg', () => {
+    const svgEnd = canvas.indexOf('</svg>')
+    const mount = canvas.indexOf('<FlowchartNodeTypeMenu />')
+    expect(mount).toBeGreaterThan(svgEnd)
+  })
+
+  // The "+" itself has a paint-order problem of the same family (#441). On the
+  // unified canvas the shapes and connectors are drawn by WhiteboardLayer, so
+  // mounting the handles before it put the "+" UNDERNEATH every connector — behind
+  // them visually, and unclickable wherever a route or a branch label crossed it.
+  it('paints the "+" handles after the layer that draws shapes and connectors', () => {
+    const whiteboard = canvas.indexOf('<WhiteboardLayer')
+    const handles = canvas.indexOf('<FlowchartHoverHandles />')
+    expect(whiteboard).toBeGreaterThan(-1)
+    expect(handles).toBeGreaterThan(whiteboard)
+  })
+
+  // A connector's label pill is decorative — the route's own wide hit path handles
+  // selection and double-click-to-edit — so it must not eat clicks aimed above it.
+  it('leaves the connector label non-interactive', () => {
+    const connector = readFileSync(path.join(dir, './ConnectorView.vue'), 'utf8')
+    expect(connector).toContain(
+      '<g v-if="connector.label && !editingLabel" style="pointer-events: none">',
+    )
   })
 
   // The subtle one. The outside-close listener is on the CAPTURE phase, so it has
@@ -39,8 +95,8 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
   // without excluding the picker's DOM, choosing a type would null pickerNodeId
   // before the click handler that reads it ever fired.
   it('excludes the picker itself from the capture-phase outside-close', () => {
-    expect(src).toContain("event.target?.closest?.('[data-fc-picker]')")
-    expect(src).toContain("document.addEventListener('pointerdown', onDocumentPointerDown, true)")
-    expect(src).toContain("document.removeEventListener('pointerdown', onDocumentPointerDown, true)")
+    expect(menu).toContain("event.target?.closest?.('[data-fc-picker]')")
+    expect(menu).toContain("document.addEventListener('pointerdown', onDocumentPointerDown, true)")
+    expect(menu).toContain("document.removeEventListener('pointerdown', onDocumentPointerDown, true)")
   })
 })

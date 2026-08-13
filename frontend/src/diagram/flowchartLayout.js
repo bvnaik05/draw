@@ -189,14 +189,21 @@ export function routeOffsets(model) {
 // (spec B4 auto-position, B7 column/lane snapping). For a decision branch the
 // child is fanned out laterally so branches auto-balance symmetrically (B4/F3).
 // Returns { x, y } for the new node; the caller writes it onto the model.
-export function placeChild(model, parentId, childNode, branchIndex = null, branchCount = 1) {
+// `laneSteps` overrides the branch maths with an explicit number of sibling-steps
+// to offset by (#441 item 15). A decision fans by branch, but a plain node can have
+// as many outgoing flows as the user wants, and those have no branch index to fan
+// on — see fanSteps, which walks them out alternately either side of the parent.
+export function placeChild(model, parentId, childNode, branchIndex = null, branchCount = 1, laneSteps = null) {
   const parent = flowchartNodeById(model, parentId)
   if (!parent) return { x: childNode.x, y: childNode.y }
   const direction = model.direction || 'TB'
   const parentSize = nodeSize(parent)
   const childSize = nodeSize(childNode)
   const parentCenter = nodeCenter(parent)
-  const lane = laneOffset(branchIndex, branchCount, childSize, direction)
+  const lane =
+    laneSteps === null
+      ? laneOffset(branchIndex, branchCount, childSize, direction)
+      : laneSteps * ((direction === 'LR' ? childSize.h : childSize.w) + SIBLING_GAP)
   const base = direction === 'LR'
     ? { x: parent.x + parentSize.w + LEVEL_GAP, y: Math.round(parentCenter.y - childSize.h / 2 + lane) }
     : { x: Math.round(parentCenter.x - childSize.w / 2 + lane), y: parent.y + parentSize.h + LEVEL_GAP }
@@ -224,6 +231,20 @@ function avoidOverlap(model, box, direction) {
     guard += 1
   }
   return { x: Math.round(pos.x), y: Math.round(pos.y) }
+}
+
+// Where the n-th outgoing flow of a plain node should sit, in sibling-steps either
+// side of the parent: 0, +1, -1, +2, -2, … (#441 item 15).
+//
+// It alternates rather than marching in one direction so a node with several
+// outgoing flows stays balanced under its parent. Crucially it is a function of n
+// alone: adding a fourth flow never moves the first three, because a flowchart is
+// manually placed and re-balancing the whole fan on every add is exactly the
+// unrelated-nodes-jumping the issue objects to (#441 item 18).
+export function fanSteps(existingCount) {
+  if (existingCount <= 0) return 0
+  const magnitude = Math.ceil(existingCount / 2)
+  return existingCount % 2 === 1 ? magnitude : -magnitude
 }
 
 // Symmetric lateral spread for branch children (0 for a single child).

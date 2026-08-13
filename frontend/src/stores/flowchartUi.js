@@ -6,7 +6,25 @@ import { reactive } from 'vue'
 
 export const flowchartUi = reactive({
   editingId: null, // node whose text is being edited inline, or null
+  // The open "add node" menu: which node it was opened from, and that node's box
+  // in SCREEN pixels at the moment it opened (#441 item 10).
+  //
+  // The menu lives here, rather than in the overlay that draws the "+", because it
+  // has to RENDER outside the canvas <svg>. Vue creates elements in the namespace
+  // of the surrounding template, so a menu declared inside the SVG is built as
+  // SVG-namespaced <div>s — which have no CSS box at all: `position: fixed` never
+  // applies and the whole menu collapses to zero width. Teleport moves such a node
+  // but cannot change the namespace it was created in.
+  picker: null, // { nodeId, box: { x, y, w, h } }
 })
+
+export function openFlowchartPicker(nodeId, box) {
+  flowchartUi.picker = box ? { nodeId, box } : null
+}
+
+export function closeFlowchartPicker() {
+  flowchartUi.picker = null
+}
 
 // Ask the layer to open the inline editor on a node (focus + select handled by
 // the layer's watcher). Used right after a node is created so the user can type
@@ -26,4 +44,5 @@ export function endFlowchartEdit(id) {
 // resetMindmapUi; called from EditorShell at the same two points.
 export function resetFlowchartUi() {
   flowchartUi.editingId = null
+  flowchartUi.picker = null
 }
