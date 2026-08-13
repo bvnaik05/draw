@@ -3,20 +3,19 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import {
-  SIDEBAR_NAV,
-  VIEW_TITLES,
   isPinned,
   pinnedOnly,
   unpinned,
   DEFAULT_LAYOUT,
   readLayout,
   writeLayout,
-  EMPTY_STATES,
+  EMPTY_HOME,
+  NO_MATCHES,
   emptyStateFor,
 } from './homeViews.js'
 
-// Browser-free (node env, no @vue/test-utils): assert the view MODEL the home
-// view switcher renders and the pin FILTERS its views use, then source-check that the SFCs
+// Browser-free (node env, no @vue/test-utils): assert the MODEL the home page
+// renders and the pin FILTERS its list uses, then source-check that the SFCs
 // actually bind that model — a regression guard against the old nav / inline filters
 // creeping back. Mirrors ShareMenu.test.js (import the model, string-check the SFC).
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -25,37 +24,31 @@ const tileGrid = read('TileGrid.vue')
 const diagramTile = read('DiagramTile.vue')
 const homeShell = read('../../pages/HomeShell.vue')
 
-describe('sidebar nav set (#116)', () => {
-  it('is Home · Recent · Shared with you · Pinned · Trash, in that order', () => {
-    expect(SIDEBAR_NAV.map((n) => n.key)).toEqual(['home', 'recent', 'shared', 'pinned', 'trash'])
-    expect(SIDEBAR_NAV.map((n) => n.label)).toEqual([
-      'Home',
-      'Recent',
-      'Shared with you',
-      'Pinned',
-      'Trash',
-    ])
+// #407: Home showed a row of tabs — Home · Recent · Shared with you · Pinned ·
+// Trash — over a page that is already the whole library. The tabs are gone; the
+// app menu carries Trash, the one view Home does not contain.
+describe('the home page has no view switcher (#407)', () => {
+  it('drops the tab row from the top bar', () => {
+    expect(homeShell).not.toContain('TabButtons')
+    expect(homeShell).not.toContain('SIDEBAR_NAV')
   })
 
-  it('dropped "All diagrams"', () => {
-    expect(SIDEBAR_NAV.some((n) => n.key === 'all' || /all diagrams/i.test(n.label))).toBe(false)
+  it('keeps Trash reachable from the app menu', () => {
+    expect(homeShell).toContain("label: 'Trash'")
+    expect(homeShell).toContain("view.value = 'trash'")
   })
 
-  it('gives every item a complete lucide utility class', () => {
-    // Not a bare icon name: Tailwind's JIT only emits classes it can read
-    // literally, so building one with `lucide-${name}` yields no CSS and a
-    // blank icon (#308).
-    for (const item of SIDEBAR_NAV) expect(item.icon).toMatch(/^lucide-[a-z0-9-]+$/)
+  it('leads back out of Trash with a breadcrumb, not a tab', () => {
+    // Otherwise Trash is a room with no door: the menu can only take you in.
+    expect(homeShell).toContain('<Breadcrumbs')
+    expect(homeShell).toContain("view.value = 'home'")
   })
 
-  it('page titles cover every non-trash view', () => {
-    // Trash is intentionally absent — it renders its own header.
-    expect(VIEW_TITLES).toMatchObject({
-      home: 'Home',
-      recent: 'Recent',
-      shared: 'Shared with you',
-      pinned: 'Pinned',
-    })
+  it('leaves the grid with a single view to render', () => {
+    // The mode prop and the per-mode lists went with the tabs.
+    expect(tileGrid).not.toContain('props.mode')
+    expect(tileGrid).not.toContain('modeList')
+    expect(tileGrid).not.toContain('shared_with_me')
   })
 })
 
@@ -80,24 +73,9 @@ describe('pin filters (#116)', () => {
 })
 
 describe('the SFCs bind the shared model', () => {
-  it('HomeShell renders SIDEBAR_NAV (not an inline nav array)', () => {
-    // The sidebar was removed in #308; the same nav model now drives the top
-    // bar's view switcher, so the binding guard moved to HomeShell.
-    expect(homeShell).toContain('SIDEBAR_NAV')
-    expect(homeShell).not.toContain("label: 'All diagrams'")
-  })
-
-  it('HomeShell titles pages from VIEW_TITLES', () => {
-    expect(homeShell).toContain('VIEW_TITLES')
-  })
-
-  it('TileGrid filters the Pinned view through the shared predicate', () => {
+  it('TileGrid partitions the list through the shared pin predicates', () => {
     expect(tileGrid).toContain('pinnedOnly')
     expect(tileGrid).toContain('unpinned')
-  })
-
-  it('TileGrid sources "Shared with you" from the whitelisted endpoint', () => {
-    expect(tileGrid).toContain('draw.api.diagram.shared_with_me')
     // The old flat "all diagrams" list must be gone.
     expect(tileGrid).not.toContain('allFlat')
   })
@@ -212,40 +190,23 @@ describe('tile preview survives a dead thumbnail (#221)', () => {
 // Frappe Draw". It told the user nothing they could act on, and anyone who met it
 // before scrolling read it as an empty state. It is gone; the empty views carry
 // the message instead, worded for the tab they belong to.
-describe('empty states, one per tab (#220)', () => {
+describe('empty states (#220)', () => {
   it('invites a first-time user to start, rather than reporting emptiness', () => {
-    const home = emptyStateFor('home')
+    const home = emptyStateFor()
     expect(home.title).toBe('Start a drawing')
     expect(home.hint).toMatch(/create/i)
   })
 
-  it('words each other tab for itself', () => {
-    expect(emptyStateFor('recent').title).toBe('Nothing recent')
-    expect(emptyStateFor('shared').title).toBe('Nothing shared with you')
-    expect(emptyStateFor('pinned').title).toBe('No pinned diagrams')
-  })
-
-  it('covers every view the switcher offers, so none falls through', () => {
-    for (const nav of SIDEBAR_NAV) {
-      if (nav.key === 'trash') continue // Trash renders its own view, with its own empty state
-      expect(EMPTY_STATES[nav.key], `no empty state for "${nav.key}"`).toBeTruthy()
-    }
-  })
-
-  it('lets a search that matches nothing win over the tab wording', () => {
-    // "No pinned diagrams" would be wrong when the tab does have pins and the
-    // query is what excluded them.
-    expect(emptyStateFor('pinned', true).title).toBe('No diagrams match')
-    expect(emptyStateFor('home', true).title).toBe('No diagrams match')
-  })
-
-  it('falls back to Home rather than rendering an undefined icon', () => {
-    expect(emptyStateFor('nonexistent-mode')).toEqual(EMPTY_STATES.home)
+  it('says it was the filter when a search or chip matched nothing', () => {
+    // "Start a drawing" would be wrong when the library does have diagrams and
+    // the query is what excluded them.
+    expect(emptyStateFor(true)).toEqual(NO_MATCHES)
+    expect(emptyStateFor(true).title).toBe('No diagrams match')
   })
 
   it('gives every state a complete lucide class', () => {
     // Tailwind's JIT only emits classes it reads literally (#292).
-    for (const state of Object.values(EMPTY_STATES)) {
+    for (const state of [EMPTY_HOME, NO_MATCHES]) {
       expect(state.icon).toMatch(/^lucide-[a-z0-9-]+$/)
     }
   })
@@ -256,7 +217,7 @@ describe('empty states, one per tab (#220)', () => {
   })
 
   it('drives the empty view from the shared model', () => {
-    expect(tileGrid).toContain('emptyStateFor(props.mode, hasActiveFilter.value)')
+    expect(tileGrid).toContain('emptyStateFor(hasActiveFilter.value)')
   })
 })
 

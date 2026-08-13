@@ -46,11 +46,11 @@ describe('the collection chip row (#217)', () => {
     expect(chips).toContain(':aria-label="`Delete ${collection.title}`"')
   })
 
-  it('shows only on Home, where the whole library is', () => {
-    // Recent / Shared / Pinned are already answers to "which diagrams"; a second
-    // filter stacked on them reads as a bug.
-    expect(tileGrid).toContain("const showsCollections = computed(() => props.mode === 'home')")
-    expect(tileGrid).toContain('v-if="showsCollections"')
+  it('shows on Home, the one view there is (#407)', () => {
+    // The chips used to be gated to Home because Recent / Shared / Pinned were
+    // already answers to "which diagrams". Those views are gone, so is the gate.
+    expect(tileGrid).toContain('<CollectionChips')
+    expect(tileGrid).not.toContain('showsCollections')
   })
 
   it('says what a delete does and does not do', () => {
