@@ -86,7 +86,10 @@ function frappeNow() {
 </script>
 
 <template>
-  <Dropdown :options="menuItems" placement="bottom-end">
+  <!-- `align`, not the deprecated `placement`: that alias only accepts
+       left|right|center, so "bottom-end" matched nothing and the menu aligned to
+       the trigger's LEFT edge, hanging off the right of the window (#449). -->
+  <Dropdown :options="menuItems" align="end">
     <!-- Same ghost icon button as its neighbours (#229), so the cluster reads as one set. -->
     <Button variant="ghost" icon="lucide-ellipsis" label="More actions" tooltip="More actions" />
   </Dropdown>

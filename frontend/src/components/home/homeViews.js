@@ -1,7 +1,7 @@
 // Home view model (#116): the empty states, the pin predicates the grid filters
-// on, and the stored layout choice. Kept in one plain module — not inside the SFCs
-// — so the shell and grid stay declarative and the unit tests can assert the model
-// without mounting (browser-free) components.
+// on, and the stored layout + sort choices. Kept in one plain module — not inside
+// the SFCs — so the shell and grid stay declarative and the unit tests can assert
+// the model without mounting (browser-free) components.
 //
 // Home is the only listing view (#407): one flat, pinnable list of every diagram
 // (no folders, #115), with Trash reached from the app menu.
@@ -42,9 +42,70 @@ export const isPinned = (diagram) => Boolean(diagram.is_pinned)
 export const pinnedOnly = (rows) => rows.filter(isPinned)
 export const unpinned = (rows) => rows.filter((diagram) => !isPinned(diagram))
 
-// Tile or list layout (#222). This is personal chrome state, not part of a
-// document, so it lives in localStorage rather than on the user's record — the
-// same call as recent colours. A new user still starts in the list.
+// --- sorting (#449) --------------------------------------------------------
+// The sort choice is a pair — which field, and which way — so the toolbar menu
+// and the clickable column headers drive one model instead of two that can
+// disagree.
+export const SORT_FIELDS = [
+  { key: 'smart', label: 'Smart' },
+  { key: 'modified', label: 'Last edited' },
+  { key: 'creation', label: 'Date created' },
+  { key: 'title', label: 'Name' },
+]
+export const SORT_KEYS = SORT_FIELDS.map((field) => field.key)
+export const DEFAULT_SORT = { key: 'modified', direction: 'desc' }
+
+// Names read A→Z; every other field is newest-first.
+export function defaultDirection(key) {
+  return key === 'title' ? 'asc' : 'desc'
+}
+
+export function sortLabelFor(key) {
+  return SORT_FIELDS.find((field) => field.key === key)?.label || 'Sort'
+}
+
+// Clicking the active column flips its direction; a new column starts in its own
+// default. Returning a fresh pair (rather than mutating two refs) keeps the rule
+// in one testable place.
+export function nextSort(current, key) {
+  if (current.key !== key) return { key, direction: defaultDirection(key) }
+  return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+}
+
+function timestampOf(value) {
+  return value ? new Date(value.replace(' ', 'T')).getTime() : 0
+}
+
+// Smart: surface what you'd likely want next — pinned first, then most recently
+// edited. (Without open-frequency data this is the best local heuristic; I6.)
+export function compareDiagrams(sort, a, b) {
+  if (sort.key === 'smart') {
+    return isPinned(b) - isPinned(a) || timestampOf(b.modified) - timestampOf(a.modified)
+  }
+  const direction = sort.direction === 'asc' ? 1 : -1
+  if (sort.key === 'title') return direction * (a.title || '').localeCompare(b.title || '')
+  return direction * (timestampOf(a[sort.key]) - timestampOf(b[sort.key]))
+}
+
+// The sort survives a reload, like the layout below (#222): re-sorting on every
+// visit is the same papercut whichever preference is forgotten.
+const SORT_STORE_KEY = 'frappe-draw-home-sort'
+
+export function readSort() {
+  const stored = readJson(SORT_STORE_KEY, DEFAULT_SORT)
+  if (!SORT_KEYS.includes(stored?.key)) return { ...DEFAULT_SORT }
+  return { key: stored.key, direction: stored.direction === 'asc' ? 'asc' : 'desc' }
+}
+
+export function writeSort(sort) {
+  if (!SORT_KEYS.includes(sort?.key)) return
+  writeJson(SORT_STORE_KEY, { key: sort.key, direction: sort.direction })
+}
+
+// --- layout (#222) ---------------------------------------------------------
+// Tile or list layout. This is personal chrome state, not part of a document, so
+// it lives in localStorage rather than on the user's record — the same call as
+// recent colours. A new user still starts in the list.
 const LAYOUT_KEY = 'frappe-draw-home-layout'
 export const LAYOUTS = ['list', 'tile']
 export const DEFAULT_LAYOUT = 'list'

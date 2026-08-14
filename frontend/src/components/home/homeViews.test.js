@@ -12,6 +12,13 @@ import {
   EMPTY_HOME,
   NO_MATCHES,
   emptyStateFor,
+  compareDiagrams,
+  defaultDirection,
+  DEFAULT_SORT,
+  nextSort,
+  readSort,
+  sortLabelFor,
+  writeSort,
 } from './homeViews.js'
 
 // Browser-free (node env, no @vue/test-utils): assert the MODEL the home page
@@ -22,6 +29,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const read = (rel) => readFileSync(path.join(here, rel), 'utf8')
 const tileGrid = read('TileGrid.vue')
 const diagramTile = read('DiagramTile.vue')
+const listView = read('DiagramListView.vue')
 const homeShell = read('../../pages/HomeShell.vue')
 
 // #407: Home showed a row of tabs — Home · Recent · Shared with you · Pinned ·
@@ -81,20 +89,33 @@ describe('the SFCs bind the shared model', () => {
   })
 })
 
-// #302: the Home list is a flat, Frappe-Drive-style table — no per-row card, just a
-// hairline separator + hover — with sortable, direction-aware column headers.
-describe('Home list is a flat Drive-style table (#302)', () => {
-  it('de-cards the list row (hairline separator, not a bordered card)', () => {
-    expect(diagramTile).not.toContain('rounded-lg border px-3')
-    expect(diagramTile).toContain('border-b border-outline-gray-1')
+// #302 / #449: the Home list is a flat table with sortable, direction-aware column
+// headers. It is now built from frappe-ui's ListView primitives, so the row
+// geometry, dividers, hover surface and selection surface come from the design
+// system instead of a hand-aligned run of flex columns.
+describe('Home list is built on frappe-ui ListView (#302, #449)', () => {
+  it('renders rows through the ListView family, not hand-rolled divs', () => {
+    expect(listView).toContain("from 'frappe-ui'")
+    expect(listView).toContain('<ListView')
+    expect(listView).toContain('<ListHeader')
+    expect(listView).toContain('<ListRows')
+    expect(listView).toContain('row-key="name"')
   })
 
   it('wires sortable, direction-aware column headers', () => {
     for (const key of ['title', 'creation', 'modified']) {
-      expect(tileGrid).toContain(`setSort('${key}')`)
+      expect(listView).toContain(`sortKey: '${key}'`)
     }
-    expect(tileGrid).toContain('sortArrow')
-    expect(tileGrid).toContain('sortDir')
+    expect(listView).toContain("emit('sort', column.sortKey)")
+    expect(listView).toContain('sortArrow')
+    expect(tileGrid).toContain('function setSort')
+  })
+
+  it('keeps one selection for both views', () => {
+    // ListView owns a selection Set of its own; the grid stays the single source
+    // of truth so a selection made in the list survives a switch to tiles.
+    expect(listView).toContain('syncFromParent')
+    expect(tileGrid).toContain('function replaceSelection')
   })
 })
 
@@ -230,12 +251,12 @@ describe('list rows carry no type glyph (#218)', () => {
     expect(diagramTile).not.toContain('lucide-shapes')
   })
 
-  it('drops the header spacer that reserved the glyph lane', () => {
-    // The header aligns column-for-column with the rows, so a leftover spacer
-    // would shift every heading one lane right of its column.
-    expect(tileGrid).not.toContain('<span class="w-8 flex-none" />')
+  it('gives the columns one definition, shared by header and rows', () => {
+    // One COLUMNS array drives both, so a heading cannot drift out of its lane.
+    expect(listView).toContain('const COLUMNS')
+    expect(listView).not.toContain('lucide-shapes')
     // The pin lane stays — the rows still have a pin button.
-    expect(tileGrid).toContain('<span class="w-6 flex-none" />')
+    expect(listView).toContain("key: 'pin'")
   })
 
   it('keeps the tile view showing previews, not a glyph', () => {
@@ -282,5 +303,171 @@ describe('Home fetches documents only where a preview needs one (#223)', () => {
     // save_thumbnail clears the thumbnail when the diagram is emptied, so a raster
     // now means real content and the old emptiness gate is unnecessary.
     expect(diagramTile).toMatch(/thumbnailUrl = computed\(\s*\(\)\s*=>\s*\n?\s*thumbnailFailed\.value \? null/)
+  })
+})
+
+// #449: Sort did nothing at all. The trigger was a frappe-ui Button wrapped in a
+// Tooltip, and reka-ui's `as-child` trigger binds to its single child — the Tooltip
+// swallowed the binding, so clicking the control never opened the menu.
+describe('sorting the list (#449)', () => {
+  const rows = [
+    { name: 'a', title: 'Beta', creation: '2026-08-01 10:00:00', modified: '2026-08-10 10:00:00' },
+    { name: 'b', title: 'alpha', creation: '2026-08-03 10:00:00', modified: '2026-08-02 10:00:00' },
+    { name: 'c', title: 'Gamma', creation: '2026-08-02 10:00:00', modified: '2026-08-12 10:00:00', is_pinned: 1 },
+  ]
+  const order = (sort) => [...rows].sort((a, b) => compareDiagrams(sort, a, b)).map((r) => r.name)
+
+  it('orders by each field in both directions', () => {
+    expect(order({ key: 'modified', direction: 'desc' })).toEqual(['c', 'a', 'b'])
+    expect(order({ key: 'modified', direction: 'asc' })).toEqual(['b', 'a', 'c'])
+    expect(order({ key: 'creation', direction: 'desc' })).toEqual(['b', 'c', 'a'])
+  })
+
+  it('sorts names case-insensitively, the way a reader reads them', () => {
+    // A plain codepoint compare would file "alpha" after "Gamma".
+    expect(order({ key: 'title', direction: 'asc' })).toEqual(['b', 'a', 'c'])
+    expect(order({ key: 'title', direction: 'desc' })).toEqual(['c', 'a', 'b'])
+  })
+
+  it('puts pinned first under Smart, then the most recently edited', () => {
+    expect(order({ key: 'smart', direction: 'desc' })).toEqual(['c', 'a', 'b'])
+  })
+
+  it('starts names A→Z and everything else newest-first', () => {
+    expect(defaultDirection('title')).toBe('asc')
+    expect(defaultDirection('modified')).toBe('desc')
+  })
+
+  it('flips direction on the active column and resets it on a new one', () => {
+    const active = { key: 'modified', direction: 'desc' }
+    expect(nextSort(active, 'modified')).toEqual({ key: 'modified', direction: 'asc' })
+    expect(nextSort(active, 'title')).toEqual({ key: 'title', direction: 'asc' })
+  })
+
+  it('names the active sort for the toolbar button', () => {
+    expect(sortLabelFor('modified')).toBe('Last edited')
+    expect(sortLabelFor('nonsense')).toBe('Sort')
+  })
+
+  it('binds the trigger directly to the Dropdown, with no Tooltip in between', () => {
+    const sortBlock = tileGrid.slice(tileGrid.indexOf('<Dropdown :options="sortOptions"'))
+    expect(sortBlock.slice(0, 400)).not.toContain('<Tooltip')
+    // Button carries its own tooltip prop, which is the supported way to do this.
+    expect(sortBlock.slice(0, 400)).toContain(':tooltip=')
+  })
+
+  it('ticks the active option so the menu shows what is applied', () => {
+    expect(tileGrid).toContain("? 'lucide-check' : undefined")
+  })
+})
+
+describe('sort preference survives a reload (#449)', () => {
+  const original = globalThis.localStorage
+
+  beforeEach(() => {
+    const map = new Map()
+    globalThis.localStorage = {
+      getItem: (key) => (map.has(key) ? map.get(key) : null),
+      setItem: (key, value) => map.set(key, value),
+    }
+  })
+  afterEach(() => {
+    globalThis.localStorage = original
+  })
+
+  it('starts on the most recently edited', () => {
+    expect(DEFAULT_SORT).toEqual({ key: 'modified', direction: 'desc' })
+    expect(readSort()).toEqual(DEFAULT_SORT)
+  })
+
+  it('remembers the field and the direction', () => {
+    writeSort({ key: 'title', direction: 'asc' })
+    expect(readSort()).toEqual({ key: 'title', direction: 'asc' })
+  })
+
+  it('falls back to the default when the stored value is not a sort', () => {
+    globalThis.localStorage.setItem('frappe-draw-home-sort', JSON.stringify({ key: 'colour' }))
+    expect(readSort()).toEqual(DEFAULT_SORT)
+  })
+
+  it('refuses to store a field that cannot be sorted on', () => {
+    writeSort({ key: 'title', direction: 'asc' })
+    writeSort({ key: 'colour', direction: 'asc' })
+    expect(readSort()).toEqual({ key: 'title', direction: 'asc' })
+  })
+
+  it('TileGrid seeds its sort from the stored one and persists a change', () => {
+    expect(tileGrid).toContain('ref(readSort())')
+    expect(tileGrid).toContain('watch(sort, writeSort')
+  })
+})
+
+// #449: Home carried a page heading, a Drive banner and a Collections strip above
+// the one thing it is for. All three are gone, and the page sits in a single
+// centred container so every row starts and ends on the same line.
+describe('Home is the diagrams and nothing else (#449)', () => {
+  it('drops the "Home" heading', () => {
+    expect(homeShell).not.toContain('>Home</div>')
+    expect(homeShell).not.toContain('text-3xl')
+  })
+
+  it('drops the yellow Drive banner', () => {
+    expect(homeShell).not.toContain('<Alert')
+    expect(homeShell).not.toContain('shouldShowInstallDriveBanner')
+    expect(homeShell).not.toContain('lucide-hard-drive')
+  })
+
+  it('drops Collections and its "+" everywhere on the page', () => {
+    for (const source of [homeShell, tileGrid, diagramTile, listView]) {
+      expect(source).not.toContain('CollectionChips')
+      expect(source).not.toContain('CollectionPicker')
+      expect(source).not.toContain('Add to collection')
+      expect(source).not.toContain("@/data/collections.js")
+    }
+  })
+
+  it('holds the page in one centred container with even gutters', () => {
+    expect((homeShell.match(/max-w-\[1100px\]/g) || []).length).toBe(2)
+    expect(homeShell).not.toContain('px-9')
+  })
+
+  it('puts search, sort, layout and Create in one toolbar row', () => {
+    expect(tileGrid).toContain('placeholder="Search diagrams"')
+    expect(tileGrid).toContain('<TabButtons')
+    expect(tileGrid).toContain("emit('create')")
+  })
+})
+
+// #449: the ⋯ menu is the actions with nowhere else to live. Pin is the row's own
+// control, rename is a double-click on the name, and deleting one diagram asks
+// first — it sits one item below Duplicate.
+describe('the ⋯ menu (#449)', () => {
+  it('carries exactly Copy link, Show info, Duplicate and Delete', () => {
+    const menu = tileGrid.slice(tileGrid.indexOf('function menuFor'))
+    const labels = [...menu.slice(0, 700).matchAll(/label: '([^']+)'/g)].map((m) => m[1])
+    expect(labels).toEqual(['Copy link', 'Show info', 'Duplicate', 'Delete'])
+  })
+
+  it('asks before moving a single diagram to Trash', () => {
+    expect(tileGrid).toContain('function askTrash')
+    expect(tileGrid).toContain("confirm({")
+    expect(tileGrid).toContain("confirmLabel: 'Delete'")
+  })
+
+  it('renames in place on a double-click, with no dialog', () => {
+    expect(tileGrid).not.toContain('dialog.prompt')
+    for (const source of [listView, diagramTile]) {
+      expect(source).toContain('@dblclick')
+      expect(source).toContain('startRename')
+    }
+  })
+
+  it('anchors the menu with align, not the placement alias', () => {
+    // `placement` only accepts left|right|center; "bottom-end" matched nothing, so
+    // the menu aligned left and hung off the right edge of the page.
+    for (const source of [listView, diagramTile]) {
+      expect(source).toContain('align="end"')
+      expect(source).not.toContain('placement="bottom-end"')
+    }
   })
 })

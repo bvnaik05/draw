@@ -1,30 +1,39 @@
 <script setup>
-// Home diagram browser (spec §2). Modes chosen from the sidebar:
-//   home   — Pinned group + the rest of the diagrams (flat, no folders)
-//   recent — a flat list of the most-recently-edited diagrams
-//   shared — diagrams others shared with me that I don't own (#116)
-//   pinned — a flat list of just the pinned diagrams (#116)
-// Toolbar offers search + sort + a tile/list toggle, becoming a bulk-action bar
-// on selection. Creation is the top-right CTA only. At most MAX_PINNED pinned.
-// Deleting from the bulk bar is optimistic and batched — see "trash (#402)" below.
+// Home's diagram browser (spec §2). One toolbar — search, sort, layout, Create —
+// over one flat list of diagrams, pinned ones first. The toolbar becomes a
+// bulk-action bar while anything is selected.
+//
+// The list view is frappe-ui's ListView (DiagramListView); the tile view is a grid
+// of DiagramTile. Deleting from the bulk bar is optimistic and batched — see
+// "trash (#402)" below. Collections were removed with the feature (#449).
 import { computed, reactive, ref, watch } from 'vue'
-import { call, useList, dialog, Dialog, Button, Divider, Dropdown, TabButtons, TextInput, Tooltip } from 'frappe-ui'
-import DiagramCollection from './DiagramCollection.vue'
-import CollectionChips from './CollectionChips.vue'
-import CollectionPicker from './CollectionPicker.vue'
+import { call, useList, Button, Dialog, Dropdown, TabButtons, TextInput, toast } from 'frappe-ui'
+import DiagramListView from './DiagramListView.vue'
+import DiagramTile from './DiagramTile.vue'
 import SelectAllCheckbox from './SelectAllCheckbox.vue'
-import { listCollections, diagramsInCollection } from '@/data/collections.js'
+import { confirm } from '@/composables/useConfirm.js'
 import { useOptimisticTrash } from '@/composables/useOptimisticTrash.js'
+import { ownerLabel, stampLabel } from './diagramLabels.js'
 import {
-  pinnedOnly,
-  unpinned,
-  readLayout,
-  writeLayout,
+  compareDiagrams,
+  defaultDirection,
   emptyStateFor,
+  nextSort,
+  pinnedOnly,
+  readLayout,
+  readSort,
+  sortLabelFor,
+  SORT_FIELDS,
+  unpinned,
+  writeLayout,
+  writeSort,
 } from '@/components/home/homeViews.js'
 import { submitOrThrow } from '@/data/submit.js'
 import { createDiagramDocument } from '@/diagram/schema.js'
 
+// `creating` rides on the shell's create call, so the toolbar's Create button
+// shows the spinner while the new diagram is being inserted.
+defineProps({ creating: { type: Boolean, default: false } })
 const emit = defineEmits(['create', 'open', 'changed'])
 
 const MAX_PINNED = 5
@@ -74,104 +83,32 @@ const pinnedTotal = computed(() => rows.value.filter((d) => d.is_pinned).length)
 const pinLimitReached = computed(() => pinnedTotal.value >= MAX_PINNED)
 
 // --- view / search / sort --------------------------------------------------
-// The tile/list choice survives a reload (#222). Someone who switches to tiles and
+// Both preferences survive a reload (#222, #449). Someone who switches to tiles and
 // comes back to a list has to switch again on every visit — and, seeing no previews,
 // reads it as thumbnails having stopped working (#221).
 const view = ref(readLayout())
 watch(view, writeLayout)
+const sort = ref(readSort())
+watch(sort, writeSort, { deep: true })
 const query = ref('')
-const sortKey = ref('modified')
-// Direction for the sortable list-view column headers (#302). 'smart' ignores it
-// (it has its own pinned-first order); the toolbar dropdown resets it to a default.
-const sortDir = ref('desc')
 
 function matchesQuery(diagram) {
-  const q = query.value.trim().toLowerCase()
-  return !q || (diagram.title || '').toLowerCase().includes(q)
+  const wanted = query.value.trim().toLowerCase()
+  return !wanted || (diagram.title || '').toLowerCase().includes(wanted)
 }
 
-const SORTS = [
-  { key: 'smart', label: 'Smart' },
-  { key: 'modified', label: 'Last edited' },
-  { key: 'creation', label: 'Date created' },
-  { key: 'title', label: 'Name (A–Z)' },
-]
-const sortLabel = computed(() => SORTS.find((s) => s.key === sortKey.value)?.label || 'Sort')
+// The button says which sort is active; the menu ticks it. Picking a field from the
+// menu resets its direction, while clicking the active column header flips it.
+const sortLabel = computed(() => sortLabelFor(sort.value.key))
 const sortOptions = computed(() =>
-  SORTS.map((s) => ({ label: s.label, onClick: () => setSort(s.key, defaultDir(s.key)) })),
+  SORT_FIELDS.map((field) => ({
+    label: field.label,
+    icon: field.key === sort.value.key ? 'lucide-check' : undefined,
+    onClick: () => (sort.value = { key: field.key, direction: defaultDirection(field.key) }),
+  })),
 )
-
-// Names read A→Z; every other key is newest-first by default.
-function defaultDir(key) {
-  return key === 'title' ? 'asc' : 'desc'
-}
-// A sortable column header: with an explicit `dir` (dropdown) set that; otherwise
-// clicking the active column flips direction, a new column sorts in its default.
-function setSort(key, dir = null) {
-  if (dir) {
-    sortKey.value = key
-    sortDir.value = dir
-  } else if (sortKey.value === key) {
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    sortKey.value = key
-    sortDir.value = defaultDir(key)
-  }
-}
-// The arrow's complete lucide class for a column, or null when it isn't the
-// active sort. A complete class because Tailwind's JIT reads it literally.
-function sortArrow(key) {
-  if (sortKey.value !== key) return null
-  return sortDir.value === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down'
-}
-
-function ts(value) {
-  return value ? new Date(value.replace(' ', 'T')).getTime() : 0
-}
-function bySort(a, b) {
-  // Smart: surface what you'd likely want next — pinned first, then most recently
-  // edited. (Without open-frequency data this is the best local heuristic; I6.)
-  if (sortKey.value === 'smart') {
-    const pin = (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0)
-    return pin || ts(b.modified) - ts(a.modified)
-  }
-  const dir = sortDir.value === 'asc' ? 1 : -1
-  if (sortKey.value === 'title') return dir * (a.title || '').localeCompare(b.title || '')
-  return dir * (ts(a[sortKey.value]) - ts(b[sortKey.value]))
-}
-
-// --- collections (#217) ----------------------------------------------------
-// Labels, not folders: the chip row narrows the SAME list rather than navigating
-// into anything, so a diagram in two collections shows under both. With one
-// listing view (#407) the chips are always available.
-const collections = ref([])
-const activeCollection = ref('')
-const collectedNames = ref(null) // null = no collection filter
-const collecting = ref(null) // the diagram whose "Add to collection" dialog is open
-
-async function loadCollections() {
-  collections.value = await listCollections()
-  // A chip can disappear underneath the filter (deleted elsewhere, or by us).
-  if (activeCollection.value && !collections.value.some((c) => c.name === activeCollection.value)) {
-    selectCollection('')
-  }
-}
-
-async function selectCollection(name) {
-  activeCollection.value = name
-  collectedNames.value = name ? new Set(await diagramsInCollection(name)) : null
-}
-
-// Re-read the membership when a chip is filtering and something changed under it.
-async function refreshCollections() {
-  await loadCollections()
-  if (activeCollection.value) await selectCollection(activeCollection.value)
-}
-
-loadCollections()
-
-function matchesCollection(diagram) {
-  return !collectedNames.value || collectedNames.value.has(diagram.name)
+function setSort(key) {
+  sort.value = nextSort(sort.value, key)
 }
 
 // Deleting is optimistic and batched (#402): the rows leave the shelf on click and
@@ -179,14 +116,16 @@ function matchesCollection(diagram) {
 // the ones on their way to Trash before the reloaded list has caught up.
 const { notTrashing, trashDiagrams } = useOptimisticTrash(refresh)
 
-const visibleRows = computed(() =>
-  rows.value.filter((d) => notTrashing(d) && matchesQuery(d) && matchesCollection(d)),
-)
+const visibleRows = computed(() => rows.value.filter((d) => notTrashing(d) && matchesQuery(d)))
 
-// Home: a Pinned group, then every other diagram (flat — no folders, #115).
-const pinned = computed(() => pinnedOnly(visibleRows.value).sort(bySort))
-const files = computed(() => unpinned(visibleRows.value).sort(bySort))
-const hasPinnedSection = computed(() => pinned.value.length > 0)
+// Pinned diagrams lead the list, then everything else, each in the chosen sort.
+// Sorting the two halves separately is what pinning is for; a "Pinned" section
+// heading over them would be a second heading on a page that just lost its first.
+const compare = (a, b) => compareDiagrams(sort.value, a, b)
+const ordered = computed(() => [
+  ...pinnedOnly(visibleRows.value).sort(compare),
+  ...unpinned(visibleRows.value).sort(compare),
+])
 
 // --- selection + bulk delete ----------------------------------------------
 const selected = reactive(new Set())
@@ -201,28 +140,31 @@ function setSelected(name, wanted) {
 function clearSelection() {
   selected.clear()
 }
+// The list view reports its whole selection at once (frappe-ui's ListView owns the
+// checkbox column), so it replaces rather than toggles.
+function replaceSelection(names) {
+  selected.clear()
+  names.forEach((name) => selected.add(name))
+}
 
-// The diagrams on screen, so Select all grabs exactly those.
-const currentDiagrams = computed(() => [...pinned.value, ...files.value])
 // Nothing on the shelf (a search excluded everything — the truly-empty home
 // renders HomeShell's EmptyState instead of this grid).
-const nothingHere = computed(() => !currentDiagrams.value.length)
-const hasActiveFilter = computed(() => Boolean(query.value.trim()) || Boolean(activeCollection.value))
+const nothingHere = computed(() => !ordered.value.length)
+const hasActiveFilter = computed(() => Boolean(query.value.trim()))
 
 // A search that matched nothing wants different words (and glyph) than a fresh,
 // unused Home.
 const emptyState = computed(() => emptyStateFor(hasActiveFilter.value))
-const allSelected = computed(() => {
-  const diagrams = currentDiagrams.value
-  return diagrams.length > 0 && diagrams.every((d) => selected.has(d.name))
-})
+const allSelected = computed(
+  () => ordered.value.length > 0 && ordered.value.every((d) => selected.has(d.name)),
+)
 // Some-but-not-all selected → the master checkbox shows Gmail's indeterminate dash.
 const someSelected = computed(() => selectedCount.value > 0 && !allSelected.value)
 // Gmail behaviour: any selection → the master box clears it; nothing selected →
 // it takes everything on screen. Idempotent for the same reason setSelected is.
 function setAllSelected(wanted) {
   clearSelection()
-  if (wanted) currentDiagrams.value.forEach((d) => selected.add(d.name))
+  if (wanted) ordered.value.forEach((d) => selected.add(d.name))
 }
 
 // The selection empties as the rows go, so the bulk bar collapses back to the
@@ -232,27 +174,21 @@ function deleteSelected() {
   clearSelection()
   trashDiagrams(names)
 }
-function trash(diagram) {
-  trashDiagrams([diagram.name])
-}
 
-// --- pin / rename / duplicate ---------------------------------------------
+// --- per-diagram actions ---------------------------------------------------
 async function togglePin(diagram) {
   if (!diagram.is_pinned && pinLimitReached.value) return
   await submitOrThrow(enriched.setValue, { name: diagram.name, is_pinned: diagram.is_pinned ? 0 : 1 })
   refresh()
 }
 
-function startRename(diagram) {
-  dialog.prompt({
-    title: 'Rename diagram',
-    confirmLabel: 'Save',
-    fields: [{ name: 'title', label: 'Title', required: true, defaultValue: diagram.title }],
-    onConfirm: async ({ values }) => {
-      await submitOrThrow(enriched.setValue, { name: diagram.name, title: values.title })
-      refresh()
-    },
-  })
+// Rename happens in place, by double-clicking the title (#449) — `renaming` holds
+// the diagram being edited, so only one row is ever a field.
+const renaming = ref('')
+async function commitRename(diagram, title) {
+  renaming.value = ''
+  await submitOrThrow(enriched.setValue, { name: diagram.name, title })
+  refresh()
 }
 
 // The list no longer carries documents (#223), so read the source's on demand.
@@ -268,19 +204,51 @@ async function duplicate(diagram) {
   refresh()
 }
 
+// Deleting one diagram asks first (#449). The bulk bar stays optimistic with an
+// Undo (#402); a single ⋯ → Delete is a click away from Duplicate, so it confirms.
+function askTrash(diagram) {
+  confirm({
+    title: 'Move to Trash?',
+    message: `“${diagram.title}” moves to Trash. You can restore it from there for 30 days.`,
+    theme: 'red',
+    confirmLabel: 'Delete',
+    onConfirm: () => trashDiagrams([diagram.name]),
+  })
+}
+
+// Copy the diagram's editor link to the clipboard (spec I5, "under sharing").
+function copyLink(diagram) {
+  const url = `${window.location.origin}/draw/d/${diagram.name}`
+  navigator.clipboard?.writeText(url).then(
+    () => toast.success('Link copied'),
+    () => toast.error('Could not copy link'),
+  )
+}
+
+// The ⋯ menu, built once for both views. Pin lives on the row itself and rename on
+// a double-click, so the menu carries only what has nowhere else to be (#449).
+function menuFor(diagram) {
+  return [
+    { label: 'Copy link', icon: 'lucide-link', onClick: () => copyLink(diagram) },
+    { label: 'Show info', icon: 'lucide-info', onClick: () => startInfo(diagram) },
+    { label: 'Duplicate', icon: 'lucide-copy', onClick: () => duplicate(diagram) },
+    { label: 'Delete', icon: 'lucide-trash-2', theme: 'red', onClick: () => askTrash(diagram) },
+  ]
+}
+
 // --- show info (I5) --------------------------------------------------------
 const info = reactive({ open: false, diagram: null })
 function startInfo(diagram) {
   Object.assign(info, { open: true, diagram })
 }
 const infoRows = computed(() => {
-  const d = info.diagram
-  if (!d) return []
+  const diagram = info.diagram
+  if (!diagram) return []
   return [
-    ['Name', d.title],
-    ['Owner', d.owner || '—'],
-    ['Created', d.creation ? d.creation.slice(0, 16).replace(' ', ' · ') : '—'],
-    ['Last edited', d.modified ? d.modified.slice(0, 16).replace(' ', ' · ') : '—'],
+    ['Name', diagram.title],
+    ['Owner', ownerLabel(diagram) || '—'],
+    ['Created', stampLabel(diagram.creation)],
+    ['Last edited', stampLabel(diagram.modified)],
   ]
 })
 
@@ -296,138 +264,133 @@ function refresh() {
   ])
 }
 
-const collectionHandlers = {
+const tileHandlers = {
   open: (name) => emit('open', name),
   select: setSelected,
   'toggle-pin': togglePin,
-  rename: startRename,
-  duplicate,
-  delete: trash,
-  'show-info': startInfo,
-  collect: (diagram) => (collecting.value = diagram),
+  'rename-start': (diagram) => (renaming.value = diagram.name),
+  'rename-commit': commitRename,
+  'rename-cancel': () => (renaming.value = ''),
 }
 </script>
 
 <template>
   <div>
-    <!-- Toolbar: a Find bar + sort, or a bulk-action bar when diagrams are
-         selected; the view toggle sits at the far right. -->
-    <div class="mb-5 flex h-9 items-center gap-2">
-      <!-- In list view the master checkbox lives in the table header (left of
-           Name); in tile view there's no header row, so it sits here. -->
-      <!-- Spacing lives on the wrapper: frappe-ui's Checkbox has no
-           `inheritAttrs: false`, so a class passed to it lands on both its root
-           element and the control inside, doubling the margin. -->
-      <span v-if="view === 'tile' && currentDiagrams.length" class="ml-1 mr-1 flex flex-none items-center">
-        <SelectAllCheckbox
-          :all-selected="allSelected"
-          :some-selected="someSelected"
-          @change="setAllSelected"
-        />
-      </span>
-
+    <!-- Toolbar: search + sort on the left, layout and Create on the right; a
+         bulk-action bar while anything is selected. -->
+    <div class="mb-5 flex items-center gap-2">
       <template v-if="selectedCount">
-        <span class="text-sm font-semibold text-ink-gray-9">{{ selectedCount }} selected</span>
-        <Button variant="subtle" theme="red" @click="deleteSelected">
-          <template #prefix><span class="lucide-trash-2 h-4 w-4" aria-hidden="true" /></template>
+        <span class="ml-1 mr-1 flex flex-none items-center">
+          <SelectAllCheckbox
+            :all-selected="allSelected"
+            :some-selected="someSelected"
+            @change="setAllSelected"
+          />
+        </span>
+        <span class="text-base font-semibold text-ink-gray-9">{{ selectedCount }} selected</span>
+        <Button variant="subtle" theme="red" icon-left="lucide-trash-2" label="Delete" @click="deleteSelected">
           Delete
         </Button>
-        <Button variant="ghost" @click="clearSelection">Clear</Button>
+        <Button variant="ghost" label="Clear" @click="clearSelection">Clear</Button>
         <div class="flex-1" />
       </template>
 
       <template v-else>
-        <TextInput v-model="query" type="text" placeholder="Find a diagram" class="max-w-md flex-1">
-          <template #prefix><span class="lucide-search h-3.5 w-3.5 text-ink-gray-5" aria-hidden="true" /></template>
+        <TextInput
+          v-model="query"
+          type="search"
+          size="md"
+          placeholder="Search diagrams"
+          aria-label="Search diagrams"
+          class="w-full max-w-sm"
+        >
+          <template #prefix>
+            <span class="lucide-search size-4 text-ink-gray-5" aria-hidden="true" />
+          </template>
         </TextInput>
-        <Dropdown :options="sortOptions" placement="bottom-start">
-          <Tooltip :text="`Sort: ${sortLabel}`">
-            <Button variant="subtle" :aria-label="`Sort: ${sortLabel}`">
-              <span class="lucide-arrow-up-down h-4 w-4" aria-hidden="true" />
-            </Button>
-          </Tooltip>
-        </Dropdown>
-      </template>
 
-      <TabButtons
-        v-model="view"
-        class="ml-auto"
-        size="sm"
-        :options="[
-          { value: 'tile', label: 'Tile view', icon: 'lucide-grid-2x2' },
-          { value: 'list', label: 'List view', icon: 'lucide-list' },
-        ]"
+        <!-- The trigger is the Dropdown's own child: a Tooltip wrapped around it
+             swallows the trigger binding, which is why Sort never opened (#449). -->
+        <Dropdown :options="sortOptions" align="start">
+          <Button
+            size="md"
+            icon-left="lucide-arrow-up-down"
+            :label="`Sort by ${sortLabel}`"
+            :tooltip="`Sort by ${sortLabel}`"
+          >
+            {{ sortLabel }}
+          </Button>
+        </Dropdown>
+
+        <div class="flex-1" />
+
+        <TabButtons
+          v-model="view"
+          size="md"
+          :options="[
+            { value: 'list', label: 'List view', icon: 'lucide-list' },
+            { value: 'tile', label: 'Tile view', icon: 'lucide-grid-2x2' },
+          ]"
+        />
+        <Button
+          variant="solid"
+          size="md"
+          icon-left="lucide-plus"
+          label="Create"
+          :loading="creating"
+          @click="emit('create')"
+        >
+          Create
+        </Button>
+      </template>
+    </div>
+
+    <DiagramListView
+      v-if="view === 'list' && !nothingHere"
+      :diagrams="ordered"
+      :selected="selected"
+      :sort="sort"
+      :pin-limit-reached="pinLimitReached"
+      :renaming="renaming"
+      :menu-for="menuFor"
+      @selection="replaceSelection"
+      @sort="setSort"
+      v-on="tileHandlers"
+    />
+
+    <div
+      v-else-if="!nothingHere"
+      class="grid gap-[18px]"
+      style="grid-template-columns: repeat(auto-fill, minmax(224px, 1fr))"
+    >
+      <DiagramTile
+        v-for="diagram in ordered"
+        :key="diagram.name"
+        :diagram="diagram"
+        :selected="selected.has(diagram.name)"
+        :selection-active="selectedCount > 0"
+        :pin-limit-reached="pinLimitReached"
+        :renaming="renaming === diagram.name"
+        :menu-for="menuFor"
+        v-on="tileHandlers"
       />
     </div>
 
-    <CollectionChips
-      :collections="collections"
-      :active="activeCollection"
-      @select="selectCollection"
-      @changed="refreshCollections"
-    />
-
-    <!-- List-view column header — aligns column-for-column with the flat rows. The
-         master checkbox sits left; Name / Created / Last edited click to sort (#302). -->
-    <!-- frappe-ui-exempt: text-2xs column-header row, the table-header convention shared with DiagramTile's list row and the "Pinned"/"Diagrams" section labels below --><div v-if="view === 'list'" class="mb-1 flex items-center gap-3 border-b border-outline-gray-1 px-3 pb-2 text-2xs font-medium text-ink-gray-5">
-      <span class="flex w-4 flex-none items-center justify-center">
-        <SelectAllCheckbox
-          v-if="currentDiagrams.length"
-          :all-selected="allSelected"
-          :some-selected="someSelected"
-          @change="setAllSelected"
-        />
-      </span>
-      <!-- Pin lane. The type-icon lane that sat here is gone with the icon (#218). -->
-      <span class="w-6 flex-none" />
-      <!-- frappe-ui-exempt: sortable column label, not a control — Button's own height, padding and background would break the column alignment with the rows beneath --><button class="flex min-w-0 flex-1 items-center gap-1 hover:text-ink-gray-7" @click="setSort('title')">
-        Name
-        <span v-if="sortArrow('title')" class="h-3 w-3 flex-none" aria-hidden="true" :class="sortArrow('title')" />
-      </button>
-      <span class="hidden w-28 flex-none lg:block">Owner</span>
-      <!-- frappe-ui-exempt: sortable column label — see the Name column above --><button class="hidden w-28 flex-none items-center gap-1 hover:text-ink-gray-7 md:flex" @click="setSort('creation')">
-        Created
-        <span v-if="sortArrow('creation')" class="h-3 w-3 flex-none" aria-hidden="true" :class="sortArrow('creation')" />
-      </button>
-      <!-- frappe-ui-exempt: sortable column label — see the Name column above --><button class="hidden w-28 flex-none items-center gap-1 hover:text-ink-gray-7 sm:flex" @click="setSort('modified')">
-        Last edited
-        <span v-if="sortArrow('modified')" class="h-3 w-3 flex-none" aria-hidden="true" :class="sortArrow('modified')" />
-      </button>
-      <span class="w-7 flex-none" />
-    </div>
-
-    <!-- A titled Pinned group (when anything is pinned), then the rest. -->
-    <template v-if="hasPinnedSection">
-      <!-- frappe-ui-exempt: text-2xs group label, matching the list-view column header above --><div class="mb-2 text-2xs font-semibold text-ink-gray-5">Pinned</div>
-      <DiagramCollection :diagrams="pinned" :view="view" :selected="selected" :pin-limit-reached="pinLimitReached" v-on="collectionHandlers" />
-      <Divider class="my-3" />
-      <!-- frappe-ui-exempt: text-2xs group label, matching the list-view column header above --><div class="mb-2 text-2xs font-semibold text-ink-gray-5">Diagrams</div>
-    </template>
-
-    <DiagramCollection v-if="files.length" :diagrams="files" :view="view" :selected="selected" :pin-limit-reached="pinLimitReached" v-on="collectionHandlers" />
-
     <!-- Empty shelf — worded for a search that matched nothing vs. a fresh Home. -->
-    <div v-if="nothingHere" class="flex flex-col items-center gap-3 py-20 text-center">
+    <div v-else class="flex flex-col items-center gap-3 py-20 text-center">
       <div class="flex h-12 w-12 items-center justify-center rounded-full bg-surface-gray-2">
         <span class="h-5 w-5 text-ink-gray-5" aria-hidden="true" :class="emptyState.icon" />
       </div>
       <div>
-        <p class="text-base font-semibold text-ink-gray-8">{{ emptyState.title }}</p>
-        <p class="mt-0.5 text-sm text-ink-gray-5">{{ emptyState.hint }}</p>
+        <p class="text-lg font-semibold text-ink-gray-8">{{ emptyState.title }}</p>
+        <p class="mt-0.5 text-base text-ink-gray-5">{{ emptyState.hint }}</p>
       </div>
     </div>
-
-    <CollectionPicker
-      :diagram="collecting"
-      :collections="collections"
-      @close="collecting = null"
-      @changed="refreshCollections"
-    />
 
     <!-- Show info (I5): read-only metadata. -->
     <Dialog v-model:open="info.open" title="Diagram info">
       <template #default>
-        <dl class="grid grid-cols-[92px_1fr] gap-x-3 gap-y-2 text-sm">
+        <dl class="grid grid-cols-[92px_1fr] gap-x-3 gap-y-2 text-base">
           <template v-for="[label, value] in infoRows" :key="label">
             <dt class="text-ink-gray-5">{{ label }}</dt>
             <dd class="truncate text-ink-gray-8">{{ value }}</dd>

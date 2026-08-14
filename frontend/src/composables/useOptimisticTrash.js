@@ -6,9 +6,11 @@
 // diagram. Clearing sixty of them meant sixty sequential requests and sixty-three
 // seconds of a blocked modal, with nothing leaving the shelf until the very end.
 //
-// There is no confirm here. Trash is reversible, so an "are you sure" ahead of it
-// buys nothing that Undo on the toast doesn't buy without blocking. Permanent
-// delete (TrashView) still asks — that one cannot be taken back.
+// There is no confirm here: the bulk bar's Delete is a deliberate act on a
+// selection the user just made, and Undo on the toast takes it back without
+// blocking. The callers decide. A single diagram's ⋯ → Delete DOES ask (#449) —
+// it sits one item below Duplicate, so a misclick is easy — and permanent delete
+// (TrashView) always asks, since that one cannot be taken back.
 
 import { reactive } from 'vue'
 import { toast } from 'frappe-ui'

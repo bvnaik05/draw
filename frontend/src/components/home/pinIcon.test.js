@@ -7,6 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const read = (rel) => readFileSync(path.join(here, rel), 'utf8')
 const icon = read('./PinIcon.vue')
 const tile = read('./DiagramTile.vue')
+const listView = read('./DiagramListView.vue')
 
 // #412: the pinned pin was a `lucide-pin` span with `fill-current` added. frappe-ui
 // renders a lucide class as a MASK tinted with background-color: currentColor, so
@@ -33,6 +34,17 @@ describe('the pinned pin (#412)', () => {
   })
 
   it('is used by both the list row and the tile', () => {
-    expect((tile.match(/<PinIcon/g) || []).length).toBe(2)
+    // One per view now that the list row lives in DiagramListView (#449).
+    expect((tile.match(/<PinIcon/g) || []).length).toBe(1)
+    expect((listView.match(/<PinIcon/g) || []).length).toBe(1)
+  })
+
+  // #449: the ⋯ menu carried a "Pinned" entry whose `pin` icon resolved to nothing
+  // and drew an empty circle. Pinning is the row's own one-click control, so the
+  // menu entry is gone rather than re-iconed.
+  it('leaves pinning to the row, not the ⋯ menu', () => {
+    const grid = read('./TileGrid.vue')
+    expect(grid).not.toContain("icon: 'pin'")
+    expect(grid).not.toContain("label: 'Unpin'")
   })
 })
