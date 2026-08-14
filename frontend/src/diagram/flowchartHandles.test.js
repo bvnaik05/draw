@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ADD_R,
+  ADD_HIT_R,
   ADD_OFFSET,
   GLYPH,
   HOVER_OUT,
@@ -10,7 +11,15 @@ import {
   nodeAtPoint,
   hoverRegionOf,
   pointInBox,
+  handleAtPoint,
+  nextHoverTarget,
 } from './flowchartHandles.js'
+import {
+  ADD_R as MM_ADD_R,
+  ADD_HIT_R as MM_ADD_HIT_R,
+  ADD_OFFSET as MM_ADD_OFFSET,
+  GLYPH as MM_GLYPH,
+} from './mindmapHandles.js'
 import { ROLE, flattenSubmodels } from './freeFloating.js'
 import { createFlowchart, addFlowchartNode, addFlowchartEdge } from './flowchartModel.js'
 
@@ -43,13 +52,94 @@ function block(id, x, y, w, h, zIndex = 1) {
   return { id, type: 'rectangle', x, y, w, h, zIndex }
 }
 
+// #441 item 12: this suite was named for mind-map parity but pinned numbers that
+// were not the mind map's (an 11px disc against its 7px one). Assert against the
+// mind-map constants themselves, so the two overlays cannot drift apart again.
 describe('geometry constants match the mind-map handles', () => {
-  it('keeps the "+" size and spacing', () => {
-    expect(ADD_R).toBe(11)
-    expect(ADD_OFFSET).toBe(28)
-    expect(GLYPH).toBe(4.5)
-    // Far edge of the "+" is ADD_OFFSET + ADD_R below the node; +12 gives the margin.
-    expect(HOVER_OUT).toBe(ADD_OFFSET + ADD_R + 12)
+  it('draws the same small mark inside the same generous target', () => {
+    expect(ADD_R).toBe(MM_ADD_R)
+    expect(ADD_HIT_R).toBe(MM_ADD_HIT_R)
+    expect(GLYPH).toBe(MM_GLYPH)
+    expect(ADD_OFFSET).toBe(MM_ADD_OFFSET)
+  })
+
+  it('reaches the whole hit target with its hover region', () => {
+    // Far edge of the TARGET is ADD_OFFSET + ADD_HIT_R below the node; +12 is margin.
+    expect(HOVER_OUT).toBe(ADD_OFFSET + ADD_HIT_R + 12)
+  })
+})
+
+// #441 round 2: the "+" PROTRUDES FROM THE CENTRE of the side it extends from.
+// An earlier pass slid it to whichever part of the edge was clearest so it would
+// miss the outgoing connector; that put the handle in a different place on every
+// node, which read as arbitrary. It is centred again, and it stays legible over a
+// route because it paints above the connectors on a white disc.
+describe('the "+" protrudes from the centre of its side', () => {
+  it('centres a plain node\'s handle below its bottom edge', () => {
+    const ctx = buildContext([fcNode('a', 0, 0, 160, 72)])
+    const [handle] = handlesForNode('a', ctx)
+    expect(handle.cx).toBe(80) // the node's centre line
+    expect(handle.cy).toBe(72 + ADD_OFFSET)
+    expect(handle.side).toBe('bottom')
+  })
+
+  it('stays centred whether or not the node already has a child', () => {
+    const shapes = [fcNode('a', 0, 0, 160, 72), fcNode('b', 0, 300, 160, 72)]
+    const alone = handlesForNode('a', buildContext([shapes[0]]))[0]
+    const withChild = handlesForNode('a', buildContext(shapes))[0]
+    expect(withChild.cx).toBe(alone.cx)
+  })
+})
+
+// #441 round 2: a decision is the one type whose point is more than one outgoing
+// flow, so it previews each branch on its own side rather than hiding them behind
+// a single "+" that silently cycled through them.
+describe('a decision offers one labelled handle per branch', () => {
+  function decision(id, x, y) {
+    return fcNode(id, x, y, 150, 96, 'decision', {
+      flowchart: {
+        nodeType: 'decision',
+        branches: [
+          { port: 'yes', label: 'Yes' },
+          { port: 'no', label: 'No' },
+        ],
+      },
+    })
+  }
+
+  it('sends every branch DOWNWARD, spread across the bottom edge', () => {
+    const handles = handlesForNode('d', buildContext([decision('d', 0, 0)])).filter((h) => h.port)
+    expect(handles).toHaveLength(2)
+    expect(handles.map((h) => h.label)).toEqual(['Yes', 'No'])
+    // Both leave downward — a fork, not two different kinds of thing.
+    expect(handles.map((h) => h.side)).toEqual(['bottom', 'bottom'])
+    expect(new Set(handles.map((h) => h.cy)).size).toBe(1)
+    // Spread along that edge, so neither preview hides the other.
+    expect(new Set(handles.map((h) => h.cx)).size).toBe(2)
+    expect(handles[0].cx).toBeLessThan(handles[1].cx)
+  })
+
+  it('carries the branch port, so pressing one extends THAT branch', () => {
+    const handles = handlesForNode('d', buildContext([decision('d', 0, 0)]))
+    expect(handles.filter((h) => h.port).map((h) => h.port)).toEqual(['yes', 'no'])
+  })
+
+  it('keeps both branch handles one drop below the node', () => {
+    const [yes, no] = handlesForNode('d', buildContext([decision('d', 0, 0)])).filter((h) => h.port)
+    expect(yes.cy).toBe(96 + ADD_OFFSET)
+    expect(no.cy).toBe(96 + ADD_OFFSET)
+    // Either side of the node's centre line (75 = half of 150).
+    expect(yes.cx).toBeLessThan(75)
+    expect(no.cx).toBeGreaterThan(75)
+  })
+
+  it('gives a plain node unlabelled handles on every side', () => {
+    const handles = handlesForNode('a', buildContext([fcNode('a', 0, 0)]))
+    expect(handles).toHaveLength(4)
+    for (const handle of handles) {
+      expect(handle.label).toBe('')
+      expect(handle.port).toBeNull()
+    }
   })
 })
 
@@ -68,33 +158,50 @@ describe('buildContext', () => {
 })
 
 describe('handlesForNode', () => {
-  it('gives a node a single "+" at its bottom-centre exit, one drop below', () => {
+  // #441 round 3: a child can be added from ANY direction, so every node offers a
+  // "+" on all four sides. A chart is not always a column, and forcing every child
+  // below its parent is what pushed later additions into long detouring routes.
+  const bottomOf = (handles) => handles.find((handle) => handle.side === 'bottom')
+
+  it('offers a "+" on every side, one drop clear of each edge', () => {
     const ctx = buildContext([fcNode('a', 100, 200, 160, 72)])
     const handles = handlesForNode('a', ctx)
-    expect(handles).toHaveLength(1)
-    const [handle] = handles
-    expect(handle.kind).toBe('child')
-    expect(handle.nodeId).toBe('a')
-    // Exit is bottom-centre (x 180, y 272); the "+" hangs ADD_OFFSET below it, and
-    // the stub leaves the node from the exit point.
-    expect(handle).toMatchObject({ cx: 180, cy: 272 + ADD_OFFSET, stubX: 180, stubY: 272 })
+    expect(handles.map((handle) => handle.side).sort()).toEqual(['bottom', 'left', 'right', 'top'])
+    for (const handle of handles) {
+      expect(handle.kind).toBe('child')
+      expect(handle.nodeId).toBe('a')
+    }
+    // Each sits ADD_OFFSET beyond the centre of its own edge, stub on the edge.
+    expect(handles.find((h) => h.side === 'bottom')).toMatchObject({ cx: 180, cy: 272 + ADD_OFFSET, stubX: 180, stubY: 272 })
+    expect(handles.find((h) => h.side === 'top')).toMatchObject({ cx: 180, cy: 200 - ADD_OFFSET, stubX: 180, stubY: 200 })
+    expect(handles.find((h) => h.side === 'right')).toMatchObject({ cx: 260 + ADD_OFFSET, cy: 236, stubX: 260, stubY: 236 })
+    expect(handles.find((h) => h.side === 'left')).toMatchObject({ cx: 100 - ADD_OFFSET, cy: 236, stubX: 100, stubY: 236 })
   })
 
-  it('places the "+" clear of the node box (no overlap with the bottom edge)', () => {
+  it('places every "+" clear of the node box', () => {
     const ctx = buildContext([fcNode('a', 100, 200, 160, 72)])
-    const [handle] = handlesForNode('a', ctx)
-    const nodeBottom = 272
-    // The top of the circle sits below the node edge by exactly ADD_OFFSET - ADD_R.
-    expect(handle.cy - ADD_R).toBeGreaterThan(nodeBottom)
-    expect(handle.cy - ADD_R - nodeBottom).toBe(ADD_OFFSET - ADD_R)
+    const box = ctx.boxes['a']
+    for (const handle of handlesForNode('a', ctx)) {
+      const clear =
+        handle.cy - ADD_R > box.y + box.h ||
+        handle.cy + ADD_R < box.y ||
+        handle.cx - ADD_R > box.x + box.w ||
+        handle.cx + ADD_R < box.x
+      expect(clear).toBe(true)
+    }
   })
 
-  it('puts a decision node\'s "+" at the diamond bottom vertex (still bottom-centre)', () => {
-    // portPoint(decision, 'out', 'TB') resolves to the box's bottom-centre — the
-    // diamond's bottom vertex — so one formula covers every node type.
+  it('hangs a decision\'s branch handles below the diamond, off its bottom edge', () => {
     const ctx = buildContext([fcNode('d', 0, 0, 150, 96, 'decision')])
-    const [handle] = handlesForNode('d', ctx)
-    expect(handle).toMatchObject({ cx: 75, cy: 96 + ADD_OFFSET, stubX: 75, stubY: 96 })
+    const branches = handlesForNode('d', ctx).filter((handle) => handle.port)
+    expect(branches.map((handle) => handle.port)).toEqual(['yes', 'no'])
+    for (const handle of branches) {
+      expect(handle.cy).toBe(96 + ADD_OFFSET)
+      expect(handle.stubY).toBe(96)
+    }
+    // The other three sides are plain, unlabelled adds.
+    const plain = handlesForNode('d', ctx).filter((handle) => !handle.port)
+    expect(plain.map((handle) => handle.side).sort()).toEqual(['left', 'right', 'top'])
   })
 
   it('returns nothing for a non-flowchart / unknown id', () => {
@@ -102,7 +209,7 @@ describe('handlesForNode', () => {
     expect(handlesForNode('missing', ctx)).toEqual([])
   })
 
-  it('round-trips through the real migration (flatten → handles below the box)', () => {
+  it('round-trips through the real migration (flatten \u2192 handles around the box)', () => {
     // A genuinely migrated flowchart: boxes come from the flatten, not hand values.
     const model = createFlowchart('TB')
     const a = addFlowchartNode(model, 'process', 'Step A', 40, 40)
@@ -112,8 +219,8 @@ describe('handlesForNode', () => {
     const ctx = buildContext(out.shapes)
 
     const handles = handlesForNode(a, ctx)
-    expect(handles).toHaveLength(1)
-    const [handle] = handles
+    expect(handles).toHaveLength(4)
+    const handle = bottomOf(handles)
     const box = ctx.boxes[a]
     // Centred on the box and one drop below its bottom edge.
     expect(handle.cx).toBe(box.x + box.w / 2)
@@ -152,20 +259,111 @@ describe('nodeAtPoint', () => {
 })
 
 describe('hoverRegionOf', () => {
-  it('extends below the node to cover the "+", a hair on the sides', () => {
+  it('covers every handle, measured from the handles themselves', () => {
     const ctx = buildContext([fcNode('a', 100, 200, 160, 72)])
     const region = hoverRegionOf('a', ctx)
+    // The whole hit circle of every handle is inside, with margin to spare. The old
+    // fixed-reach region left ~4px of slack, so a real pointer overshooting on its
+    // way to the "+" dropped the hover and the handle blinked out.
+    for (const handle of handlesForNode('a', ctx)) {
+      for (const [dx, dy] of [[0, 0], [ADD_HIT_R, 0], [-ADD_HIT_R, 0], [0, ADD_HIT_R], [0, -ADD_HIT_R]]) {
+        expect(pointInBox({ x: handle.cx + dx, y: handle.cy + dy }, region)).toBe(true)
+      }
+    }
+    // And the node itself still counts as hovered.
     const box = ctx.boxes['a']
-    expect(region).toEqual({ x: box.x - 6, y: box.y - 8, w: box.w + 12, h: box.h + HOVER_OUT })
-    // The "+" centre and its circle's bottom edge both fall inside the region.
-    const [handle] = handlesForNode('a', ctx)
-    expect(pointInBox({ x: handle.cx, y: handle.cy }, region)).toBe(true)
-    expect(pointInBox({ x: handle.cx, y: handle.cy + ADD_R }, region)).toBe(true)
+    expect(pointInBox({ x: box.x + box.w / 2, y: box.y + box.h / 2 }, region)).toBe(true)
   })
 
   it('is null for an unknown id', () => {
     const ctx = buildContext([fcNode('a', 0, 0)])
     expect(hoverRegionOf('missing', ctx)).toBeNull()
+  })
+})
+
+// #441 round 2: "the + disappears as soon as I go to click it". Two separate
+// causes, and the region test above only covered the first one.
+describe('handleAtPoint / nextHoverTarget', () => {
+  it('finds a handle anywhere inside its hit radius, not just on the drawn mark', () => {
+    const ctx = buildContext([fcNode('a', 100, 200, 160, 72)])
+    const [handle] = handlesForNode('a', ctx)
+    expect(handleAtPoint({ x: handle.cx, y: handle.cy }, 'a', ctx)?.nodeId).toBe('a')
+    expect(handleAtPoint({ x: handle.cx + ADD_HIT_R - 1, y: handle.cy }, 'a', ctx)).toBeTruthy()
+    expect(handleAtPoint({ x: handle.cx + ADD_HIT_R + 2, y: handle.cy }, 'a', ctx)).toBeNull()
+    expect(handleAtPoint({ x: handle.cx, y: handle.cy }, 'missing', ctx)).toBeNull()
+  })
+
+  it('keeps the hover on the node that OFFERED the "+", even over a neighbour', () => {
+    // The neighbour sits exactly where the parent's handle hangs — the common case
+    // once a chart has two rows. Asking "which node is under the pointer?" first,
+    // which is what the overlay used to do, handed the hover to the neighbour the
+    // moment the pointer reached the "+", and the handle vanished under the cursor.
+    const parent = fcNode('parent', 100, 100, 160, 72)
+    const ctx0 = buildContext([parent])
+    const handle = handlesForNode('parent', ctx0).find((one) => one.side === 'bottom')
+    // Close enough that the handle's HIT radius (15) reaches into the neighbour,
+    // but clear of its 7px mark — so the handle survives the keep-off filter and
+    // the two genuinely compete for the pointer.
+    const neighbour = fcNode('neighbour', handle.cx + 10, handle.cy - 20, 160, 72)
+    const shapes = [parent, neighbour]
+    const ctx = buildContext(shapes)
+    const point = { x: handle.cx, y: handle.cy }
+
+    // The pointer is on the parent's handle, which reaches into the neighbour.
+    expect(nextHoverTarget({ point, currentId: 'parent', ctx, shapes })).toBe('parent')
+    // And a point genuinely INSIDE the neighbour still hands it the hover, even
+    // while the parent is the one being defended.
+    const inside = { x: neighbour.x + 40, y: neighbour.y + 40 }
+    expect(nodeAtPoint(inside, shapes)).toBe('neighbour')
+    expect(nextHoverTarget({ point: inside, currentId: 'parent', ctx, shapes })).toBe('neighbour')
+  })
+
+  it('holds the hover across the empty gap between a node and its "+"', () => {
+    const shapes = [fcNode('a', 100, 200, 160, 72)]
+    const ctx = buildContext(shapes)
+    const [handle] = handlesForNode('a', ctx)
+    const gap = { x: handle.cx, y: (200 + 72 + handle.cy) / 2 }
+    expect(nodeAtPoint(gap, shapes)).toBeNull()
+    expect(nextHoverTarget({ point: gap, currentId: 'a', ctx, shapes })).toBe('a')
+    // Far away, the hover drops.
+    const away = { x: 1000, y: 1000 }
+    expect(nextHoverTarget({ point: away, currentId: 'a', ctx, shapes })).toBeNull()
+  })
+
+  it('reveals a node\'s handles on APPROACH, before the pointer touches it', () => {
+    const shapes = [fcNode('a', 200, 200, 160, 72)]
+    const ctx = buildContext(shapes)
+    // Just outside the box on each side, but within reach. Nothing is hovered yet,
+    // so this is the acquisition path, not the defend-what-we-have path.
+    const near = [
+      { x: 200 - 10, y: 236 }, // left
+      { x: 360 + 10, y: 236 }, // right
+      { x: 280, y: 200 - 10 }, // above
+    ]
+    for (const point of near) {
+      expect(nodeAtPoint(point, shapes)).toBeNull()
+      expect(nextHoverTarget({ point, currentId: null, ctx, shapes })).toBe('a')
+    }
+    // Well outside, still nothing.
+    expect(nextHoverTarget({ point: { x: 200 - 90, y: 236 }, currentId: null, ctx, shapes })).toBeNull()
+  })
+
+  it('gives an overlapping approach to the nearer node', () => {
+    // Two siblings close enough that their reach regions overlap — the pointer in
+    // the gap must pick one and stay with it, not flicker between them.
+    const shapes = [fcNode('left', 0, 0, 160, 72), fcNode('right', 190, 0, 160, 72)]
+    const ctx = buildContext(shapes)
+    expect(nextHoverTarget({ point: { x: 170, y: 36 }, currentId: null, ctx, shapes })).toBe('left')
+    expect(nextHoverTarget({ point: { x: 182, y: 36 }, currentId: null, ctx, shapes })).toBe('right')
+  })
+
+  it('defends every branch handle of a decision, not just the first', () => {
+    const shapes = [fcNode('d', 100, 100, 160, 72, 'decision')]
+    const ctx = buildContext(shapes)
+    for (const handle of handlesForNode('d', ctx)) {
+      const point = { x: handle.cx, y: handle.cy }
+      expect(nextHoverTarget({ point, currentId: 'd', ctx, shapes })).toBe('d')
+    }
   })
 })
 
@@ -194,3 +392,40 @@ function docWith(partial) {
     ...partial,
   }
 }
+
+// #441 round 3: with a "+" on every side, a node in a built-up chart was offering
+// handles that sat ON TOP of its neighbours — a mark pointing at space that is
+// already taken, covering the node underneath.
+describe('handles keep off the neighbours', () => {
+  it('drops a "+" that would land on another node', () => {
+    const parent = fcNode('p', 0, 0, 160, 72)
+    // A neighbour sitting exactly where the bottom handle hangs.
+    const below = fcNode('below', 40, 72 + ADD_OFFSET - 10, 160, 72)
+    const handles = handlesForNode('p', buildContext([parent, below]))
+    expect(handles.map((handle) => handle.side)).not.toContain('bottom')
+    expect(handles.map((handle) => handle.side).sort()).toEqual(['left', 'right', 'top'])
+  })
+
+  it('keeps a decision\'s branch handle off an existing child', () => {
+    const decision = fcNode('d', 0, 0, 150, 96, 'decision')
+    const ctx0 = buildContext([decision])
+    const yes = handlesForNode('d', ctx0).find((handle) => handle.port === 'yes')
+    // Sized to cover the Yes handle only — wide enough and it would swallow No too.
+    const child = fcNode('child', yes.cx - 10, yes.cy - 10, 20, 20)
+    const ports = handlesForNode('d', buildContext([decision, child])).map((handle) => handle.port)
+    expect(ports).not.toContain('yes')
+    expect(ports).toContain('no')
+  })
+
+  it('falls back to the full set when every side is blocked', () => {
+    const parent = fcNode('p', 0, 0, 160, 72)
+    const ring = [
+      fcNode('n1', -400, -400, 1000, 380), // above
+      fcNode('n2', -400, 90, 1000, 400), // below
+      fcNode('n3', -400, -400, 380, 1000), // left
+      fcNode('n4', 180, -400, 400, 1000), // right
+    ]
+    const handles = handlesForNode('p', buildContext([parent, ...ring]))
+    expect(handles).toHaveLength(4)
+  })
+})

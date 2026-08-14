@@ -306,6 +306,52 @@ describe('buildFlowchartChild', () => {
     shapes.push({ id: 'block1', type: 'rectangle', x: 0, y: 0, w: 10, h: 10 })
     expect(buildFlowchartChild(shapes, connectors, 'block1', 'process')).toBeNull()
   })
+
+  // #441 item 15: a decision must be able to have a third outcome. This used to fall
+  // back to the FIRST branch, giving the new edge a "Yes" label that already belonged
+  // to another flow.
+  it('grows a new branch once a decision has used every one it had', () => {
+    const { shapes, connectors, startId } = flowchartShapes('decision')
+    let currentShapes = shapes
+    let currentConnectors = connectors
+    for (const expected of ['Yes', 'No']) {
+      const built = buildFlowchartChild(currentShapes, currentConnectors, startId, 'process')
+      expect(built.connector.label).toBe(expected)
+      expect(built.parentPatch).toBeNull()
+      currentShapes = [...currentShapes, built.shape]
+      currentConnectors = [...currentConnectors, built.connector]
+    }
+    const third = buildFlowchartChild(currentShapes, currentConnectors, startId, 'process')
+    expect(third.connector.flowchart.fromPort).not.toBe('yes')
+    expect(third.connector.flowchart.fromPort).not.toBe('no')
+    expect(third.connector.label).toBe('Option 2')
+    // The grown branch set comes back for the caller to write onto the parent.
+    expect(third.parentPatch.branches.map((b) => b.label)).toEqual(['Yes', 'No', 'Option 2'])
+  })
+
+  // #441 item 15: a plain node can have many outgoing flows too, and they must not
+  // all land in one lane.
+  it('fans a plain node\'s repeated flows out either side of it', () => {
+    const { shapes, connectors, startId } = flowchartShapes()
+    const first = buildFlowchartChild(shapes, connectors, startId, 'process')
+    const second = buildFlowchartChild(
+      [...shapes, first.shape],
+      [...connectors, first.connector],
+      startId,
+      'process',
+    )
+    const third = buildFlowchartChild(
+      [...shapes, first.shape, second.shape],
+      [...connectors, first.connector, second.connector],
+      startId,
+      'process',
+    )
+    const xs = [first.shape.x, second.shape.x, third.shape.x]
+    expect(new Set(xs).size).toBe(3)
+    // Alternating: one either side of the first, which stays put.
+    expect(second.shape.x).toBeGreaterThan(first.shape.x)
+    expect(third.shape.x).toBeLessThan(first.shape.x)
+  })
 })
 
 // #98: the free-floating counterpart of BottomPalette's Tidy / flip / number, run

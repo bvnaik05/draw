@@ -153,7 +153,16 @@ const laserHead = computed(() => {
     <!-- Base shapes and board objects in one z-ordered pass, so anything added
          later sits on top and Arrange moves an object past any other (#27). -->
     <template v-for="item in orderedObjects" :key="item.key">
-      <ShapeView v-if="item.kind === 'shape'" :shape="item.object" />
+      <!-- `selected` matters here, not just to the block layer's own ShapeView pass:
+           a mind-map or flowchart node shows selection by drawing its OWN border
+           heavier (#427, #441 item 3), and this is the pass that actually paints
+           shapes on the unified canvas. Without it a selected node had no feedback
+           at all once the dashed box was (rightly) taken away from it. -->
+      <ShapeView
+        v-if="item.kind === 'shape'"
+        :shape="item.object"
+        :selected="store.state.selection.includes(item.object.id)"
+      />
 
       <!-- Committed freehand stroke. -->
       <path

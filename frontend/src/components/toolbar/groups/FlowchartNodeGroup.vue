@@ -97,7 +97,7 @@ function remove() {
     <template #trigger><ToolbarButton label="Node type" icon="lucide-shapes" /></template>
     <template #default>
       <div class="w-[196px] p-2">
-        <div class="mb-1 text-2xs font-semibold text-ink-gray-4">Node type</div>
+        <div class="mb-1 text-sm font-semibold text-ink-gray-4">Node type</div>
         <div class="grid grid-cols-5 gap-1.5">
           <ToolbarButton
             v-for="type in NODE_TYPES"
@@ -122,7 +122,7 @@ function remove() {
     </template>
     <template #default>
       <div class="w-[204px] p-2">
-        <div class="mb-1.5 text-2xs font-semibold text-ink-gray-4">Fill</div>
+        <div class="mb-1.5 text-sm font-semibold text-ink-gray-4">Fill</div>
         <SwatchGrid :colors="SWATCH_PALETTE" shape="square" class="mb-2" @select="setFill" />
         <ToolbarButton class="w-full" label="No fill" @click="setFill('none')" />
       </div>
@@ -139,7 +139,7 @@ function remove() {
     </template>
     <template #default>
       <div class="w-[204px] p-2">
-        <div class="mb-1.5 text-2xs font-semibold text-ink-gray-4">Border</div>
+        <div class="mb-1.5 text-sm font-semibold text-ink-gray-4">Border</div>
         <SwatchGrid :colors="SWATCH_PALETTE" shape="ring" class="mb-2" @select="setBorder" />
         <ToolbarButton class="w-full" label="Default border" @click="setBorder(null)" />
       </div>
@@ -176,7 +176,7 @@ function remove() {
     <template #trigger><ToolbarButton label="Branches" icon="lucide-git-branch" /></template>
     <template #default>
       <div class="w-[236px] p-2">
-        <div class="mb-1 text-2xs font-semibold text-ink-gray-4">Branches</div>
+        <div class="mb-1 text-sm font-semibold text-ink-gray-4">Branches</div>
         <div class="flex flex-col gap-1.5">
           <div v-for="branch in node.branches" :key="branch.port" class="flex items-center gap-1.5">
             <TextInput

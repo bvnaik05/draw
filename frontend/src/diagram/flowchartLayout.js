@@ -189,14 +189,21 @@ export function routeOffsets(model) {
 // (spec B4 auto-position, B7 column/lane snapping). For a decision branch the
 // child is fanned out laterally so branches auto-balance symmetrically (B4/F3).
 // Returns { x, y } for the new node; the caller writes it onto the model.
-export function placeChild(model, parentId, childNode, branchIndex = null, branchCount = 1) {
+// `laneSteps` overrides the branch maths with an explicit number of sibling-steps
+// to offset by (#441 item 15). A decision fans by branch, but a plain node can have
+// as many outgoing flows as the user wants, and those have no branch index to fan
+// on — see fanSteps, which walks them out alternately either side of the parent.
+export function placeChild(model, parentId, childNode, branchIndex = null, branchCount = 1, laneSteps = null) {
   const parent = flowchartNodeById(model, parentId)
   if (!parent) return { x: childNode.x, y: childNode.y }
   const direction = model.direction || 'TB'
   const parentSize = nodeSize(parent)
   const childSize = nodeSize(childNode)
   const parentCenter = nodeCenter(parent)
-  const lane = laneOffset(branchIndex, branchCount, childSize, direction)
+  const lane =
+    laneSteps === null
+      ? laneOffset(branchIndex, branchCount, childSize, direction)
+      : laneSteps * ((direction === 'LR' ? childSize.h : childSize.w) + SIBLING_GAP)
   const base = direction === 'LR'
     ? { x: parent.x + parentSize.w + LEVEL_GAP, y: Math.round(parentCenter.y - childSize.h / 2 + lane) }
     : { x: Math.round(parentCenter.x - childSize.w / 2 + lane), y: parent.y + parentSize.h + LEVEL_GAP }
@@ -209,21 +216,182 @@ function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
 }
 
-function avoidOverlap(model, box, direction) {
-  const step = (direction === 'LR' ? box.h : box.w) + SIBLING_GAP
-  const collides = (b) =>
-    model.nodes.some((n) => {
-      const s = nodeSize(n)
-      return rectsOverlap(b, { x: n.x, y: n.y, w: s.w, h: s.h })
-    })
-  const pos = { ...box }
-  let guard = 0
-  while (collides(pos) && guard < 40) {
-    if (direction === 'LR') pos.y += step
-    else pos.x += step
-    guard += 1
+// A node's slot must be clear of every existing node, with a real gap around it —
+// not merely non-overlapping (#441 round 2). Boxes that touch read as a collision
+// to the eye, and a connector then has nowhere to run between them.
+const CLEAR_GAP = 20
+
+function collidesWith(model, box, ignoreIds) {
+  return model.nodes.some((node) => {
+    if (ignoreIds?.has(node.id)) return false
+    const size = nodeSize(node)
+    return rectsOverlap(
+      { x: box.x - CLEAR_GAP, y: box.y - CLEAR_GAP, w: box.w + CLEAR_GAP * 2, h: box.h + CLEAR_GAP * 2 },
+      { x: node.x, y: node.y, w: size.w, h: size.h },
+    )
+  })
+}
+
+// Search outward for the nearest clear slot, alternating either side of the wanted
+// position along the CROSS axis first (which keeps the child on its parent's level)
+// and only then stepping further along the main axis.
+//
+// The old version marched in ONE direction in fixed sibling steps, so a new node
+// slid right until it found a gap — past everything already there, and often far
+// from the parent it belonged to. Alternating keeps the chart compact and balanced,
+// which is what makes repeated adds stay legible.
+function avoidOverlap(model, box, direction, ignoreIds = null) {
+  if (!collidesWith(model, box, ignoreIds)) return { x: Math.round(box.x), y: Math.round(box.y) }
+  const lateral = direction === 'LR' ? 'y' : 'x'
+  const forward = direction === 'LR' ? 'x' : 'y'
+  const lateralStep = (direction === 'LR' ? box.h : box.w) + SIBLING_GAP
+  const forwardStep = (direction === 'LR' ? box.w : box.h) + SIBLING_GAP
+  for (let rank = 0; rank < 12; rank += 1) {
+    for (let side = 1; side <= (rank === 0 ? 1 : 2); side += 1) {
+      for (let lane = rank === 0 ? 0 : 1; lane <= 8; lane += 1) {
+        const candidate = { ...box }
+        candidate[lateral] += (side === 1 ? lane : -lane) * lateralStep
+        candidate[forward] += rank * forwardStep
+        if (!collidesWith(model, candidate, ignoreIds)) {
+          return { x: Math.round(candidate.x), y: Math.round(candidate.y) }
+        }
+      }
+    }
   }
-  return { x: Math.round(pos.x), y: Math.round(pos.y) }
+  return { x: Math.round(box.x), y: Math.round(box.y) }
+}
+
+// Place a child one level away from its parent on a named SIDE, so a node created
+// from a decision's "No" handle appears where that handle pointed (#441 round 2).
+// `crossSteps` fans repeated children along the side.
+export function placeOnSide(model, parentId, childSize, side, crossSteps = 0) {
+  const base = sideSlot(model, parentId, childSize, side, crossSteps)
+  if (!base) return { x: 0, y: 0 }
+  const vertical = side === 'top' || side === 'bottom'
+  return avoidOverlap(model, { ...base, w: childSize.w, h: childSize.h }, vertical ? 'TB' : 'LR')
+}
+
+// Push overlapping boxes apart until every pair has a real gap between them, and
+// report only the ones that had to move (#441 round 3).
+//
+// This exists because a node that GROWS to fit its label grows into its neighbours.
+// A flowchart is manually placed, so the rule is deliberately minimal: nothing moves
+// unless it is actually crowded, and then it moves the shortest distance that clears
+// — along whichever axis it is least overlapped on, which preserves the arrangement
+// the user built instead of re-flowing the chart out from under them.
+//
+// `anchorId` is the node that just changed size. It never moves: it is the one box
+// whose position the user is currently looking at.
+//
+// With an anchor, only pairs INVOLVING it separate — plus, as the passes go on, the
+// nodes it has already displaced, so a shove can propagate down a row instead of
+// stopping at the first neighbour. Comparing every pair instead enforced the gap
+// across the WHOLE chart, so two nodes deliberately placed 8px apart on the far side
+// of the canvas jumped apart on a keystroke somewhere else. That is item 18, and it
+// is the behaviour this function claims to protect.
+const SEPARATION_PASSES = 24
+export function separateBoxes(boxes, { anchorId = null, gap = CLEAR_GAP } = {}) {
+  const working = (boxes || []).map((box) => ({ ...box }))
+  // Who is allowed to push. Without an anchor every box is (the caller asked for a
+  // whole-set relax); with one it starts as just the anchor and grows to include
+  // whatever the anchor has actually moved.
+  const pushers = new Set(anchorId ? [anchorId] : working.map((box) => box.id))
+  for (let pass = 0; pass < SEPARATION_PASSES; pass += 1) {
+    let moved = false
+    for (let i = 0; i < working.length; i += 1) {
+      for (let j = i + 1; j < working.length; j += 1) {
+        const one = working[i]
+        const other = working[j]
+        if (!pushers.has(one.id) && !pushers.has(other.id)) continue
+        if (!pushApart(one, other, gap, anchorId)) continue
+        moved = true
+        pushers.add(one.id)
+        pushers.add(other.id)
+      }
+    }
+    if (!moved) break
+  }
+  const shifted = {}
+  for (const box of working) {
+    const original = boxes.find((candidate) => candidate.id === box.id)
+    if (Math.round(box.x) !== Math.round(original.x) || Math.round(box.y) !== Math.round(original.y)) {
+      shifted[box.id] = { x: Math.round(box.x), y: Math.round(box.y) }
+    }
+  }
+  return shifted
+}
+
+// Separate one pair if they are closer than `gap`, along their shallower axis.
+// Returns whether anything moved.
+function pushApart(a, b, gap, anchorId) {
+  const half = gap / 2
+  const overlapX = Math.min(a.x + a.w + half, b.x + b.w + half) - Math.max(a.x - half, b.x - half)
+  const overlapY = Math.min(a.y + a.h + half, b.y + b.h + half) - Math.max(a.y - half, b.y - half)
+  if (overlapX <= 0 || overlapY <= 0) return false
+  const axis = overlapX < overlapY ? 'x' : 'y'
+  const span = axis === 'x' ? 'w' : 'h'
+  const push = axis === 'x' ? overlapX : overlapY
+  // Which way each one goes: away from the other's centre.
+  const sign = a[axis] + a[span] / 2 <= b[axis] + b[span] / 2 ? -1 : 1
+  const aFixed = a.id === anchorId
+  const bFixed = b.id === anchorId
+  if (aFixed && bFixed) return false
+  if (aFixed) b[axis] -= sign * push
+  else if (bFixed) a[axis] += sign * push
+  else {
+    a[axis] += (sign * push) / 2
+    b[axis] -= (sign * push) / 2
+  }
+  return true
+}
+
+// The side of `parentId` a new child should take when the user has not named one.
+//
+// A flowchart reads top-to-bottom, so `bottom` is tried first and keeps the slot
+// whenever it is clear. Only when the natural side is occupied does this look
+// sideways — which is the point (#441 round 3): dropping a child into taken space
+// forced its connector to detour around everything already on the canvas, and every
+// detour that crossed another run became a jumper. A child placed where there is
+// actually room needs no detour at all.
+//
+// "Free" means the slot the child would take is clear WITHOUT avoidOverlap having
+// to move it, so this asks the same collision question the placement will.
+const SIDE_PREFERENCE = ['bottom', 'right', 'left', 'top']
+export function freestSide(model, parentId, childSize, crossSteps = 0) {
+  for (const side of SIDE_PREFERENCE) {
+    const slot = sideSlot(model, parentId, childSize, side, crossSteps)
+    if (slot && !collidesWith(model, { ...slot, ...childSize }, null)) return side
+  }
+  return 'bottom'
+}
+
+// Where a child would sit on `side` before any overlap search — the raw slot, which
+// is what makes "is this side free?" answerable.
+function sideSlot(model, parentId, childSize, side, crossSteps) {
+  const parent = flowchartNodeById(model, parentId)
+  if (!parent) return null
+  const parentSize = nodeSize(parent)
+  const center = nodeCenter(parent)
+  const vertical = side === 'top' || side === 'bottom'
+  const cross = crossSteps * ((vertical ? childSize.w : childSize.h) + SIBLING_GAP)
+  if (side === 'bottom') return { x: center.x - childSize.w / 2 + cross, y: parent.y + parentSize.h + LEVEL_GAP }
+  if (side === 'top') return { x: center.x - childSize.w / 2 + cross, y: parent.y - LEVEL_GAP - childSize.h }
+  if (side === 'right') return { x: parent.x + parentSize.w + LEVEL_GAP, y: center.y - childSize.h / 2 + cross }
+  return { x: parent.x - LEVEL_GAP - childSize.w, y: center.y - childSize.h / 2 + cross }
+}
+
+// Where the n-th outgoing flow of a plain node should sit, in sibling-steps either
+// side of the parent: 0, +1, -1, +2, -2, … (#441 item 15).
+//
+// It alternates rather than marching in one direction so a node with several
+// outgoing flows stays balanced under its parent. Crucially it is a function of n
+// alone: adding a fourth flow never moves the first three, because a flowchart is
+// manually placed and re-balancing the whole fan on every add is exactly the
+// unrelated-nodes-jumping the issue objects to (#441 item 18).
+export function fanSteps(existingCount) {
+  if (existingCount <= 0) return 0
+  const magnitude = Math.ceil(existingCount / 2)
+  return existingCount % 2 === 1 ? magnitude : -magnitude
 }
 
 // Symmetric lateral spread for branch children (0 for a single child).

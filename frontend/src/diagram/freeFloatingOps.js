@@ -11,8 +11,15 @@ import { subtreeIds } from './mindmapModel.js'
 import { layoutMindMap } from './mindmapLayout.js'
 import { mindmapNodeSize, NODE_FONT_SIZE } from './mindmapNodeSize.js'
 import { DEFAULT_NODE_STYLE, nodeColors, borderProp, connectorColor } from './mindmapNodeStyle.js'
-import { makeFlowchartNode, defaultNodeText, nodeSize, pickFreeBranch } from './flowchartModel.js'
-import { placeChild } from './flowchartLayout.js'
+import {
+  makeFlowchartNode,
+  defaultNodeText,
+  nodeSize,
+  pickFreeBranch,
+  addDecisionBranch,
+  outgoingEdges,
+} from './flowchartModel.js'
+import { placeOnSide, fanSteps, freestSide } from './flowchartLayout.js'
 import { ROLE, flowchartNodeShape, flowchartEdgeConnector, edgeAnchors } from './freeFloating.js'
 
 const GAP_X = 60
@@ -193,22 +200,64 @@ export function mindmapLayoutPatches(shapes, connectors, rootId) {
 // fan-out) runs, then returns a shape + connector identical to a migrated one.
 // Returns null when the parent is not a flowchart shape. The caller assigns zIndex
 // and commits both objects as one undoable unit.
-export function buildFlowchartChild(shapes, connectors, parentShapeId, nodeType) {
+export function buildFlowchartChild(
+  shapes,
+  connectors,
+  parentShapeId,
+  nodeType,
+  wantedPort = null,
+  wantedSide = null,
+) {
   const parentShape = (shapes || []).find((s) => s.id === parentShapeId && s.role === ROLE.flowchartNode)
   if (!parentShape) return null
   const model = flowchartModelFromShapes(shapes, connectors)
   const parentNode = model.nodes.find((n) => n.id === parentShapeId)
   if (!parentNode) return null
 
-  const draft = makeFlowchartNode(nodeType, defaultNodeText(nodeType), 0, 0)
+  const draft = makeFlowchartNode(nodeType, defaultNodeText(nodeType, model), 0, 0)
+  const isDecision = parentNode.nodeType === 'decision'
   // Extend a decision node through a free branch port (Yes/No/…), carrying its label
   // onto the edge and fanning the child into that branch's lane — so the new edge
   // isn't an unlabelled centre 'out' (matches the sub-model + "+"-handle paths).
-  const branch = pickFreeBranch(parentNode, model)
-  const branchCount = parentNode.nodeType === 'decision' ? parentNode.branches.length : 1
-  const branchIndex = branch ? parentNode.branches.findIndex((b) => b.port === branch.port) : null
+  //
+  // Once every branch is taken, GROW one (#441 item 15). Falling back to the first
+  // branch, as this used to, silently gave the new edge a "Yes" label that already
+  // belonged to another flow — a decision could never cleanly have a third outcome.
+  // A "+" on a decision belongs to one specific branch, and pressing it must extend
+  // THAT branch — otherwise the labelled preview lies about what it will do.
+  let branch = wantedPort ? parentNode.branches?.find((b) => b.port === wantedPort) : null
+  if (!branch) branch = pickFreeBranch(parentNode, model)
+  let addedBranch = null
+  // Only grow a branch when the caller had no particular one in mind. A named port
+  // that is already taken means the user pressed the "+" of a branch that already
+  // has a flow, and a decision may legitimately fan several nodes off one outcome.
+  if (isDecision && !wantedPort && isBranchTaken(model, parentNode, branch)) {
+    const port = addDecisionBranch(model, parentNode.id, `Option ${parentNode.branches.length}`)
+    branch = parentNode.branches.find((b) => b.port === port)
+    addedBranch = branch
+  }
+
+  const branchCount = isDecision ? parentNode.branches.length : 1
+  const branchIndex = branch ? parentNode.branches.findIndex((b) => b.port === branch.port) : -1
   const size = nodeSize(draft)
-  const pos = placeChild(model, parentShapeId, { ...draft, ...size }, branchIndex, branchCount)
+  // Every flow leaves DOWNWARD. A decision's branches fan either side of the
+  // parent's centre in branch order, so Yes and No land left and right of each
+  // other below it — matching the handles, which are spread along the same edge.
+  // A plain node's repeated flows fan the same way, by how many it already has.
+  const onThisBranch = outgoingEdges(model, parentShapeId).filter(
+    (edge) => !branch || edge.from.port === branch.port,
+  ).length
+  const lane =
+    branchIndex >= 0 && branchCount > 1
+      ? branchIndex - (branchCount - 1) / 2 + fanSteps(onThisBranch)
+      : fanSteps(onThisBranch)
+  // The side the user pressed wins. With none named, take the side that is actually
+  // free rather than always heading down (#441 round 3): a child dropped into
+  // occupied space has to be routed around everything already there, which is where
+  // the pile of jumpers came from. Choosing empty space means the connector is a
+  // short straight run and crosses nothing.
+  const side = wantedSide || freestSide(model, parentShapeId, size, lane)
+  const pos = placeOnSide(model, parentShapeId, size, side, lane)
   const childBox = { x: pos.x, y: pos.y, w: size.w, h: size.h }
 
   const shape = flowchartNodeShape(draft, childBox)
@@ -220,7 +269,20 @@ export function buildFlowchartChild(shapes, connectors, parentShapeId, nodeType)
     kind: 'flow',
     label: branch ? branch.label : '',
   })
-  return { shape, connector }
+  // The caller writes the grown branch set back onto the parent shape, in the same
+  // commit as the child, so one undo takes back the whole add.
+  const parentPatch = addedBranch
+    ? { branches: parentNode.branches.map((b) => ({ ...b })) }
+    : null
+  return { shape, connector, parentPatch }
+}
+
+// Whether the branch pickFreeBranch handed back is actually free. It falls back to
+// the first branch when all are used, so a returned branch that already carries an
+// edge means the node has run out.
+function isBranchTaken(model, parentNode, branch) {
+  if (!branch) return false
+  return outgoingEdges(model, parentNode.id).some((edge) => edge.from.port === branch.port)
 }
 
 // --- flowchart whole-graph layout (#98) -------------------------------------

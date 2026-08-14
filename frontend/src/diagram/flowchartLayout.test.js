@@ -13,7 +13,10 @@ import {
   flowchartContentBounds,
   nodeCenter,
   placeChild,
+  placeOnSide,
   placePicker,
+  separateBoxes,
+  freestSide,
 } from './flowchartLayout.js'
 import { nodeSize } from './flowchartModel.js'
 
@@ -204,5 +207,183 @@ describe('flowchart content bounds', () => {
     const bounds = flowchartContentBounds(model)
     expect(bounds.w).toBeGreaterThan(0)
     expect(bounds.h).toBeGreaterThan(0)
+  })
+})
+
+// #441 round 2: a child lands on the SIDE its handle pointed from, and never on top
+// of an existing node.
+describe('placeOnSide', () => {
+  function chart() {
+    const model = createFlowchart()
+    const a = addFlowchartNode(model, 'decision', 'Q?', 0, 0)
+    return { model, a }
+  }
+
+  it('puts a bottom child below and a right child beside', () => {
+    const { model, a } = chart()
+    const size = { w: 160, h: 72 }
+    const below = placeOnSide(model, a, size, 'bottom')
+    const beside = placeOnSide(model, a, size, 'right')
+    expect(below.y).toBeGreaterThan(0)
+    expect(beside.x).toBeGreaterThan(0)
+    // Each is centred on the side it grows from.
+    expect(Math.abs(below.x + size.w / 2 - 75)).toBeLessThan(2) // decision is 150 wide
+    expect(beside.x).toBeGreaterThan(150)
+  })
+
+  it('finds a clear slot rather than landing on an existing node', () => {
+    const { model, a } = chart()
+    const size = { w: 160, h: 72 }
+    const first = placeOnSide(model, a, size, 'bottom')
+    addFlowchartNode(model, 'process', 'One', first.x, first.y)
+    const second = placeOnSide(model, a, size, 'bottom')
+    const overlaps =
+      second.x < first.x + size.w && second.x + size.w > first.x &&
+      second.y < first.y + size.h && second.y + size.h > first.y
+    expect(overlaps).toBe(false)
+  })
+
+  it('stays near the parent instead of marching off in one direction', () => {
+    const { model, a } = chart()
+    const size = { w: 160, h: 72 }
+    // Fill the slot straight below, then two more children.
+    for (let i = 0; i < 3; i += 1) {
+      const spot = placeOnSide(model, a, size, 'bottom', 0)
+      addFlowchartNode(model, 'process', `n${i}`, spot.x, spot.y)
+    }
+    const xs = model.nodes.slice(1).map((n) => n.x)
+    // Alternating either side keeps the spread balanced around the parent's centre.
+    expect(Math.min(...xs)).toBeLessThan(0)
+    expect(Math.max(...xs)).toBeGreaterThan(0)
+  })
+})
+
+// #441 round 3: a node that grows to fit its label grows INTO its neighbours, and a
+// new child dropped into occupied space has to be routed around everything already
+// there — which is where the pile of jumpers came from.
+describe('separateBoxes', () => {
+  it('leaves boxes that already have a gap exactly where they are', () => {
+    const boxes = [
+      { id: 'a', x: 0, y: 0, w: 100, h: 50 },
+      { id: 'b', x: 200, y: 0, w: 100, h: 50 },
+    ]
+    expect(separateBoxes(boxes, { anchorId: 'a' })).toEqual({})
+  })
+
+  it('pushes a crowded neighbour clear, never the node that grew', () => {
+    const boxes = [
+      { id: 'grown', x: 0, y: 0, w: 200, h: 50 },
+      { id: 'other', x: 180, y: 0, w: 100, h: 50 },
+    ]
+    const shifted = separateBoxes(boxes, { anchorId: 'grown' })
+    expect(shifted.grown).toBeUndefined()
+    expect(shifted.other.x).toBeGreaterThanOrEqual(220)
+  })
+
+  it('separates along the shallower axis, so the arrangement survives', () => {
+    // Deeply overlapped left-right, barely overlapped top-bottom: it should move
+    // vertically, which is the shorter correction.
+    const boxes = [
+      { id: 'anchor', x: 0, y: 0, w: 200, h: 100 },
+      { id: 'below', x: 10, y: 95, w: 200, h: 100 },
+    ]
+    const shifted = separateBoxes(boxes, { anchorId: 'anchor' })
+    expect(shifted.below.x).toBe(10)
+    expect(shifted.below.y).toBeGreaterThanOrEqual(120)
+  })
+
+  it('shares the correction when neither box is anchored', () => {
+    const boxes = [
+      { id: 'a', x: 0, y: 0, w: 100, h: 50 },
+      { id: 'b', x: 90, y: 0, w: 100, h: 50 },
+    ]
+    const shifted = separateBoxes(boxes, { anchorId: null })
+    expect(shifted.a.x).toBeLessThan(0)
+    expect(shifted.b.x).toBeGreaterThan(90)
+  })
+
+  it('resolves a whole row rather than only the first collision', () => {
+    const boxes = [
+      { id: 'a', x: 0, y: 0, w: 100, h: 50 },
+      { id: 'b', x: 60, y: 0, w: 100, h: 50 },
+      { id: 'c', x: 120, y: 0, w: 100, h: 50 },
+    ]
+    const shifted = separateBoxes(boxes, { anchorId: 'a' })
+    const settled = boxes.map((box) => ({ ...box, ...(shifted[box.id] || {}) }))
+    for (let i = 0; i < settled.length; i += 1) {
+      for (let j = i + 1; j < settled.length; j += 1) {
+        const one = settled[i]
+        const other = settled[j]
+        const apartX = one.x + one.w <= other.x || other.x + other.w <= one.x
+        const apartY = one.y + one.h <= other.y || other.y + other.h <= one.y
+        expect(apartX || apartY).toBe(true)
+      }
+    }
+  })
+})
+
+describe('freestSide', () => {
+  const chart = () => {
+    const model = createFlowchart('TB')
+    const parent = addFlowchartNode(model, 'process', 'Parent', 400, 400)
+    return { model, parent }
+  }
+
+  it('heads down when there is room, because a flowchart reads downward', () => {
+    const { model, parent } = chart()
+    expect(freestSide(model, parent, { w: 160, h: 72 })).toBe('bottom')
+  })
+
+  it('goes sideways rather than into an occupied slot', () => {
+    const { model, parent } = chart()
+    // Park a node exactly where the downward child would land.
+    addFlowchartNode(model, 'process', 'Taken', 400, 400 + 72 + 64)
+    const side = freestSide(model, parent, { w: 160, h: 72 })
+    expect(side).not.toBe('bottom')
+    expect(['right', 'left', 'top']).toContain(side)
+  })
+})
+
+// Review of #448: separateBoxes compared EVERY pair, so the 20px gap was enforced
+// across the whole chart — two nodes placed 8px apart by hand on the far side of
+// the canvas jumped apart on a keystroke elsewhere. That is item 18.
+describe('separateBoxes only disturbs what the anchor touches', () => {
+  it('leaves a hand-placed pair alone when the anchor is far away', () => {
+    const shifted = separateBoxes(
+      [
+        { id: 'A', x: 0, y: 0, w: 100, h: 60 },
+        { id: 'B', x: 108, y: 0, w: 100, h: 60 },
+        { id: 'C', x: 600, y: 600, w: 100, h: 60 },
+      ],
+      { anchorId: 'C' },
+    )
+    expect(shifted).toEqual({})
+  })
+
+  it('still propagates a shove down a row the anchor actually reaches', () => {
+    // The anchor crowds B, B is then pushed into C — the chain has to resolve.
+    const boxes = [
+      { id: 'anchor', x: 0, y: 0, w: 200, h: 60 },
+      { id: 'B', x: 190, y: 0, w: 100, h: 60 },
+      { id: 'C', x: 300, y: 0, w: 100, h: 60 },
+    ]
+    const shifted = separateBoxes(boxes, { anchorId: 'anchor' })
+    expect(shifted.anchor).toBeUndefined()
+    expect(shifted.B).toBeDefined()
+    const settled = boxes.map((box) => ({ ...box, ...(shifted[box.id] || {}) }))
+    for (let i = 0; i < settled.length; i += 1) {
+      for (let j = i + 1; j < settled.length; j += 1) {
+        const gap = settled[j].x - (settled[i].x + settled[i].w)
+        expect(gap).toBeGreaterThanOrEqual(-1e-6)
+      }
+    }
+  })
+
+  it('relaxes every pair when no anchor is named', () => {
+    const shifted = separateBoxes([
+      { id: 'A', x: 0, y: 0, w: 100, h: 60 },
+      { id: 'B', x: 108, y: 0, w: 100, h: 60 },
+    ])
+    expect(Object.keys(shifted).sort()).toEqual(['A', 'B'])
   })
 })

@@ -20,6 +20,8 @@ import {
 import { mindmapModelFromShapes, flowchartModelFromShapes } from '@/diagram/freeFloatingGraph.js'
 import { buildMindmapChild, buildMindmapSibling, buildFlowchartChild, flowchartLayoutPatches, mindmapLayoutPatches } from '@/diagram/freeFloatingOps.js'
 import { mindmapSizeForShape } from '@/diagram/mindmapNodeSize.js'
+import { flowchartSizeForShape } from '@/diagram/flowchartNodeSize.js'
+import { separateBoxes } from '@/diagram/flowchartLayout.js'
 import { dropPatches } from '@/diagram/mindmapDrop.js'
 import { DEFAULT_NODE_STYLE } from '@/diagram/mindmapNodeStyle.js'
 import { useAppSettings } from '@/composables/useAppSettings.js'
@@ -33,6 +35,7 @@ import {
   flowchartEdgeById,
   swapNodeType,
   outgoingEdges,
+  terminatorText,
 } from '@/diagram/flowchartModel.js'
 import {
   addStroke,
@@ -213,6 +216,11 @@ function commitStarter(store, state, history, label, submodels, view, origin = n
 // Mind-map tree mutations (spec diagram-types Part A). They run the pure model
 // helpers inside commit() so each is one undoable unit (Part G6); layout is
 // derived from the model, never stored. No-ops for non-mindmap diagrams.
+// Every node-text write shares this history label so the coalescer (same label,
+// within 450ms, and it must start with "Update ") folds them into one step. Module
+// scope because both the mind-map and the flowchart writers use it.
+const NODE_TEXT_EDIT = 'Update node text'
+
 function attachMindMap(store, state, history) {
   // Write a set of mind-map layout patches back onto the live shapes/connectors.
   // Shared by the auto-tidy on add (#273) and the explicit Tidy up; the caller runs
@@ -377,9 +385,6 @@ function attachMindMap(store, state, history) {
     for (const id of fitted) reflowTree(id)
   }
 
-  // Both writes below share this label so history's coalescer (same label, within
-  // 450ms, and it must start with "Update ") folds them into one step.
-  const NODE_TEXT_EDIT = 'Update node text'
   // Resize a node to its label WHILE the label is being typed. It carries the same
   // history label as the commit below on purpose: history coalesces consecutive
   // commits that share a label, so a burst of typing plus the final commit collapse
@@ -489,6 +494,54 @@ function attachMindMap(store, state, history) {
 // the model (manual placement is allowed, B7); layout reflow is a model edit too.
 // No-ops for non-flowchart diagrams. The F-step agent calls these helpers.
 function attachFlowchart(store, state, history) {
+  // Sizing a flowchart node to its label (#441 items 5/14), the counterpart of
+  // resizeMindmapNodeToText / commitMindmapNodeText in attachMindMap. The one
+  // difference is that nothing re-flows on commit: a flowchart is manually placed,
+  // so the neighbours of an edited node stay where the user put them (#441 item 18)
+  // unless the growth actually crowds them.
+  store.resizeFlowchartNodeToText = (id, size) =>
+    history.commit(NODE_TEXT_EDIT, () => {
+      applyPatch(state.shapes.find((s) => s.id === id), size)
+      shiftCrowdedNeighbours(id)
+    })
+  store.commitFlowchartNodeText = (id, text) => {
+    const shape = state.shapes.find((s) => s.id === id)
+    if (!shape) return
+    history.commit(NODE_TEXT_EDIT, () => {
+      applyPatch(shape, { text, ...flowchartSizeForShape({ ...shape, text }) })
+      shiftCrowdedNeighbours(id)
+    })
+  }
+  // "This node's text changed, or the style it is set in did" for a flowchart node
+  // — the counterpart of fitMindmapNodes, and the reason raising the font size now
+  // grows the node (#441 round 2). Without it the letters grew inside a box that
+  // stayed put, so a bigger label spilled out of the shape. Must run inside a
+  // caller's commit(); ids that are not flowchart nodes are skipped. Nothing
+  // re-flows: a flowchart is manually placed, so only this node's own box moves.
+  store.fitFlowchartNodes = (ids) => {
+    for (const id of ids || []) {
+      const shape = state.shapes.find((s) => s.id === id)
+      if (!shape || shape.role !== ROLE.flowchartNode) continue
+      applyPatch(shape, flowchartSizeForShape(shape))
+      shiftCrowdedNeighbours(id)
+    }
+  }
+  // A node that grew to fit its label grows INTO its neighbours (#441 round 3), so
+  // the ones it now crowds step aside to keep the gap they had. Only crowded nodes
+  // move, and only far enough to clear: a flowchart is manually placed, so this must
+  // never turn into a re-flow of the whole chart. Must run inside a caller's commit.
+  const shiftCrowdedNeighbours = (anchorId) => {
+    const nodes = state.shapes.filter((s) => s.role === ROLE.flowchartNode)
+    if (nodes.length < 2) return
+    const shifted = separateBoxes(
+      nodes.map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h })),
+      { anchorId },
+    )
+    for (const [id, position] of Object.entries(shifted)) {
+      const shape = nodes.find((s) => s.id === id)
+      if (shape) applyPatch(shape, position)
+    }
+  }
   store.addFlowchartNode = (nodeType, text = '', x = 0, y = 0) => {
     if (!state.flowchart) return null
     let id = null
@@ -499,11 +552,19 @@ function attachFlowchart(store, state, history) {
   // (free-floating #122), one undoable unit. Used when the parent is a migrated
   // flowchart SHAPE (state.flowchart is null after the flip), so the keyboard/handle
   // build path has a home the way addChildShape does for mind maps.
-  store.addFlowchartChildShape = (parentShapeId, nodeType) => {
-    const built = buildFlowchartChild(state.shapes, state.connectors, parentShapeId, nodeType)
+  // `port` targets a specific decision branch (the "+" that was pressed knows which
+  // one it belongs to); null lets the op pick the next free branch as before.
+  store.addFlowchartChildShape = (parentShapeId, nodeType, port = null, side = null) => {
+    const built = buildFlowchartChild(state.shapes, state.connectors, parentShapeId, nodeType, port, side)
     if (!built) return null
     built.shape.zIndex = nextZIndex(state)
+    const parent = state.shapes.find((s) => s.id === parentShapeId)
     history.commit('Add node', () => {
+      // A decision that has run out of branches grows one (#441 item 15); it lands
+      // in the same commit as the child so one undo takes back the whole add.
+      if (built.parentPatch && parent) {
+        parent.flowchart = { ...parent.flowchart, ...built.parentPatch }
+      }
       state.shapes.push(built.shape)
       state.connectors.push(built.connector)
     })
@@ -654,7 +715,14 @@ function attachFlowchart(store, state, history) {
   // view and drops the node exactly there.
   store.insertFlowchartStarter = (view = null, nodeType = 'terminator', origin = null) => {
     const flowchart = createFlowchart()
-    addFlowchartNode(flowchart, nodeType, '', 0, 0)
+    // A dropped Terminal is a Start or an End depending on what is already on the
+    // canvas (#441 round 2). The starter model is built empty and holds only this
+    // one node, so the count has to come from the canvas's own shapes.
+    const terminators = (state.shapes || []).filter(
+      (shape) => shape.role === ROLE.flowchartNode && shape.flowchart?.nodeType === 'terminator',
+    ).length
+    const text = nodeType === 'terminator' ? terminatorText(terminators) : ''
+    addFlowchartNode(flowchart, nodeType, text, 0, 0)
     commitStarter(store, state, history, 'Insert flowchart', { flowchart }, view, origin)
   }
 }
@@ -870,12 +938,18 @@ function attachShapeMutations(store, state, history) {
   store.updateShape = (id, patch) =>
     history.commit('Update shape', () => {
       applyPatch(store.shapeById(id), patch)
-      if (patch.text) store.fitMindmapNodes?.([id])
+      if (patch.text) {
+        store.fitMindmapNodes?.([id])
+        store.fitFlowchartNodes?.([id])
+      }
     })
   store.updateShapes = (ids, patch) =>
     history.commit('Update shapes', () => {
       ids.forEach((id) => applyPatch(store.shapeById(id), patch))
-      if (patch.text) store.fitMindmapNodes?.(ids)
+      if (patch.text) {
+        store.fitMindmapNodes?.(ids)
+        store.fitFlowchartNodes?.(ids)
+      }
     })
   store.removeShapes = (ids) =>
     history.commit('Delete shapes', () => removeShapesInternal(state, ids))
