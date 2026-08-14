@@ -19,6 +19,7 @@
 // FlowchartLayer from the non-null state.flowchart) are untouched.
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
+import { textWidth } from '@/diagram/textMetrics.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import { openFlowchartPicker, closeFlowchartPicker } from '@/stores/flowchartUi.js'
 import {
@@ -178,9 +179,18 @@ function labelBox(handle) {
   const w = labelWidth(handle)
   return { x: handle.cx - w / 2, y: handle.cy + LABEL_DROP, w, h: LABEL_H }
 }
-// Inter at 11px is ~6.1px per character on average; the pill pads that either side.
+// Measured, not estimated: textMetrics.textWidth exists for exactly this, and a
+// per-character average sized the pill wrong for anything but lowercase ASCII — a
+// branch renamed to "Needs review" or "承認" got a pill that did not fit its text.
+// The 14px is padding either side of whatever it measures.
+const LABEL_FONT = { size: 11, font: 'Inter, sans-serif' }
+const LABEL_PAD = 14
 function labelWidth(handle) {
-  return Math.round((handle.label?.length || 0) * 6.1) + 14
+  if (!handle.label) return LABEL_PAD
+  // textWidth is 0 without a canvas, so keep a character-count floor rather than
+  // letting the pill collapse to its padding.
+  const measured = textWidth(handle.label, LABEL_FONT)
+  return Math.ceil(Math.max(measured, handle.label.length * 5.5)) + LABEL_PAD
 }
 
 // The source node's box in SCREEN pixels, straight off its rendered group — so the

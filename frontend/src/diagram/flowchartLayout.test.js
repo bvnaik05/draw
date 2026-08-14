@@ -343,3 +343,47 @@ describe('freestSide', () => {
     expect(['right', 'left', 'top']).toContain(side)
   })
 })
+
+// Review of #448: separateBoxes compared EVERY pair, so the 20px gap was enforced
+// across the whole chart — two nodes placed 8px apart by hand on the far side of
+// the canvas jumped apart on a keystroke elsewhere. That is item 18.
+describe('separateBoxes only disturbs what the anchor touches', () => {
+  it('leaves a hand-placed pair alone when the anchor is far away', () => {
+    const shifted = separateBoxes(
+      [
+        { id: 'A', x: 0, y: 0, w: 100, h: 60 },
+        { id: 'B', x: 108, y: 0, w: 100, h: 60 },
+        { id: 'C', x: 600, y: 600, w: 100, h: 60 },
+      ],
+      { anchorId: 'C' },
+    )
+    expect(shifted).toEqual({})
+  })
+
+  it('still propagates a shove down a row the anchor actually reaches', () => {
+    // The anchor crowds B, B is then pushed into C — the chain has to resolve.
+    const boxes = [
+      { id: 'anchor', x: 0, y: 0, w: 200, h: 60 },
+      { id: 'B', x: 190, y: 0, w: 100, h: 60 },
+      { id: 'C', x: 300, y: 0, w: 100, h: 60 },
+    ]
+    const shifted = separateBoxes(boxes, { anchorId: 'anchor' })
+    expect(shifted.anchor).toBeUndefined()
+    expect(shifted.B).toBeDefined()
+    const settled = boxes.map((box) => ({ ...box, ...(shifted[box.id] || {}) }))
+    for (let i = 0; i < settled.length; i += 1) {
+      for (let j = i + 1; j < settled.length; j += 1) {
+        const gap = settled[j].x - (settled[i].x + settled[i].w)
+        expect(gap).toBeGreaterThanOrEqual(-1e-6)
+      }
+    }
+  })
+
+  it('relaxes every pair when no anchor is named', () => {
+    const shifted = separateBoxes([
+      { id: 'A', x: 0, y: 0, w: 100, h: 60 },
+      { id: 'B', x: 108, y: 0, w: 100, h: 60 },
+    ])
+    expect(Object.keys(shifted).sort()).toEqual(['A', 'B'])
+  })
+})

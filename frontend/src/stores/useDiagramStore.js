@@ -216,6 +216,11 @@ function commitStarter(store, state, history, label, submodels, view, origin = n
 // Mind-map tree mutations (spec diagram-types Part A). They run the pure model
 // helpers inside commit() so each is one undoable unit (Part G6); layout is
 // derived from the model, never stored. No-ops for non-mindmap diagrams.
+// Every node-text write shares this history label so the coalescer (same label,
+// within 450ms, and it must start with "Update ") folds them into one step. Module
+// scope because both the mind-map and the flowchart writers use it.
+const NODE_TEXT_EDIT = 'Update node text'
+
 function attachMindMap(store, state, history) {
   // Write a set of mind-map layout patches back onto the live shapes/connectors.
   // Shared by the auto-tidy on add (#273) and the explicit Tidy up; the caller runs
@@ -380,9 +385,6 @@ function attachMindMap(store, state, history) {
     for (const id of fitted) reflowTree(id)
   }
 
-  // Both writes below share this label so history's coalescer (same label, within
-  // 450ms, and it must start with "Update ") folds them into one step.
-  const NODE_TEXT_EDIT = 'Update node text'
   // Resize a node to its label WHILE the label is being typed. It carries the same
   // history label as the commit below on purpose: history coalesces consecutive
   // commits that share a label, so a burst of typing plus the final commit collapse
@@ -402,53 +404,6 @@ function attachMindMap(store, state, history) {
       applyPatch(shape, { text })
       store.fitMindmapNodes([id])
     })
-  }
-  // The flowchart counterpart of the two above (#441 items 5/14). The one
-  // difference is that nothing re-flows on commit: a flowchart is manually placed,
-  // so the neighbours of an edited node must stay exactly where the user put them
-  // (#441 item 18). Only the node's own box follows its text.
-  store.resizeFlowchartNodeToText = (id, size) =>
-    history.commit(NODE_TEXT_EDIT, () => {
-      applyPatch(state.shapes.find((s) => s.id === id), size)
-      shiftCrowdedNeighbours(id)
-    })
-  store.commitFlowchartNodeText = (id, text) => {
-    const shape = state.shapes.find((s) => s.id === id)
-    if (!shape) return
-    history.commit(NODE_TEXT_EDIT, () => {
-      applyPatch(shape, { text, ...flowchartSizeForShape({ ...shape, text }) })
-      shiftCrowdedNeighbours(id)
-    })
-  }
-  // "This node's text changed, or the style it is set in did" for a flowchart node
-  // — the counterpart of fitMindmapNodes, and the reason raising the font size now
-  // grows the node (#441 round 2). Without it the letters grew inside a box that
-  // stayed put, so a bigger label spilled out of the shape. Must run inside a
-  // caller's commit(); ids that are not flowchart nodes are skipped. Nothing
-  // re-flows: a flowchart is manually placed, so only this node's own box moves.
-  store.fitFlowchartNodes = (ids) => {
-    for (const id of ids || []) {
-      const shape = state.shapes.find((s) => s.id === id)
-      if (!shape || shape.role !== ROLE.flowchartNode) continue
-      applyPatch(shape, flowchartSizeForShape(shape))
-      shiftCrowdedNeighbours(id)
-    }
-  }
-  // A node that grew to fit its label grows INTO its neighbours (#441 round 3), so
-  // the ones it now crowds step aside to keep the gap they had. Only crowded nodes
-  // move, and only far enough to clear: a flowchart is manually placed, so this must
-  // never turn into a re-flow of the whole chart. Must run inside a caller's commit.
-  const shiftCrowdedNeighbours = (anchorId) => {
-    const nodes = state.shapes.filter((s) => s.role === ROLE.flowchartNode)
-    if (nodes.length < 2) return
-    const shifted = separateBoxes(
-      nodes.map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h })),
-      { anchorId },
-    )
-    for (const [id, position] of Object.entries(shifted)) {
-      const shape = nodes.find((s) => s.id === id)
-      if (shape) applyPatch(shape, position)
-    }
   }
   // Move a node to a new place in the tree by dropping it (#427 item 4). A mind map
   // is auto-laid-out, so a drag never sets coordinates: it rewrites the node's
@@ -539,6 +494,54 @@ function attachMindMap(store, state, history) {
 // the model (manual placement is allowed, B7); layout reflow is a model edit too.
 // No-ops for non-flowchart diagrams. The F-step agent calls these helpers.
 function attachFlowchart(store, state, history) {
+  // Sizing a flowchart node to its label (#441 items 5/14), the counterpart of
+  // resizeMindmapNodeToText / commitMindmapNodeText in attachMindMap. The one
+  // difference is that nothing re-flows on commit: a flowchart is manually placed,
+  // so the neighbours of an edited node stay where the user put them (#441 item 18)
+  // unless the growth actually crowds them.
+  store.resizeFlowchartNodeToText = (id, size) =>
+    history.commit(NODE_TEXT_EDIT, () => {
+      applyPatch(state.shapes.find((s) => s.id === id), size)
+      shiftCrowdedNeighbours(id)
+    })
+  store.commitFlowchartNodeText = (id, text) => {
+    const shape = state.shapes.find((s) => s.id === id)
+    if (!shape) return
+    history.commit(NODE_TEXT_EDIT, () => {
+      applyPatch(shape, { text, ...flowchartSizeForShape({ ...shape, text }) })
+      shiftCrowdedNeighbours(id)
+    })
+  }
+  // "This node's text changed, or the style it is set in did" for a flowchart node
+  // — the counterpart of fitMindmapNodes, and the reason raising the font size now
+  // grows the node (#441 round 2). Without it the letters grew inside a box that
+  // stayed put, so a bigger label spilled out of the shape. Must run inside a
+  // caller's commit(); ids that are not flowchart nodes are skipped. Nothing
+  // re-flows: a flowchart is manually placed, so only this node's own box moves.
+  store.fitFlowchartNodes = (ids) => {
+    for (const id of ids || []) {
+      const shape = state.shapes.find((s) => s.id === id)
+      if (!shape || shape.role !== ROLE.flowchartNode) continue
+      applyPatch(shape, flowchartSizeForShape(shape))
+      shiftCrowdedNeighbours(id)
+    }
+  }
+  // A node that grew to fit its label grows INTO its neighbours (#441 round 3), so
+  // the ones it now crowds step aside to keep the gap they had. Only crowded nodes
+  // move, and only far enough to clear: a flowchart is manually placed, so this must
+  // never turn into a re-flow of the whole chart. Must run inside a caller's commit.
+  const shiftCrowdedNeighbours = (anchorId) => {
+    const nodes = state.shapes.filter((s) => s.role === ROLE.flowchartNode)
+    if (nodes.length < 2) return
+    const shifted = separateBoxes(
+      nodes.map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h })),
+      { anchorId },
+    )
+    for (const [id, position] of Object.entries(shifted)) {
+      const shape = nodes.find((s) => s.id === id)
+      if (shape) applyPatch(shape, position)
+    }
+  }
   store.addFlowchartNode = (nodeType, text = '', x = 0, y = 0) => {
     if (!state.flowchart) return null
     let id = null

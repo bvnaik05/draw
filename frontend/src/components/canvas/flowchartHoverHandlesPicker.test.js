@@ -31,7 +31,12 @@ describe('the "+" handle opens the node-type picker instead of a hardcoded Proce
 
   it('positions the picker through the shared placePicker, not by hand', () => {
     expect(menu).toContain("import { placePicker } from '@/diagram/flowchartLayout.js'")
-    expect(menu).toContain('placePicker({ box, menu: { w: MENU_W, h: MENU_H }, bounds, direction:')
+    // The menu size is MEASURED off the rendered panel now, with the constants kept
+    // only as a first-frame fallback — a hardcoded height drifts the moment the
+    // picker gains a row.
+    expect(menu).toContain('placePicker({ box, menu, bounds, direction:')
+    expect(menu).toContain('const menu = measured.value || { w: MENU_W_FALLBACK, h: MENU_H_FALLBACK }')
+    expect(menu).toContain('panel.value?.getBoundingClientRect()')
   })
 
   // #441 item 10, and the sharper reason behind it. Inside the SVG the menu obeyed

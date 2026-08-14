@@ -35,8 +35,14 @@ describe('a flowchart edge takes its geometry from the live route (#410, #441)',
   it('leaves a non-flowchart connector on its stored anchor', () => {
     // Only flowchart edges are self-correcting: a hand-drawn block connector's
     // anchor is a user choice and must survive a node move untouched.
-    expect(src).toContain('anchorPoint(shape, anchorOverride || endpoint.anchor')
-    expect(src).toContain("if (props.connector.type === 'elbow') return elbowPath(a, b, elbowMidX.value, style.value.corner)")
+    //
+    // What guards that is the ROLE gate on the route lookup: with flowchartRoute
+    // null, both endpoints fall through to resolve() and the stored anchor. Assert
+    // the gate and the fallback, not merely that anchorPoint is mentioned — the
+    // earlier version of this case passed whether or not the gate was there.
+    expect(src).toContain('props.connector.role === ROLE.flowchartEdge ? flowchartRoutes.value[props.connector.id] : null')
+    expect(src).toMatch(/const start = computed\(\(\) => routePoints\.value\?\.\[0\] \|\| resolve\(props\.connector\.from\)\)/)
+    expect(src).toMatch(/resolve\(endpoint, anchorOverride\)|anchorPoint\(shape, anchorOverride \|\| endpoint\.anchor/)
   })
 
   // The repro from the issue: Start above Process flows bottom→top, and dragging

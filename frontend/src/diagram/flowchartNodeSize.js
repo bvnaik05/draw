@@ -30,6 +30,7 @@
 
 import { wrapLineCount, charsPerLine } from './textMetrics.js'
 import { NODE_TYPE_META } from './flowchartTypes.js'
+import { maxOf } from './geometry.js'
 
 // Every flowchart node renders its label at this size (#441 item 6 — was 16).
 // Anything that measures a node it has not created yet must measure at this size
@@ -140,7 +141,10 @@ export function flowchartNodeSize({
   // break a word in half to avoid growing — which is "Juncti / on" from the issue,
   // reintroduced. A line may wrap between words; it may never wrap inside one.
   const words = paragraphs.flatMap((line) => line.split(/\s+/)).filter(Boolean)
-  const longestWord = words.length ? Math.max(...words.map((word) => word.length)) : 1
+  // maxOf, not Math.max(...): a spread passes one argument per element, so a pasted
+  // label of a few hundred thousand words overflows the call stack (PR #67). A
+  // document is untrusted — a shared diagram renders in someone else's browser.
+  const longestWord = maxOf(words.map((word) => word.length), 1)
 
   // Does the label fit a box `growth` times the type's default, at its proportions?
   // The width decides the wrap, and the wrapped line count decides the height the

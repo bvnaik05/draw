@@ -19,7 +19,7 @@
 // Position is a screen point captured when the menu opened. Any pointerdown on the
 // canvas closes it (and panning starts with one), so the only things that can move
 // the canvas underneath it are the wheel and a resize — both close it too.
-import { computed, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useTextEditing } from '@/composables/useTextEditing.js'
 import { flowchartUi, closeFlowchartPicker } from '@/stores/flowchartUi.js'
@@ -29,11 +29,29 @@ import FlowchartNodeTypePicker from './FlowchartNodeTypePicker.vue'
 const store = useDiagramStore()
 const editing = useTextEditing()
 
-// Kept in step with the picker's own `w-[372px]`; the height is its eleven rows in
-// two columns plus the header, measured at 211px in the browser.
-const MENU_W = 372
-const MENU_H = 216
+// Only a FALLBACK, for the first frame before the panel has been laid out. The
+// numbers used to be hardcoded browser measurements, which meant the flip-above
+// decision quietly drifted the moment the picker gained a row. The real size is
+// measured off the rendered panel below and takes over immediately.
+const MENU_W_FALLBACK = 372
+const MENU_H_FALLBACK = 216
 const MARGIN = 8
+
+const panel = ref(null)
+const measured = ref(null)
+
+// Re-measure whenever the picker opens (or its content could have changed size), so
+// placement always reasons about the menu that is actually on screen.
+watch(
+  () => flowchartUi.picker?.nodeId,
+  async (nodeId) => {
+    if (!nodeId) return
+    await nextTick()
+    const rect = panel.value?.getBoundingClientRect()
+    if (rect?.height) measured.value = { w: rect.width, h: rect.height }
+  },
+  { immediate: true },
+)
 
 const position = computed(() => {
   const box = flowchartUi.picker?.box
@@ -44,7 +62,8 @@ const position = computed(() => {
     w: window.innerWidth - MARGIN * 2,
     h: window.innerHeight - MARGIN * 2,
   }
-  return placePicker({ box, menu: { w: MENU_W, h: MENU_H }, bounds, direction: 'TB' })
+  const menu = measured.value || { w: MENU_W_FALLBACK, h: MENU_H_FALLBACK }
+  return placePicker({ box, menu, bounds, direction: 'TB' })
 })
 
 // Create the chosen type through the existing representation-aware store op, which
@@ -92,6 +111,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     v-if="flowchartUi.picker"
+    ref="panel"
     class="fixed z-50"
     :style="{ left: `${position.x}px`, top: `${position.y}px` }"
   >

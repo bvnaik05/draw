@@ -282,14 +282,31 @@ export function placeOnSide(model, parentId, childSize, side, crossSteps = 0) {
 //
 // `anchorId` is the node that just changed size. It never moves: it is the one box
 // whose position the user is currently looking at.
+//
+// With an anchor, only pairs INVOLVING it separate — plus, as the passes go on, the
+// nodes it has already displaced, so a shove can propagate down a row instead of
+// stopping at the first neighbour. Comparing every pair instead enforced the gap
+// across the WHOLE chart, so two nodes deliberately placed 8px apart on the far side
+// of the canvas jumped apart on a keystroke somewhere else. That is item 18, and it
+// is the behaviour this function claims to protect.
 const SEPARATION_PASSES = 24
 export function separateBoxes(boxes, { anchorId = null, gap = CLEAR_GAP } = {}) {
   const working = (boxes || []).map((box) => ({ ...box }))
+  // Who is allowed to push. Without an anchor every box is (the caller asked for a
+  // whole-set relax); with one it starts as just the anchor and grows to include
+  // whatever the anchor has actually moved.
+  const pushers = new Set(anchorId ? [anchorId] : working.map((box) => box.id))
   for (let pass = 0; pass < SEPARATION_PASSES; pass += 1) {
     let moved = false
     for (let i = 0; i < working.length; i += 1) {
       for (let j = i + 1; j < working.length; j += 1) {
-        if (pushApart(working[i], working[j], gap, anchorId)) moved = true
+        const one = working[i]
+        const other = working[j]
+        if (!pushers.has(one.id) && !pushers.has(other.id)) continue
+        if (!pushApart(one, other, gap, anchorId)) continue
+        moved = true
+        pushers.add(one.id)
+        pushers.add(other.id)
       }
     }
     if (!moved) break

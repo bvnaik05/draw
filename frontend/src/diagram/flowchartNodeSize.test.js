@@ -145,3 +145,20 @@ describe('font size drives the box', () => {
     expect(size.w).toBe(size.h)
   })
 })
+
+// Review of #448: `Math.max(...arr)` passes one argument per element, so a pasted
+// label of a few hundred thousand words overflowed the call stack. A diagram
+// document is untrusted — a shared diagram renders in someone else's browser.
+describe('a pathological label', () => {
+  it('measures a 200k-word label instead of blowing the stack', () => {
+    const size = flowchartNodeSize({ nodeType: 'process', text: 'a '.repeat(200000) })
+    expect(Number.isFinite(size.w)).toBe(true)
+    expect(Number.isFinite(size.h)).toBe(true)
+    expect(size.w).toBeGreaterThan(0)
+  })
+
+  it('measures one enormous unbroken word the same way', () => {
+    const size = flowchartNodeSize({ nodeType: 'process', text: 'x'.repeat(300000) })
+    expect(Number.isFinite(size.w)).toBe(true)
+  })
+})

@@ -239,3 +239,77 @@ describe('separateOverlappingRuns', () => {
     expect(routes.e2.points[0]).toEqual({ x: 870, y: 126 })
   })
 })
+
+// Review of #448, two defects in the same pass.
+describe('separation and the node cap', () => {
+  // A shift reaches SEPARATION * (n-1)/2 — 18px once four runs share a lane — past
+  // the 14px CLEARANCE the route was built to hold, so separating overlapping runs
+  // could shove one straight back through the node the A* had just detoured around.
+  it('abandons a shift that would push a run into a node', () => {
+    const blocker = { x: 100, y: 0, w: 100, h: 200 }
+    // Four runs sharing one horizontal lane, right against the blocker's edge.
+    const routes = {}
+    const order = []
+    for (let i = 0; i < 4; i += 1) {
+      const id = `e${i}`
+      order.push(id)
+      routes[id] = [
+        { x: 0, y: 220 },
+        { x: 50, y: 220 },
+        { x: 300, y: 220 },
+        { x: 320, y: 220 },
+      ]
+    }
+    separateOverlappingRuns(routes, order, [blocker])
+    for (const id of order) {
+      const [, a, b] = routes[id]
+      const crossesBlocker =
+        Math.min(a.x, b.x) < blocker.x + blocker.w &&
+        Math.max(a.x, b.x) > blocker.x &&
+        a.y > blocker.y &&
+        a.y < blocker.y + blocker.h
+      expect(crossesBlocker).toBe(false)
+    }
+  })
+
+  it('still separates runs that have room to move', () => {
+    const routes = {
+      a: [{ x: 0, y: 100 }, { x: 40, y: 100 }, { x: 200, y: 100 }, { x: 240, y: 100 }],
+      b: [{ x: 0, y: 100 }, { x: 40, y: 100 }, { x: 200, y: 100 }, { x: 240, y: 100 }],
+    }
+    separateOverlappingRuns(routes, ['a', 'b'], [])
+    expect(routes.a[1].y).not.toBe(routes.b[1].y)
+  })
+
+  // The cap counted every node in the document, so nodes parked far off-canvas
+  // switched avoidance off for a route they could never reach.
+  it('keeps avoiding a blocker however many distant nodes exist', () => {
+    const near = {
+      source: { x: 0, y: 0, w: 100, h: 60 },
+      blocker: { x: 300, y: -60, w: 120, h: 200 },
+      target: { x: 700, y: 0, w: 100, h: 60 },
+    }
+    const edges = [{ id: 'e1', fromId: 'source', toId: 'target' }]
+    const cutsBlocker = (boxes) => {
+      const points = routeFlowchartEdges(boxes, edges).e1.points
+      const rect = boxes.blocker
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const p = points[i]
+        const q = points[i + 1]
+        if (
+          Math.min(p.x, q.x) < rect.x + rect.w &&
+          Math.max(p.x, q.x) > rect.x &&
+          Math.min(p.y, q.y) < rect.y + rect.h &&
+          Math.max(p.y, q.y) > rect.y
+        ) {
+          return true
+        }
+      }
+      return false
+    }
+    const crowded = { ...near }
+    for (let i = 0; i < 80; i += 1) crowded[`far${i}`] = { x: 5000 + i * 200, y: 5000, w: 100, h: 60 }
+    expect(cutsBlocker(near)).toBe(false)
+    expect(cutsBlocker(crowded)).toBe(false)
+  })
+})

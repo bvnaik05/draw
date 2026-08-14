@@ -399,7 +399,13 @@ const SEPARATION = 12 // lateral gap between two routes sharing a lane
 //
 // Only INTERIOR segments move. The first and last segment of every route carry its
 // port stubs, and shifting those would pull the line off the node it is attached to.
-export function separateOverlappingRuns(routes, order) {
+//
+// `obstacles` are the node rects, already inflated by CLEARANCE. A shift is ABANDONED
+// when it would put the segment inside one: with four runs sharing a lane the offset
+// reaches 18px, past the 14px margin the route was built to hold, so separating them
+// could shove a run straight back through the node the A* had just detoured around.
+// Two visually merged lines are a smaller problem than a line through a box.
+export function separateOverlappingRuns(routes, order, obstacles = []) {
   const lanes = new Map()
   for (const id of order) {
     const points = routes[id]
@@ -430,8 +436,11 @@ export function separateOverlappingRuns(routes, order) {
         if (!shift) return
         const points = routes[run.id]
         const axis = run.vertical ? 'x' : 'y'
-        points[run.index] = { ...points[run.index], [axis]: points[run.index][axis] + shift }
-        points[run.index + 1] = { ...points[run.index + 1], [axis]: points[run.index + 1][axis] + shift }
+        const from = { ...points[run.index], [axis]: points[run.index][axis] + shift }
+        const to = { ...points[run.index + 1], [axis]: points[run.index + 1][axis] + shift }
+        if (obstacles.some((rect) => segmentHitsRect(from, to, rect))) return
+        points[run.index] = from
+        points[run.index + 1] = to
       })
     }
   }
@@ -517,9 +526,11 @@ function crossPoint([p1, p2], [q1, q2]) {
 export function routeFlowchartEdges(boxes, edges) {
   const ports = assignPorts(boxes, edges)
   const ids = Object.keys(boxes)
-  const canAvoid = ids.length <= MAX_ROUTED_NODES
   const routes = {}
   const order = []
+  // Every node rect, for the run-separation pass at the end — it has to know what
+  // the routes were built to avoid before it nudges any of them sideways.
+  const allObstacles = ids.map((id) => inflate(boxes[id], CLEARANCE))
 
   for (const edge of edges) {
     const port = ports[edge.id]
@@ -527,13 +538,18 @@ export function routeFlowchartEdges(boxes, edges) {
     order.push(edge.id)
     const plain = elbowThroughNormals(port.from, port.fromSide, port.to, port.toSide)
     // Everything except the two nodes this edge belongs to is an obstacle.
-    const obstacles = canAvoid
-      ? ids
-          .filter((id) => id !== edge.fromId && id !== edge.toId)
-          .map((id) => inflate(boxes[id], CLEARANCE))
-      : []
+    const obstacles = ids
+      .filter((id) => id !== edge.fromId && id !== edge.toId)
+      .map((id) => inflate(boxes[id], CLEARANCE))
+    // The cost guard counts what could actually affect THIS route, not the document.
+    // Measured against ids.length it switched avoidance off for the whole chart once
+    // any 61 nodes existed — including nodes parked far off-canvas that no corridor
+    // reaches. nearbyObstacles already scopes each edge to its own corridor, so the
+    // cap belongs after that filter, where the work it guards is.
+    const near = nearbyObstacles(port.from, port.to, obstacles)
+    const canAvoid = near.length <= MAX_ROUTED_NODES
     const points =
-      obstacles.length && !pathIsClear(plain, obstacles)
+      canAvoid && near.length && !pathIsClear(plain, near)
         ? routeAround(port.from, port.fromSide, port.to, port.toSide, obstacles) || plain
         : plain
     routes[edge.id] = { points, fromSide: port.fromSide, toSide: port.toSide }
@@ -543,7 +559,7 @@ export function routeFlowchartEdges(boxes, edges) {
   // crossings: separating them is what turns an invisible overlap into a visible
   // crossing, which is then what earns a jumper.
   const geometry = Object.fromEntries(order.map((id) => [id, routes[id].points]))
-  separateOverlappingRuns(geometry, order)
+  separateOverlappingRuns(geometry, order, allObstacles)
   for (const id of order) routes[id].points = geometry[id]
 
   const crossings = findCrossings(geometry, order)
