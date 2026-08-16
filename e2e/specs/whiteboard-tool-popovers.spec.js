@@ -44,14 +44,17 @@ test.describe('whiteboard option-tool popovers', () => {
 
     // No intermediate close — switching tools while a popover is open must land
     // on the NEW tool's content, not leave the old one showing or close both.
+    // The eraser's options read as a MENU since #462, so what opens is its
+    // entries — there is no "Mode" heading any more. It is still a Popover, so the
+    // one-click swap this test is about still holds for it.
     await wtool(page, 'eraser').click()
-    await expect(page.locator(POPOVER).getByText('Mode', { exact: true })).toBeVisible()
+    await expect(page.locator(POPOVER).getByText('Erase by object', { exact: true })).toBeVisible()
     await expect(page.locator(POPOVER).getByText('Opacity', { exact: true })).toBeHidden()
     await expect(wtool(page, 'pen')).toHaveAttribute('aria-pressed', 'false')
     await expect(wtool(page, 'eraser')).toHaveAttribute('aria-pressed', 'true')
 
     await wtool(page, 'line').click()
     await expect(page.locator(POPOVER).getByText('Start', { exact: true })).toBeVisible()
-    await expect(page.locator(POPOVER).getByText('Mode', { exact: true })).toBeHidden()
+    await expect(page.locator(POPOVER).getByText('Erase by object', { exact: true })).toBeHidden()
   })
 })

@@ -7,8 +7,8 @@
 // together, and clicking the same tool again toggles the popover shut — no
 // separate "options" disclosure to reach for. Board-wide settings and
 // the selected-object editor follow. All chrome is Frappe UI.
-import { computed } from 'vue'
-import { Popover, Slider, TabButtons } from 'frappe-ui'
+import { computed, ref } from 'vue'
+import { Button, Dialog, Popover, Slider, TabButtons } from 'frappe-ui'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
@@ -46,15 +46,16 @@ const OPTION_TOOLS = ['pen', 'eraser', 'sticky', 'line']
 // `icon` holds the COMPLETE lucide utility class. Tailwind's JIT only emits
 // classes it can read literally, so `lucide-${name}` produces no CSS.
 const ERASER_MODES = [
-  { key: 'ink', icon: 'lucide-eraser', label: 'Erase' },
+  { key: 'ink', icon: 'lucide-eraser', label: 'Eraser' },
   { key: 'object', icon: 'lucide-square-x', label: 'Erase by object' },
 ]
-// TabButtons shape for the same list.
-const ERASER_MODE_TABS = ERASER_MODES.map((m) => ({
-  value: m.key,
-  label: m.label,
-  iconLeft: m.icon,
-}))
+
+// The three tip sizes as named rows (#462). Their dots are Lucide icons of visibly
+// different weights rather than a hand-drawn size preview, which is what retires the
+// frappe-ui-exempt swatch row this menu used to carry — and the names say which is
+// which without asking anyone to compare three dots.
+const ERASER_SIZE_LABELS = ['Small', 'Medium', 'Large']
+const ERASER_SIZE_ICONS = ['lucide-dot', 'lucide-circle-small', 'lucide-circle']
 
 // The Draw tool's pen/highlighter sub-modes (#242). Icon-only (no `label`, just
 // `icon` + `tooltip`) so the switch reads as a compact segmented toggle rather
@@ -95,9 +96,44 @@ const drawOpacityPercent = computed({
   },
 })
 
+// The eraser's options read as a MENU (#462): Eraser, Erase by object, Clear all.
+//
+// It stays a Popover, like every other option tool, rather than becoming a
+// Dropdown. frappe-ui's Dropdown is reka's MODAL menu and does not expose the
+// `modal` prop, so while it was open nothing else on screen responded — not the
+// canvas, not another tool, not even the eraser's own button. The toolbar's
+// one-click tool swap and the "arm and use" gesture both died with it.
+//
+// The tip sizes therefore open IN PLACE rather than as a true side menu, swapping
+// this panel's contents — the same trick the Shapes menu uses for its side-count
+// prompt, and for the same reason: a second Popover nested in this one would close
+// the outer on its own outside-press.
+const eraserSizesOpen = ref(false)
+
+// Picking a mode arms the eraser as well as setting it, so choosing one from the
+// menu does not leave the previous tool live under the pointer.
+function armEraser(mode) {
+  ui.state.eraserMode = mode
+  editorUi.setTool('eraser')
+  eraserSizesOpen.value = false
+}
+
+function pickEraserSize(size) {
+  ui.state.eraserSize = size
+  armEraser('ink')
+}
+
+// Clearing the canvas cannot be undone by pressing the same button again, so it
+// asks first — the same confirm the mind map's own clear-all uses.
+const confirmingClearAll = ref(false)
+function clearAll() {
+  store.clearCanvas()
+  confirmingClearAll.value = false
+}
+
 // The biggest tip is wider than the swatch row, so the preview dot is capped —
-// the canvas cursor is what shows the true tip size. Shared by the eraser and
-// the Draw tool's size swatches.
+// the canvas cursor is what shows the true tip size. Used by the Draw tool's
+// size swatches.
 function dotStyle(size) {
   const dot = Math.min(size, 18)
   return { width: `${dot}px`, height: `${dot}px` }
@@ -182,16 +218,76 @@ function insertTable({ rows, cols }, close) {
           <Slider v-model="drawOpacityPercent" :min="10" :max="100" :step="5" size="sm" />
         </div>
 
-        <!-- Eraser: mode + tip size (#39). The canvas cursor shows the real tip. -->
-        <div v-else-if="t.tool === 'eraser'" class="w-48 p-2">
-          <div class="mb-1 text-sm font-semibold text-ink-gray-5">Mode</div>
-          <TabButtons v-model="ui.state.eraserMode" class="mb-2" size="sm" vertical :options="ERASER_MODE_TABS" />
-          <div class="mb-1 text-sm font-semibold text-ink-gray-5">Size</div>
-          <div class="flex gap-2">
-            <!-- frappe-ui-exempt: swatch renders a literal size-preview dot --><button v-for="size in ERASER_SIZES" :key="size" :aria-label="`Eraser size ${size}`" :aria-pressed="ui.state.eraserSize === size" class="flex h-7 flex-1 items-center justify-center rounded-md" :class="ui.state.eraserSize === size ? 'bg-surface-gray-3' : 'bg-surface-gray-1 hover:bg-surface-gray-2'" @click="ui.state.eraserSize = size">
-              <span class="rounded-full bg-surface-gray-10" :style="dotStyle(size)" />
-            </button>
-          </div>
+        <!-- Eraser (#462): three menu rows, and the tip sizes swapped in place. -->
+        <div v-else-if="t.tool === 'eraser'" class="w-52 p-1">
+          <template v-if="!eraserSizesOpen">
+            <!-- Eraser leads to the sizes; the chevron says so. Picking a size is
+                 what arms ink mode, so this row opens rather than arms. -->
+            <Button
+              class="!w-full !justify-start"
+              variant="ghost"
+              theme="gray"
+              :icon-left="ERASER_MODES[0].icon"
+              :label="ERASER_MODES[0].label"
+              @click="eraserSizesOpen = true"
+            >
+              {{ ERASER_MODES[0].label }}
+              <template #suffix>
+                <span class="lucide-chevron-right ml-auto size-4 text-ink-gray-5" aria-hidden="true" />
+              </template>
+            </Button>
+            <Button
+              class="!w-full !justify-start"
+              variant="ghost"
+              theme="gray"
+              :icon-left="ERASER_MODES[1].icon"
+              :label="ERASER_MODES[1].label"
+              @click="armEraser('object')"
+            >
+              {{ ERASER_MODES[1].label }}
+            </Button>
+            <!-- Clear all is an ACTION, not a third mode: the other two arm a tool
+                 and stay armed, this one fires once and is destructive. Separated
+                 from them, and red. -->
+            <div class="my-1 border-t border-outline-gray-1" />
+            <Button
+              class="!w-full !justify-start"
+              variant="ghost"
+              theme="red"
+              icon-left="lucide-trash-2"
+              label="Clear all"
+              @click="confirmingClearAll = true"
+            >
+              Clear all
+            </Button>
+          </template>
+
+          <template v-else>
+            <Button
+              class="!w-full !justify-start"
+              variant="ghost"
+              theme="gray"
+              icon-left="lucide-chevron-left"
+              label="Back to eraser modes"
+              @click="eraserSizesOpen = false"
+            >
+              {{ ERASER_MODES[0].label }}
+            </Button>
+            <div class="my-1 border-t border-outline-gray-1" />
+            <Button
+              v-for="(size, index) in ERASER_SIZES"
+              :key="size"
+              class="!w-full !justify-start"
+              variant="ghost"
+              theme="gray"
+              :icon-left="ERASER_SIZE_ICONS[index]"
+              :label="ERASER_SIZE_LABELS[index]"
+              :active="ui.state.eraserSize === size"
+              @click="pickEraserSize(size)"
+            >
+              {{ ERASER_SIZE_LABELS[index] }}
+            </Button>
+          </template>
         </div>
 
         <!-- Sticky: color. -->
@@ -233,4 +329,22 @@ function insertTable({ rows, cols }, close) {
     label="Insert image"
     @click="imageInsert.pick(() => editorUi.viewport.centerPoint())"
   />
+
+  <!-- Clear all asks first (#462), the way the mind map's own clear-all does. It
+       says what it will take, because "everything" on a unified canvas means the
+       shapes and notes as well as the ink. -->
+  <Dialog v-model:open="confirmingClearAll" title="Clear the canvas?">
+    <template #default>
+      <p class="text-base text-ink-gray-7">
+        This removes everything on the canvas — drawings, notes, tables, shapes and
+        connectors. You can undo it.
+      </p>
+    </template>
+    <template #actions>
+      <div class="flex justify-end gap-2">
+        <Button @click="confirmingClearAll = false">Cancel</Button>
+        <Button variant="solid" theme="red" @click="clearAll">Clear all</Button>
+      </div>
+    </template>
+  </Dialog>
 </template>

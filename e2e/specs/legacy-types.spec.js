@@ -228,6 +228,27 @@ test.describe('whiteboard', () => {
       .toBe('highlighter')
   })
 
+  // The eraser's options read as a MENU since #462: Eraser, Erase by object, Clear
+  // all. A mode has to be picked before rubbing, and the plain eraser is reached
+  // through a tip SIZE — "Eraser" opens the three sizes in place, and picking one is
+  // what arms ink mode.
+  //
+  // It is still a Popover, so it never blocks the canvas; picking a mode closes it.
+  async function armEraser(page, mode) {
+    await toolByIcon(page, 'eraser').click()
+    const menu = page.locator(POPOVER)
+    if (mode === 'object') {
+      await menu.getByText('Erase by object', { exact: true }).click()
+    } else {
+      await menu.getByText('Eraser', { exact: true }).click()
+      await menu.getByText('Medium', { exact: true }).click()
+    }
+    // If the tool were disarmed the assertions below would blame the eraser for a
+    // gesture that never reached it. Toolbar controls carry active state on
+    // aria-pressed rather than a class (#360).
+    await expect(toolByIcon(page, 'eraser')).toHaveAttribute('aria-pressed', 'true')
+  }
+
   test('the eraser removes ink from a stroke', async ({ page, diagram }) => {
     const name = await diagram.open('whiteboard') // seeded with one zigzag stroke
     // Total ink LENGTH is the only metric that behaves here. Neither stroke count nor
@@ -251,7 +272,7 @@ test.describe('whiteboard', () => {
     const strokePath = page.locator(`${SURFACE} path[stroke-linecap]`).first()
     const box = await strokePath.boundingBox()
 
-    await toolByIcon(page, 'eraser').click()
+    await armEraser(page, 'ink')
     await page.mouse.move(box.x + 2, box.y + box.height / 2)
     await page.mouse.down()
     for (let i = 1; i <= 30; i += 1) {
@@ -273,27 +294,12 @@ test.describe('whiteboard', () => {
     const strokePath = page.locator(`${SURFACE} path[stroke-linecap]`).first()
     const box = await strokePath.boundingBox()
 
-    await toolByIcon(page, 'eraser').click()
-    // Arming the eraser opens its options popover directly (#241), so switch it into
-    // object mode straight from there — no separate 'sliders' click. The mode buttons
-    // deliberately leave the popover open (like the pen's colour and width), so it is
-    // dismissed by toggling the tool below. NOT with Escape: Escape is universal and
-    // resets the tool to select before any per-mode handling, so it disarms the eraser
-    // and the drag below silently becomes a marquee.
-    // TabButtons renders each mode through reka-ui's RadioGroupItem, so the tab is a
-    // <button role="radio"> — getByRole('button') no longer reaches it.
-    const objectMode = page.locator(POPOVER).getByRole('radio', { name: 'Erase by object' })
-    await objectMode.waitFor({ state: 'visible' })
-    await objectMode.click()
-    // Dismiss by clicking the eraser tool itself: an outside click closes the popover,
-    // and re-arming the already-active tool is a no-op (#241), so it doesn't reopen.
-    await toolByIcon(page, 'eraser').click()
-    await expect(objectMode).toBeHidden()
-    // Guard the precondition: if the tool were disarmed, the assertion below would
-    // blame the eraser for a gesture that never reached it. Toolbar controls carry
-    // their active state on aria-pressed rather than a variant class (#360), which
-    // is both the rendered state and the one a screen reader reads.
-    await expect(toolByIcon(page, 'eraser')).toHaveAttribute('aria-pressed', 'true')
+    // Object mode is one entry on the eraser's menu (#462). Picking it closes the
+    // menu and leaves the tool armed, so there is no popover left to dismiss — which
+    // is what the old "click the tool again" step was for. Never Escape: it is
+    // universal and resets the tool to select before any per-mode handling, so it
+    // would disarm the eraser and the drag below would silently become a marquee.
+    await armEraser(page, 'object')
 
     await page.mouse.move(box.x + 2, box.y + box.height / 2)
     await page.mouse.down()
