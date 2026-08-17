@@ -2,10 +2,10 @@
 // Whiteboard render layer (spec diagram-types Part C). The single render-to-SVG
 // path for the type (Part G8): canvas, export, thumbnail and viewer all draw the
 // same elements. Lives inside the canvas viewport <g>, so every coordinate is in
-// canvas units (Part G4). Renders, bottom→top: shared connectors, then every
-// base shape and board object (strokes, lines, tables, sticky notes) in one
-// zIndex-ordered pass, then the transient in-progress stroke/line and laser
-// trail (never persisted/exported, spec C5/C10/G8).
+// canvas units (Part G4). Renders, bottom→top: every shared shape and connector
+// plus every board object (strokes, lines, tables, sticky notes) in ONE
+// zIndex-ordered pass (#542), then the transient in-progress stroke/line and
+// laser trail (never persisted/exported, spec C5/C10/G8).
 //
 // This component also OWNS instantiating the whiteboard surface-interaction
 // composable: it only mounts when the active type is whiteboard, has the store/
@@ -45,14 +45,22 @@ const editorUi = useEditorUi()
 const ui = useWhiteboardUi()
 useWhiteboardInteraction(store, editorUi)
 
-// Shapes and board objects paint as ONE z-ordered list (#27): a fixed
-// shapes-then-strokes-then-stickies order put every newly inserted image behind
-// existing freehand drawing and made Arrange look inert. Both pools share the
-// zIndex scale, so a single sorted pass is all the ordering there is.
+// Shapes, connectors and board objects paint as ONE z-ordered list (#27, #542):
+// a fixed shapes-then-strokes-then-stickies order put every newly inserted
+// image behind existing freehand drawing and made Arrange look inert. Every
+// pool shares the zIndex scale, so a single sorted pass is all the ordering
+// there is. Connectors default to zIndex 0 (below every shape, matching the
+// dedicated always-first loop this replaced) until the user explicitly Arranges
+// one — see stackedObjects in useDiagramStore.js.
 const orderedObjects = computed(() => [
   ...store.state.shapes
     .filter((shape) => !shape.hidden) // spec 7.4: hidden shapes leave the render list
     .map((shape) => ({ kind: 'shape', key: shape.id, object: shape })),
+  ...store.state.connectors.map((connector) => ({
+    kind: 'connector',
+    key: connector.id,
+    object: connector,
+  })),
   ...whiteboardObjectsInZOrder(props.whiteboard).map((o) => ({
     kind: o.kind,
     key: `${o.kind}:${o.id}`,
@@ -149,14 +157,9 @@ const laserHead = computed(() => {
       Double-click to type · pick a tool below to draw, add lines, tables or sticky notes
     </text>
 
-    <!-- Shared base shapes + connectors live in the common arrays (spec C9). -->
-    <ConnectorView
-      v-for="connector in store.state.connectors"
-      :key="connector.id"
-      :connector="connector"
-    />
-    <!-- Base shapes and board objects in one z-ordered pass, so anything added
-         later sits on top and Arrange moves an object past any other (#27). -->
+    <!-- Shared base shapes, connectors and board objects in one z-ordered pass
+         (spec C9, #27, #542), so anything added later sits on top and Arrange
+         moves an object past any other, lines included. -->
     <template v-for="item in orderedObjects" :key="item.key">
       <!-- `selected` matters here, not just to the block layer's own ShapeView pass:
            a mind-map or flowchart node shows selection by drawing its OWN border
@@ -168,6 +171,10 @@ const laserHead = computed(() => {
         :shape="item.object"
         :selected="store.state.selection.includes(item.object.id)"
       />
+
+      <!-- Shared connector (spec C9): straight/curved/elbow lines and arrows,
+           plus mind-map branches / flowchart edges on a unified canvas. -->
+      <ConnectorView v-else-if="item.kind === 'connector'" :connector="item.object" />
 
       <!-- Committed freehand stroke. -->
       <path

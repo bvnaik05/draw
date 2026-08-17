@@ -4,6 +4,7 @@
 import { rotatePoint, shapeCenter } from '@/diagram/geometry.js'
 import { clampCornerRadius, cornerRadiusOf } from '@/diagram/shapeGeometry.js'
 import { clampArrowShaft, clampArrowHead } from '@/diagram/blockArrow.js'
+import { connectorBodyMovable, translateConnectorBody } from '@/diagram/connectorMove.js'
 import { useSmartGuides } from '@/composables/useSmartGuides.js'
 import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
 import { translateWhiteboardObject } from '@/diagram/whiteboardModel.js'
@@ -291,14 +292,27 @@ function createRotator(store) {
   }
 }
 
-// Arrow-key nudge of the whole selection (Shift = larger increment).
+// Arrow-key nudge of the whole selection (Shift = larger increment). A selected
+// connector nudges too (#542) when it has a free end to move — the same
+// connectorBodyMovable guard the body drag uses, which already excludes every
+// structural connector (always attached at both ends).
 function createNudger(store) {
   return (dx, dy, large) => {
     const step = large ? NUDGE_LARGE : NUDGE_SMALL
-    const ids = store.state.selection.filter((id) => store.shapeById(id))
-    if (!ids.length) return
-    const patches = ids.map((id) => nudgePatch(store.shapeById(id), dx * step, dy * step))
-    store.commit('Nudge', () => applyLive(store, patches))
+    const shapeIds = store.state.selection.filter((id) => store.shapeById(id))
+    const connectorIds = store.state.selection.filter((id) => {
+      const connector = store.connectorById(id)
+      return connector && connectorBodyMovable(connector)
+    })
+    if (!shapeIds.length && !connectorIds.length) return
+    const shapePatches = shapeIds.map((id) => nudgePatch(store.shapeById(id), dx * step, dy * step))
+    store.commit('Nudge', () => {
+      applyLive(store, shapePatches)
+      for (const id of connectorIds) {
+        const patch = translateConnectorBody(store.connectorById(id), dx * step, dy * step)
+        Object.assign(store.connectorById(id), patch)
+      }
+    })
   }
 }
 

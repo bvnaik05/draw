@@ -5,15 +5,11 @@
 import { ref } from 'vue'
 import { axisAlignedBBox, rectsIntersect, anchorPoint } from '@/diagram/geometry.js'
 import { isInteractable } from '@/diagram/shapeFlags.js'
-import { ROLE } from '@/diagram/freeFloating.js'
+import { isAuthoredConnector } from '@/diagram/freeFloating.js'
 import { whiteboardObjectBoxes } from '@/diagram/whiteboardModel.js'
 import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
 
 const MIN_DRAG = 3
-
-// Connectors nothing authored: flattenSubmodels rebuilds each of these from the
-// node tree, so none of them can be deleted or edited on its own.
-const DERIVED_ROLES = new Set([ROLE.mindmapBranch, ROLE.mindmapCrosslink, ROLE.flowchartEdge])
 
 export function useMarquee(store) {
   const rect = ref(null)
@@ -100,12 +96,12 @@ function applySelection(store, ids, objects, additive) {
 
 // A connector the user authored, rather than one derived from a node tree (#512).
 //
-// Branches, cross-links and flowchart edges are rebuilt from the model on every
-// load, so nothing can delete them — selecting one gave the user a handle that
-// answers to nothing, which is exactly what the report showed: two nodes picked by
-// a box, plus a third node's branch, and Delete doing nothing to it.
+// Branches, cross-links and flowchart edges are rebuilt or re-routed from the
+// model, so nothing can delete them — selecting one gave the user a handle that
+// answers to nothing, which is exactly what the report showed: two nodes picked
+// by a box, plus a third node's branch, and Delete doing nothing to it.
 function isMarqueeSelectable(connector) {
-  return !DERIVED_ROLES.has(connector.role)
+  return isAuthoredConnector(connector)
 }
 
 // AABB of a connector from its two resolved endpoints (attached or free), padded

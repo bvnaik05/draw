@@ -52,7 +52,7 @@ import WhiteboardTools from '@/components/floating/WhiteboardTools.vue'
 import ToolbarSeparator from './ToolbarSeparator.vue'
 
 const { chromeType } = useSelectionContext()
-const { connector, hasShapes, count, editing, shapes, hasText } = useBlockSelection()
+const { connector, hasShapes, hasConnectors, count, editing, shapes, hasText } = useBlockSelection()
 const mindmap = useMindmapSelection()
 const store = useDiagramStore()
 const modeStrategy = useModeStrategy()
@@ -69,6 +69,12 @@ const connectorSelected = computed(() => showsBlockGroups.value && Boolean(conne
 // Delete acts on the shape, so it hides while a label is being edited.
 const showsActions = computed(
   () => showsBlockGroups.value && count.value > 0 && !editing.value,
+)
+// Arrange for a connector-only selection (#542): shapeSelected already carries
+// ArrangeGroup for any selection that includes a shape (mixed or not), so this
+// only has to cover what that branch skips — one or many lines, nothing else.
+const showsConnectorArrange = computed(
+  () => showsBlockGroups.value && !shapeSelected.value && hasConnectors.value && !editing.value,
 )
 
 // The insert cluster is the block / unified layout's, the one with a shape
@@ -174,6 +180,16 @@ const flowchartSelected = computed(
           <ToolbarSeparator />
           <ArrangeGroup />
         </template>
+      </template>
+
+      <!-- Arrange for a connector-only selection (#542) — one selected line
+           (alongside LineGroup above) or several via marquee, with no shape in
+           the mix. A selection that DOES include a shape already gets
+           ArrangeGroup from the branch above (ArrangeSection folds any selected
+           line's id into the same z-order call), so this never doubles it up. -->
+      <template v-if="showsConnectorArrange">
+        <ToolbarSeparator />
+        <ArrangeGroup />
       </template>
 
       <template v-if="showsActions">

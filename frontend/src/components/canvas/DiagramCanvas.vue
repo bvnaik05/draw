@@ -1,8 +1,9 @@
 <script setup>
 // The diagram canvas. One <svg> with a <g> carrying the viewport transform
 // translate(panX panY) scale(zoom). Layer order (bottom→top): paper, GridLayer,
-// connectors, shapes (zIndex order), SmartGuidesLayer, HoverArrows,
-// SelectionLayer, TextEditor. Opens fit-to-view + centered (spec §4.1).
+// connectors and shapes interleaved by zIndex (#542), SmartGuidesLayer,
+// HoverArrows, SelectionLayer, TextEditor. Opens fit-to-view + centered
+// (spec §4.1).
 //
 // Dynamic pan area (spec §4.1): the pannable region is the canvas rect plus a
 // small margin, stretched to enclose any shape that leaves the canvas and
@@ -219,6 +220,22 @@ const orderedShapes = computed(() =>
 // Empty while the whiteboard layer owns the shapes — it paints them interleaved
 // with the board objects, so painting them here too would duplicate them (#27).
 const blockLayerShapes = computed(() => (whiteboardOwnsShapes.value ? [] : orderedShapes.value))
+// Same rule for connectors (#542): the whiteboard layer folds them into its own
+// zIndex-ordered pass on a unified canvas, so painting them here too would
+// duplicate every connector — twice as many hit paths, twice as many endpoint
+// handles, the same "shapes" bug #27 already fixed for the shape pool.
+const blockLayerConnectors = computed(() => (whiteboardOwnsShapes.value ? [] : store.state.connectors))
+
+// Shapes and connectors share one zIndex scale (#542), so Arrange can move a
+// line above or below a shape — the single-sorted-pass rule WhiteboardLayer
+// already uses for its own pool (#27). Connectors default to zIndex 0 (below
+// every shape) until the user explicitly Arranges one.
+const blockLayerItems = computed(() =>
+  [
+    ...blockLayerConnectors.value.map((connector) => ({ kind: 'connector', key: connector.id, object: connector })),
+    ...blockLayerShapes.value.map((shape) => ({ kind: 'shape', key: shape.id, object: shape })),
+  ].sort((a, b) => (a.object.zIndex || 0) - (b.object.zIndex || 0)),
+)
 
 // Block has no own-layer empty prompt (whiteboard/mind-map/flowchart do), so show
 // a faint centred hint on a blank block canvas, consistent with the others.
@@ -793,13 +810,10 @@ const surfaceCursor = computed(() => {
         <!-- Block substrate: shapes/connectors + overlays. Renders for block mode
              AND the unified canvas (where the whiteboard layer composes on top). -->
         <template v-if="showBlockLayer">
-          <ConnectorView
-            v-for="connector in store.state.connectors"
-            :key="connector.id"
-            :connector="connector"
-          />
-
-          <ShapeView v-for="shape in blockLayerShapes" :key="shape.id" :shape="shape" :selected="store.state.selection.includes(shape.id)" />
+          <template v-for="item in blockLayerItems" :key="item.key">
+            <ConnectorView v-if="item.kind === 'connector'" :connector="item.object" />
+            <ShapeView v-else :shape="item.object" :selected="store.state.selection.includes(item.object.id)" />
+          </template>
 
           <SmartGuidesLayer />
           <HoverArrows />

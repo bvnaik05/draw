@@ -10,6 +10,7 @@ import { computed } from 'vue'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { activeEditor } from '@/composables/useRichText.js'
 import { canHoldText } from '@/diagram/shapeText.js'
+import { isAuthoredConnector } from '@/diagram/freeFloating.js'
 
 // One instance per store, the same way useSmartGuides memoises. Five groups read
 // this, and `shapes` resolves every selected id against the shape list, so five
@@ -49,8 +50,19 @@ function createBlockSelection(store) {
   const textShapes = computed(() => shapes.value.filter(canHoldText))
   const hasText = computed(() => textShapes.value.length > 0)
 
+  // Every connector in the selection, and the subset a user-authored control
+  // (Arrange, Link, Duplicate) should actually act on (#542) — a structural
+  // connector (mind-map branch/cross-link, flowchart edge) is rebuilt or
+  // re-routed from its owning nodes, so offering those controls on one would
+  // put a live-looking button on something that quietly does nothing.
+  const connectors = computed(() =>
+    selection.value.map((id) => store.connectorById(id)).filter(Boolean),
+  )
+  const authoredConnectors = computed(() => connectors.value.filter(isAuthoredConnector))
+  const hasConnectors = computed(() => authoredConnectors.value.length > 0)
+
   return {
     store, selection, shapes, shapeIds, count, hasShapes, connector, multi, editing,
-    textShapes, hasText,
+    textShapes, hasText, connectors, authoredConnectors, hasConnectors,
   }
 }

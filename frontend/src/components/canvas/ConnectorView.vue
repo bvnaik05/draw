@@ -11,6 +11,8 @@ import { anchorPoint } from '@/diagram/geometry.js'
 import { ROLE } from '@/diagram/freeFloating.js'
 import { branchPathPoints } from '@/diagram/mindmapLayout.js'
 import { flowchartPathData } from '@/diagram/flowchartPath.js'
+import { connectorBodyMovable, translateConnectorBody } from '@/diagram/connectorMove.js'
+import { safeHref } from '@/utils/safeUrl.js'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import { useConnectorDrawing } from '@/composables/useConnectorDrawing.js'
@@ -143,6 +145,15 @@ const labelAnchor = computed(() => {
   return { x: (start.value.x + end.value.x) / 2, y: (start.value.y + end.value.y) / 2 }
 })
 
+// Hyperlink badge (#542, mirrors ShapeView's spec 6.5 badge). Only render the
+// anchor for a safe scheme — safeHref is the same gate ShapeView uses, so a
+// crafted `javascript:` link in a shared document stays inert here too. Offset
+// above the label anchor rather than sitting ON an endpoint, so it never
+// collides with the arrowhead marker there or with the label pill (which is
+// centred ON the label anchor) whether or not the connector carries a label.
+const safeLink = computed(() => safeHref(props.connector.link))
+const linkBadgeAnchor = computed(() => ({ x: labelAnchor.value.x, y: labelAnchor.value.y - 20 }))
+
 // The point half the polyline's length along it.
 function midpointAlong(points) {
   let total = 0
@@ -204,6 +215,33 @@ function onConnectorClick(event) {
   else store.select(props.connector.id)
 }
 
+// Drag the connector's own body (#542) — the same select-then-move gesture a
+// shape gets, scoped to just this connector rather than routed through the
+// shared canvas selection/marquee flow. A shift/modifier press is left to
+// onConnectorClick's add-to-selection instead of starting a move. Naturally a
+// no-op for anything fully pinned between two shapes (structural connectors
+// included, since both their ends are always attached — connectorBodyMovable).
+const bodyDragStart = ref(null)
+function startBodyDrag(event) {
+  if (event.shiftKey || event.metaKey || event.ctrlKey) return
+  store.select(props.connector.id)
+  if (!connectorBodyMovable(props.connector)) return
+  bodyDragStart.value = toLogical(event, event.target)
+  event.target.setPointerCapture?.(event.pointerId)
+}
+function onBodyDrag(event) {
+  if (!bodyDragStart.value) return
+  const point = toLogical(event, event.target)
+  const dx = point.x - bodyDragStart.value.x
+  const dy = point.y - bodyDragStart.value.y
+  bodyDragStart.value = point
+  const patch = translateConnectorBody(props.connector, dx, dy)
+  if (Object.keys(patch).length) store.updateConnector(props.connector.id, patch)
+}
+function endBodyDrag() {
+  bodyDragStart.value = null
+}
+
 // Double-click a connector to type its centred label inline.
 const editingLabel = ref(false)
 const labelField = ref(null)
@@ -238,9 +276,22 @@ const LABEL_EDITOR_H = 28
     </defs>
 
     <!-- Wide invisible hit path makes the thin connector easy to click; double-
-         click types a label. Omitted for a structural mind-map branch, which must
-         not be selectable/labelable/deletable on its own (#272). -->
-    <path v-if="!isBranch" :d="pathData" fill="none" stroke="transparent" stroke-width="14" class="cursor-pointer" @click="onConnectorClick" @dblclick="onConnectorDblClick" />
+         click types a label; a plain press-drag moves the connector's own body
+         (#542) when it has a free end to move (connectorBodyMovable). Omitted
+         for a structural mind-map branch, which must not be
+         selectable/labelable/deletable/draggable on its own (#272). -->
+    <path v-if="!isBranch"
+      :d="pathData"
+      fill="none"
+      stroke="transparent"
+      stroke-width="14"
+      class="cursor-pointer"
+      @click="onConnectorClick"
+      @dblclick="onConnectorDblClick"
+      @pointerdown.stop.prevent="startBodyDrag"
+      @pointermove="onBodyDrag"
+      @pointerup="endBodyDrag"
+    />
 
     <path
       :d="pathData"
@@ -291,6 +342,41 @@ const LABEL_EDITOR_H = 28
       </text>
     </g>
 
+    <!-- Hyperlink badge (#542, spec 6.5): opens the connector's link in a new
+         tab, mirroring ShapeView's badge. Click is isolated so it never
+         moves/selects/starts a body drag. -->
+    <a
+      v-if="safeLink"
+      :href="safeLink"
+      target="_blank"
+      rel="noopener noreferrer"
+      style="cursor: pointer"
+      @pointerdown.stop
+      @click.stop
+    >
+      <title>{{ safeLink }}</title>
+      <circle :cx="linkBadgeAnchor.x" :cy="linkBadgeAnchor.y" r="9" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+      <!-- The lucide "link" glyph, inlined — same reasoning as ShapeView's copy:
+           this sits inside the canvas SVG, where an icon-font <span> has no
+           layout box at all (#311). -->
+      <svg
+        :x="linkBadgeAnchor.x - 5"
+        :y="linkBadgeAnchor.y - 5"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="text-ink-gray-7"
+      >
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+      </svg>
+    </a>
+
     <!-- Inline label editor (centred on the connector, opaque over the line). It is
          chrome drawn over the canvas, so it is a frappe-ui control rather than a
          hand-styled input; the foreignObject is sized to the control's own height
@@ -306,7 +392,7 @@ const LABEL_EDITOR_H = 28
            `text-center` does not (#496). TextInput sets inheritAttrs: false and
            routes the consumer's class to its WRAPPER, then builds the input's own
            attrs by filtering class and style out — so the centring landed on a div,
-           and an <input> sets its own text-align regardless. The committed label is
+           and the native input sets its own text-align regardless. The committed label is
            drawn text-anchor="middle", so the text sat left while being typed and
            jumped to centre the moment it committed. -->
       <TextInput

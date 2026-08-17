@@ -138,7 +138,7 @@ function closeSides(toggle) {
           @dragend="endTileDrag(toggle)"
         >
           <template v-if="connector.glyph" #icon>
-            <ShapeGlyph :family="connector.glyph" class="size-4" />
+            <ShapeGlyph :family="connector.glyph" :type="connector.type" class="size-4" />
           </template>
         </ToolbarButton>
       </div>

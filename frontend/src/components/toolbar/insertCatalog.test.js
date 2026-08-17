@@ -306,7 +306,9 @@ describe('toolbar icons say what their control does', () => {
     }
     // The bar's trigger and the first tile it opens have to wear the same mark.
     expect(groups).toContain('<ShapeGlyph family="connector" type="line-straight" class="size-4" />')
-    expect(groups).toContain(':family="connector.glyph"')
+    // #542: each tile must pass its OWN type through, or every tile falls back
+    // to the same plain straight-line glyph — six tiles, one picture.
+    expect(groups).toContain(':family="connector.glyph" :type="connector.type"')
   })
 
   it('lays the six out three across, so the matrix lands on the grid', () => {

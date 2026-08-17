@@ -47,7 +47,6 @@ export function createShape(partial = {}, themePreset) {
   const triad = primaryTriad(themePreset)
   const style = styleForType(type, triad)
   return {
-    id: nextId('s'),
     type,
     x: 0,
     y: 0,
@@ -61,12 +60,19 @@ export function createShape(partial = {}, themePreset) {
     border: style.border,
     text: defaultText(triad.ink),
     ...partial,
+    // Always LAST: a caller assigning a specific id (buildMindmapChild binds a
+    // shape's id to its mind-map node id, so a connector can reference either)
+    // still wins. But a caller duplicating a shape spreads
+    // `{...clone(source), id: undefined}` to say "everything but the id" — with
+    // `id` only set ABOVE `...partial`, that explicit `undefined` would win the
+    // spread (an object literal's own `id: undefined` overwrites an earlier
+    // `id`, same as any other key) and leave the "copy" with no id at all.
+    id: partial.id || nextId('s'),
   }
 }
 
 export function createConnector(partial = {}) {
   return {
-    id: nextId('c'),
     type: partial.type || 'straight',
     from: partial.from || { x: 0, y: 0 },
     to: partial.to || { x: 0, y: 0 },
@@ -76,5 +82,9 @@ export function createConnector(partial = {}) {
     style: { ...CONNECTOR_DEFAULT_STYLE },
     label: '',
     ...partial,
+    // See createShape above, same reasoning: a caller-assigned id (a mind-map
+    // branch's `mmb-<parent>-<child>`) still wins; an explicit `id: undefined`
+    // (duplicate) falls back to a fresh mint instead of overwriting it away.
+    id: partial.id || nextId('c'),
   }
 }

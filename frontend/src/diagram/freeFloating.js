@@ -65,6 +65,16 @@ export function isFlowchartShape(shape) {
   return shape?.role === ROLE.flowchartNode
 }
 
+// A connector the user drew, as opposed to one derived from a mind-map /
+// flowchart node tree (#542). Every structural connector role above is rebuilt
+// or re-routed from its owning nodes, so it has no independent position of its
+// own — giving it drag / arrange / duplicate / link would hand the user a
+// control that answers to nothing, the exact bug #512 fixed for marquee-select.
+// A plain connector never carries a role at all.
+export function isAuthoredConnector(connector) {
+  return !connector?.role
+}
+
 // Flowchart node types that ShapeView cannot draw yet get a nearest-neighbour
 // fallback `type`, so a migrated shape is renderable even before phase 2 teaches
 // the renderer the real glyph. The authoritative shape stays in
