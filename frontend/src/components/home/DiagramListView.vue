@@ -118,19 +118,21 @@ function sortArrowClass(key) {
   </ListView>
 </template>
 
-<!-- frappe-ui-exempt: ListRow / ListHeader render their own Checkbox with no
-     slot to style it through, so reaching the input to hide it until hover
-     needs a descendant selector. -->
-<style scoped>
-.diagram-list :deep(input[type='checkbox']) {
+<!-- frappe-ui-exempt: ListRow / ListHeader render their own Checkbox several
+     components deep, with no slot to style it through — a scoped :deep() only
+     reaches a child component's OWN root, not this far in, so the rule has to
+     be plain global CSS. `.diagram-list` is a name coined for this component,
+     not reused anywhere else in the app. -->
+<style>
+.diagram-list input[type='checkbox'] {
   opacity: 0;
   transition: opacity 120ms ease;
 }
-.diagram-list :deep(input[type='checkbox']:checked),
-.diagram-list :deep(input[type='checkbox']:indeterminate),
-.diagram-list :deep(input[type='checkbox']:focus-visible),
-.diagram-list :deep(.group:hover input[type='checkbox']),
-.diagram-list :deep(.group\/list:hover input[type='checkbox']) {
+.diagram-list input[type='checkbox']:checked,
+.diagram-list input[type='checkbox']:indeterminate,
+.diagram-list input[type='checkbox']:focus-visible,
+.diagram-list .group:hover input[type='checkbox'],
+.diagram-list .group\/list:hover input[type='checkbox'] {
   opacity: 1;
 }
 </style>
