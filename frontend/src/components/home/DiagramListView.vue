@@ -102,16 +102,23 @@ function sortArrowClass(key) {
           <span v-else-if="column.key === 'owner'" class="truncate text-base text-ink-gray-7">{{ ownerLabel(row) }}</span>
           <span v-else-if="column.key === 'creation'" class="text-base text-ink-gray-7">{{ relativeTime(item) }}</span>
           <span v-else-if="column.key === 'modified'" class="text-base text-ink-gray-7">{{ relativeTime(item) }}</span>
-          <Dropdown v-else :options="diagramMenuItems(row, emit)" align="end">
-            <Button
-              variant="ghost"
-              size="sm"
-              icon="lucide-ellipsis"
-              class="opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
-              :label="`More actions for ${row.title}`"
-              @click.stop
-            />
-          </Dropdown>
+          <!-- ListRow hands the slot the bare column cell, not ListRowItem's own
+               `flex` wrapper (frappe-ui/src/components/ListView/ListRow.vue:56-64
+               vs ListRowItem.vue:2) — so column.align:'right' never reaches this
+               slot on its own, and the trigger sat left of the 48px cell instead
+               of flush with the row's right edge. Supply the missing flex here. -->
+          <div v-else class="flex justify-end">
+            <Dropdown :options="diagramMenuItems(row, emit)" align="end">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon="lucide-ellipsis"
+                class="opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
+                :label="`More actions for ${row.title}`"
+                @click.stop
+              />
+            </Dropdown>
+          </div>
         </template>
       </ListRow>
     </ListRows>
