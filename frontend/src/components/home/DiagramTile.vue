@@ -110,7 +110,7 @@ const menuItems = computed(() => diagramMenuItems(props.diagram, emit))
         <!-- frappe-ui-exempt: text-2xs meta caption, the same scale used across Home's tile/list secondary text --><div class="text-2xs text-ink-gray-5">Created {{ createdLabel }} · Edited {{ editedLabel }}</div>
       </button>
 
-      <Dropdown :options="menuItems" placement="bottom-end">
+      <Dropdown :options="menuItems" align="end">
         <Button
           variant="ghost"
           size="sm"

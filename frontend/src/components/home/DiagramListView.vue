@@ -102,7 +102,7 @@ function sortArrowClass(key) {
           <span v-else-if="column.key === 'owner'" class="truncate text-base text-ink-gray-7">{{ ownerLabel(row) }}</span>
           <span v-else-if="column.key === 'creation'" class="text-base text-ink-gray-7">{{ relativeTime(item) }}</span>
           <span v-else-if="column.key === 'modified'" class="text-base text-ink-gray-7">{{ relativeTime(item) }}</span>
-          <Dropdown v-else :options="diagramMenuItems(row, emit)" placement="bottom-end">
+          <Dropdown v-else :options="diagramMenuItems(row, emit)" align="end">
             <Button
               variant="ghost"
               size="sm"
