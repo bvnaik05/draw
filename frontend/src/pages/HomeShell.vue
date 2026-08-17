@@ -2,7 +2,7 @@
 // Home page — composes the tile grid (+ empty state) + trash view, and routes to
 // the editor on create/open (spec §2). "Create" makes a unified canvas and lands
 // straight on the editor — no type picker (canvas unification). No folders
-// (#115): diagrams are one flat, pinnable list.
+// (#115) and no pinning (#541): diagrams are one flat list.
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Breadcrumbs, Button, Dropdown, toast } from 'frappe-ui'
@@ -124,6 +124,16 @@ function open(name) {
         </Dropdown>
 
         <Breadcrumbs v-if="inTrash" :items="breadcrumbs" />
+
+        <div class="flex-1" />
+
+        <!-- The one primary action on the page, aligned with the app name (#541
+             item 5) — it used to sit at the end of the list toolbar below. Hidden
+             in Trash, which has nothing to create into. -->
+        <Button v-if="!inTrash" variant="solid" :loading="isCreating" label="Create" @click="create">
+          <template #prefix><span class="lucide-plus size-4" aria-hidden="true" /></template>
+          Create
+        </Button>
       </div>
     </header>
 
@@ -140,7 +150,7 @@ function open(name) {
              with it. -->
         <template v-else>
           <EmptyState v-if="isEmpty" @create="create" />
-          <TileGrid v-else :creating="isCreating" @create="create" @open="open" />
+          <TileGrid v-else @open="open" />
         </template>
       </div>
     </main>

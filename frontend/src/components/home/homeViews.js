@@ -1,10 +1,10 @@
-// Home view model (#116): the empty states, the pin predicates the grid filters
-// on, and the stored layout choice. Kept in one plain module — not inside the SFCs
-// — so the shell and grid stay declarative and the unit tests can assert the model
+// Home view model (#116): the empty states, the search/sort rules, and the
+// stored layout choice. Kept in one plain module — not inside the SFCs — so the
+// shell and grid stay declarative and the unit tests can assert the model
 // without mounting (browser-free) components.
 //
-// Home is the only listing view (#407): one flat, pinnable list of every diagram
-// (no folders, #115), with Trash reached from the app menu.
+// Home is the only listing view (#407): one flat list of every diagram (no
+// folders, #115; no pinning, #541), with Trash reached from the app menu.
 
 import { readJson, writeJson } from '@/utils/localStore.js'
 
@@ -53,17 +53,21 @@ export function searchDiagrams(rows, query) {
   return rows.filter((diagram) => matchesQuery(diagram, query))
 }
 
+// One registry of sortable fields, read by both the toolbar's sort state and
+// the list view's column headers (#541) — a column that isn't here doesn't
+// offer a sort affordance.
 export const SORTS = [
-  { key: 'smart', label: 'Smart' },
-  { key: 'modified', label: 'Last edited' },
+  { key: 'title', label: 'Name' },
+  { key: 'owner', label: 'Owner' },
   { key: 'creation', label: 'Date created' },
-  { key: 'title', label: 'Name (A–Z)' },
+  { key: 'modified', label: 'Last edited' },
 ]
 export const DEFAULT_SORT = 'modified'
 
-// Names read A→Z; every other key is newest-first.
+// Text fields read A→Z by default; every other key is newest-first.
+const TEXT_KEYS = ['title', 'owner']
 export function defaultDirection(key) {
-  return key === 'title' ? 'asc' : 'desc'
+  return TEXT_KEYS.includes(key) ? 'asc' : 'desc'
 }
 
 // Sorted copy, never in place: the caller's array is a computed over the fetched
@@ -73,26 +77,14 @@ export function sortDiagrams(rows, key, direction) {
 }
 
 function comparator(key, direction) {
-  // Smart: surface what you'd likely want next — pinned first, then most recently
-  // edited. (Without open-frequency data this is the best local heuristic; I6.)
-  if (key === 'smart') {
-    return (a, b) => (isPinned(b) ? 1 : 0) - (isPinned(a) ? 1 : 0) || timestamp(b.modified) - timestamp(a.modified)
-  }
   const sign = direction === 'asc' ? 1 : -1
-  if (key === 'title') return (a, b) => sign * (a.title || '').localeCompare(b.title || '')
+  if (TEXT_KEYS.includes(key)) return (a, b) => sign * (a[key] || '').localeCompare(b[key] || '')
   return (a, b) => sign * (timestamp(a[key]) - timestamp(b[key]))
 }
 
 function timestamp(value) {
   return value ? new Date(value.replace(' ', 'T')).getTime() : 0
 }
-
-// Pin state is a single doc flag (is_pinned). The predicate splits the shelf in
-// two — the "Pinned" group and the "everything else" group — so it lives here once
-// rather than inline twice.
-export const isPinned = (diagram) => Boolean(diagram.is_pinned)
-export const pinnedOnly = (rows) => rows.filter(isPinned)
-export const unpinned = (rows) => rows.filter((diagram) => !isPinned(diagram))
 
 // Tile or list layout (#222). This is personal chrome state, not part of a
 // document, so it lives in localStorage rather than on the user's record — the

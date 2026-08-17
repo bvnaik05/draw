@@ -6,9 +6,9 @@ import { overflowMenuItems } from './overflowMenu.js'
 
 // Browser-free: assert the editor "…" menu MODEL (labels / icons / the red Delete /
 // callback wiring), then source-check that the toolbar SFCs wire it up — that
-// Rename (#232) and Pin (#370) are gone along with everything behind them, and
-// that Move / Version history stay deferred. Mirrors ShareMenu.test.js (import the
-// model, string-check the SFC).
+// Rename (#232) is gone along with everything behind it, that pinning (#370, and
+// entirely, #541) never comes back, and that Move / Version history stay
+// deferred. Mirrors ShareMenu.test.js (import the model, string-check the SFC).
 const here = path.dirname(fileURLToPath(import.meta.url))
 const read = (rel) => readFileSync(path.join(here, rel), 'utf8')
 const overflowSfc = read('OverflowMenu.vue')
@@ -112,18 +112,15 @@ describe('overflow menu wiring', () => {
     expect(overflowSfc).toContain("router.push({ name: 'Home' })")
   })
 
-  it('leaves no pin wiring behind in the toolbar (#370)', () => {
-    // The whole path goes, not just the menu row: the component no longer reads
-    // is_pinned and no longer writes it.
+  it('leaves no pin wiring behind in the toolbar or on Home (#370, #541)', () => {
+    // Pinning is gone from Draw entirely — neither the editor toolbar nor Home
+    // reads or writes is_pinned any more.
     expect(overflowSfc).not.toContain('is_pinned')
     expect(overflowSfc).not.toContain('togglePin')
-  })
-
-  it('leaves pinning to Home, which enforces the cap', () => {
     const tileGrid = read('../home/TileGrid.vue')
     const diagramTile = read('../home/DiagramTile.vue')
-    expect(tileGrid).toContain('pinLimitReached')
-    expect(diagramTile).toContain('Pin limit reached')
+    expect(tileGrid).not.toContain('is_pinned')
+    expect(diagramTile).not.toContain('is_pinned')
   })
 
   it('reuses the ShareMenu route-param loadDiagram pattern (prop-light toolbar)', () => {

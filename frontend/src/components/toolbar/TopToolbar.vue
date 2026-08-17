@@ -66,7 +66,7 @@ function goHome() {
       <DriveMenu />
       <CommentsToggle />
       <ShareMenu />
-      <!-- "…" overflow: Show info / Pin / Delete (#111). Rename is the title itself. -->
+      <!-- "…" overflow: Show info / Delete (#111). Rename is the title itself. -->
       <OverflowMenu />
       <PresenceAvatars />
     </div>

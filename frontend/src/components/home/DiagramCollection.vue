@@ -1,52 +1,30 @@
 <script setup>
-// Renders a set of diagrams in the active view (tile grid or list rows) and
-// forwards every per-tile action up. The `append` slot lets a caller add a
-// trailing item (e.g. the "New diagram" affordance) inside the same grid/list.
+// Renders a set of diagrams as a tile grid and forwards every per-tile action
+// up. List view is DiagramListView's job (#541). The `append` slot lets a
+// caller add a trailing item (e.g. the "New diagram" affordance) inside the
+// same grid.
 import DiagramTile from './DiagramTile.vue'
 
 defineProps({
   diagrams: { type: Array, default: () => [] },
-  view: { type: String, default: 'tile' },
   selected: { type: Object, default: () => new Set() },
-  pinLimitReached: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'select', 'toggle-pin', 'rename', 'duplicate', 'delete', 'show-info'])
+const emit = defineEmits(['open', 'select', 'copy-link', 'rename', 'duplicate', 'delete', 'show-info'])
 
 const TILE_COLS = 'grid-template-columns: repeat(auto-fill, minmax(224px, 1fr))'
 </script>
 
 <template>
-  <div v-if="view === 'tile'" class="grid gap-[18px]" :style="TILE_COLS">
+  <div class="grid gap-[18px]" :style="TILE_COLS">
     <DiagramTile
       v-for="diagram in diagrams"
       :key="diagram.name"
       :diagram="diagram"
       :selected="selected.has(diagram.name)"
       :selection-active="selected.size > 0"
-      :pin-limit-reached="pinLimitReached"
       @open="emit('open', $event)"
       @select="(name, wanted) => emit('select', name, wanted)"
-      @toggle-pin="emit('toggle-pin', $event)"
-      @rename="emit('rename', $event)"
-      @duplicate="emit('duplicate', $event)"
-      @delete="emit('delete', $event)"
-      @show-info="emit('show-info', $event)"
-    />
-    <slot name="append" />
-  </div>
-
-  <div v-else class="flex flex-col">
-    <DiagramTile
-      v-for="diagram in diagrams"
-      :key="diagram.name"
-      :diagram="diagram"
-      view="list"
-      :selected="selected.has(diagram.name)"
-      :selection-active="selected.size > 0"
-      :pin-limit-reached="pinLimitReached"
-      @open="emit('open', $event)"
-      @select="(name, wanted) => emit('select', name, wanted)"
-      @toggle-pin="emit('toggle-pin', $event)"
+      @copy-link="emit('copy-link', $event)"
       @rename="emit('rename', $event)"
       @duplicate="emit('duplicate', $event)"
       @delete="emit('delete', $event)"

@@ -1,27 +1,24 @@
 <script setup>
-// One diagram, rendered as a grid tile or a compact list row (spec §2). Tiles
-// show a live thumbnail. List rows carry no glyph at all (#218): every diagram
-// drew the same one, so it distinguished nothing and only pushed the titles
-// right. Both carry the title, created + edited times, a selection checkbox,
-// and a ⋯ menu (Pin/Unpin · Rename · Duplicate · Delete).
+// One diagram, rendered as a grid tile (spec §2). List rows are
+// DiagramListView's job now (#541) — this component is tile-only. Shows a live
+// thumbnail, the title, created + edited times, a selection checkbox, and a ⋯
+// menu (Copy link · Show info · Rename · Duplicate · Delete).
 import { computed, ref, watch } from 'vue'
-import { Button, Checkbox, Dropdown, toast } from 'frappe-ui'
+import { Button, Checkbox, Dropdown } from 'frappe-ui'
 import { documentToSvg, isDocumentEmpty } from '@/composables/useThumbnail.js'
-import PinIcon from './PinIcon.vue'
+import { relativeTime, diagramMenuItems } from './diagramColumns.js'
 
 const props = defineProps({
   diagram: { type: Object, required: true },
-  view: { type: String, default: 'tile' }, // 'tile' | 'list'
   selected: { type: Boolean, default: false },
   selectionActive: { type: Boolean, default: false },
-  pinLimitReached: { type: Boolean, default: false },
 })
 // `select` carries the wanted state, not "flip it" (#405). frappe-ui's Checkbox
 // emits update:modelValue TWICE per click — once from its `defineModel` setter and
 // once from an explicit emit in the same handler — so a toggling listener ran an
 // even number of times and selection never took. Setting a value is idempotent,
 // which makes the duplicate harmless.
-const emit = defineEmits(['open', 'select', 'toggle-pin', 'rename', 'duplicate', 'delete', 'show-info'])
+const emit = defineEmits(['open', 'select', 'copy-link', 'rename', 'duplicate', 'delete', 'show-info'])
 
 // A non-empty diagram ALWAYS shows a preview: the saved raster thumbnail when we
 // have one (cheap), otherwise a live SVG rendered from the document. Only a truly
@@ -64,134 +61,18 @@ const previewSvg = computed(() => {
 // the diagram is blank.
 const showsBlankLabel = computed(() => !thumbnailUrl.value && !previewSvg.value && documentKnown.value)
 
-const isPinned = computed(() => Boolean(props.diagram.is_pinned))
 const createdLabel = computed(() => relativeTime(props.diagram.creation))
 const editedLabel = computed(() => relativeTime(props.diagram.modified))
-// Owner column (I3): friendly name — drop the @domain from a user-id email.
-const ownerLabel = computed(() => {
-  const owner = props.diagram.owner || ''
-  return owner.includes('@') ? owner.split('@')[0] : owner
-})
 
-// Pinning is capped (5). An unpinned diagram can't be pinned once the cap is
-// hit — its menu item greys out and says why.
-const pinBlocked = computed(() => !isPinned.value && props.pinLimitReached)
-
-// Curated ⋯ menu (Drive-style, I5): pin/unpin, copy link, rename, duplicate,
-// delete. (Move / Show info / Share need dedicated dialogs — tracked separately.)
-const menuItems = computed(() => [
-  {
-    label: isPinned.value ? 'Unpin' : 'Pinned',
-    icon: 'pin',
-    onClick: togglePin,
-  },
-  { label: 'Copy link', icon: 'link', onClick: copyLink },
-  { label: 'Show info', icon: 'file-text', onClick: () => emit('show-info', props.diagram) },
-  { label: 'Rename', icon: 'edit-2', onClick: () => emit('rename', props.diagram) },
-  { label: 'Duplicate', icon: 'copy', onClick: () => emit('duplicate', props.diagram) },
-  { label: 'Delete', icon: 'trash-2', theme: 'red', onClick: () => emit('delete', props.diagram) },
-])
-
-// Copy the diagram's editor link to the clipboard (spec I5, "under sharing").
-function copyLink() {
-  const url = `${window.location.origin}/draw/d/${props.diagram.name}`
-  navigator.clipboard?.writeText(url).then(
-    () => toast.success('Link copied'),
-    () => toast.error('Could not copy link'),
-  )
-}
-
-// The star's title/behaviour depends on whether pinning is still allowed (cap 5).
-const pinTitle = computed(() =>
-  isPinned.value ? 'Unpin' : pinBlocked.value ? 'Pin limit reached (max 5)' : 'Pin',
-)
-function togglePin() {
-  if (!pinBlocked.value) emit('toggle-pin', props.diagram)
-}
-
-// Compact "3h ago" style label from an ISO/Frappe datetime string.
-function relativeTime(value) {
-  if (!value) return '—'
-  const elapsedSeconds = (Date.now() - new Date(value.replace(' ', 'T')).getTime()) / 1000
-  for (const [limit, divisor, unit] of TIME_UNITS) {
-    if (elapsedSeconds < limit) return `${Math.max(1, Math.round(elapsedSeconds / divisor))}${unit} ago`
-  }
-  return 'just now'
-}
-
-const TIME_UNITS = [
-  [60, 1, 's'],
-  [3600, 60, 'm'],
-  [86400, 3600, 'h'],
-  [Infinity, 86400, 'd'],
-]
-
+const menuItems = computed(() => diagramMenuItems(props.diagram, emit))
 </script>
 
 <template>
-  <!-- LIST ROW — flat, dense, Frappe-Drive style (#302): no card border, just a
-       hairline separator + hover. Whole row opens (mouse); the title is a real
-       button so the row is keyboard-reachable. Columns align with TileGrid's header. -->
   <div
-    v-if="view === 'list'"
-    data-diagram-row
-    class="group flex cursor-pointer items-center gap-3 border-b border-outline-gray-1 px-3 py-2 transition-colors"
-    :class="selected ? 'bg-surface-gray-3' : 'hover:bg-surface-gray-2'"
-    @click="emit('open', diagram.name)"
-  >
-    <!-- Select checkbox is always visible (Drive-style, I2). -->
-    <Checkbox
-      class="w-4 flex-none"
-      size="sm"
-      :model-value="selected"
-      :aria-label="`Select ${diagram.title || 'Untitled'}`"
-      @click.stop
-      @update:model-value="(wanted) => emit('select', diagram.name, wanted)"
-    />
-
-    <!-- One-click star (Gmail-style pin), as a frappe-ui Button so its hover,
-         focus ring and disabled treatment come from the design system (#449 item
-         11). The glyph stays PinIcon: a lucide class renders as a MASK, which
-         cannot be filled, and a filled pin is the whole point (#412). -->
-    <Button
-      variant="ghost"
-      size="sm"
-      class="flex-none"
-      :label="pinTitle"
-      :tooltip="pinTitle"
-      :disabled="pinBlocked"
-      @click.stop="togglePin"
-    >
-      <template #icon>
-        <PinIcon :pinned="isPinned" :class="isPinned ? 'text-ink-gray-8' : 'text-ink-gray-4'" />
-      </template>
-    </Button>
-
-    <button class="min-w-0 flex-1 truncate text-left text-sm font-semibold text-ink-gray-9" @click.stop="emit('open', diagram.name)">
-      {{ diagram.title }}
-    </button>
-    <span class="hidden w-28 flex-none truncate text-xs text-ink-gray-6 lg:block">{{ ownerLabel }}</span>
-    <span class="hidden w-28 flex-none text-xs text-ink-gray-6 md:block">{{ createdLabel }}</span>
-    <span class="hidden w-28 flex-none text-xs text-ink-gray-6 sm:block">{{ editedLabel }}</span>
-
-    <Dropdown :options="menuItems" placement="bottom-end">
-      <Button
-        variant="ghost"
-        size="sm"
-        icon="lucide-ellipsis"
-        class="flex-none"
-        :label="`More actions for ${diagram.title}`"
-        @click.stop
-      />
-    </Dropdown>
-  </div>
-
-  <!-- GRID TILE -->
-  <div
-    v-else
     data-diagram-row
     class="group relative overflow-hidden rounded-xl border text-left transition-shadow"
-    :class="selected ? 'border-outline-blue-3 ring-1 ring-outline-blue-2' : 'border-outline-gray-1'"  >
+    :class="selected ? 'border-outline-blue-3 ring-1 ring-outline-blue-2' : 'border-outline-gray-1'"
+  >
     <Checkbox
       class="absolute left-2 top-2 z-10 transition-opacity"
       :class="selected || selectionActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
@@ -202,22 +83,7 @@ const TIME_UNITS = [
       @update:model-value="(wanted) => emit('select', diagram.name, wanted)"
     />
 
-    <!-- One-click star (Gmail-style pin): always shown when pinned, on hover
-         otherwise. frappe-ui-exempt: this one floats over the thumbnail and needs a
-         translucent scrim behind it to stay legible on any drawing, which a ghost
-         Button has no variant for. -->
-    <button
-      class="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-surface-base/80 shadow-sm backdrop-blur transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-      :class="isPinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
-      :title="pinTitle"
-      :aria-label="pinTitle"
-      :disabled="pinBlocked"
-      @click.stop="togglePin"
-    >
-      <PinIcon :pinned="isPinned" :class="isPinned ? 'text-ink-gray-8' : 'text-ink-gray-5'" />
-    </button>
-
-    <button class="block w-full" @click="emit('open', diagram.name)">
+    <!-- frappe-ui-exempt: the diagram-preview surface — a Button's own padding and background would clip the 120px thumbnail and break the light-canvas frame the previews rely on --><button class="block w-full" @click="emit('open', diagram.name)">
       <!-- Fixed light background so the thumbnail is a true preview of the
            diagram canvas (which is light), never recolored by dark mode. -->
       <div
@@ -234,14 +100,14 @@ const TIME_UNITS = [
           @error="thumbnailFailed = true"
         />
         <div v-else-if="previewSvg" class="h-full w-full [&>svg]:h-full [&>svg]:w-full" v-html="previewSvg" />
-        <span v-else-if="showsBlankLabel" class="text-2xs italic text-ink-gray-4">Diagram is blank</span>
+        <!-- frappe-ui-exempt: text-2xs caption sized to the 120px preview frame, matching the tile meta line below --><span v-else-if="showsBlankLabel" class="text-2xs italic text-ink-gray-4">Diagram is blank</span>
       </div>
     </button>
 
     <div class="flex items-center gap-1 bg-surface-base px-3 py-2.5">
-      <button class="min-w-0 flex-1 text-left" @click="emit('open', diagram.name)">
+      <!-- frappe-ui-exempt: the tile's title + metadata block — a Button would impose its own label typography on both lines instead of letting the title and the meta line carry different weights --><button class="min-w-0 flex-1 text-left" @click="emit('open', diagram.name)">
         <div class="truncate text-sm font-semibold text-ink-gray-9">{{ diagram.title }}</div>
-        <div class="text-2xs text-ink-gray-5">Created {{ createdLabel }} · Edited {{ editedLabel }}</div>
+        <!-- frappe-ui-exempt: text-2xs meta caption, the same scale used across Home's tile/list secondary text --><div class="text-2xs text-ink-gray-5">Created {{ createdLabel }} · Edited {{ editedLabel }}</div>
       </button>
 
       <Dropdown :options="menuItems" placement="bottom-end">
