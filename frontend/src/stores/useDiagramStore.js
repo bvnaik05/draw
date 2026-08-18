@@ -14,6 +14,7 @@ import {
   ROLE,
   isMindmapShape,
   isFlowchartShape,
+  isAuthoredConnector,
   flattenSubmodels,
   FLOWCHART_FALLBACK_TYPE,
 } from '@/diagram/freeFloating.js'
@@ -984,9 +985,13 @@ function nextZIndex(state) {
 
 // Every object that carries a zIndex, as a flat list — the pool the Arrange
 // actions reorder and the renderers paint in order.
+// Structural connectors (mind-map branches/cross-links, flowchart edges) are
+// excluded: they are rebuilt or re-routed from their owning nodes and have no
+// independent stack position of their own (#542, mirrors isMarqueeSelectable).
 function stackedObjects(state) {
   return [
     ...state.shapes.map((shape) => ({ id: shape.id, object: shape })),
+    ...state.connectors.filter(isAuthoredConnector).map((connector) => ({ id: connector.id, object: connector })),
     ...whiteboardObjectsInZOrder(state.whiteboard || {}),
   ]
 }
@@ -1123,7 +1128,7 @@ function duplicateInternal(store, state, history, ids) {
   const newIds = []
   history.commit('Duplicate', () => {
     const idMap = duplicateShapes(store, state, ids, newIds)
-    duplicateConnectors(state, ids, idMap)
+    duplicateConnectors(state, ids, idMap, newIds)
   })
   store.select(newIds)
   return newIds
@@ -1144,25 +1149,42 @@ function duplicateShapes(store, state, ids, newIds) {
   return idMap
 }
 
-// Duplicate a connector when each endpoint is either free or attached to a shape
-// being duplicated; remap attached endpoints to the new ids and offset free ones
-// by +10/+10. Mirrors useClipboard so duplicate (Cmd+D) and copy/paste agree.
-function duplicateConnectors(state, ids, idMap) {
+// Duplicate a connector when it was itself selected (#542 — a lone authored
+// line, Cmd+D), OR when BOTH its endpoints are attached to shapes being
+// duplicated, so a connected pair carries its line along even though the line
+// was never clicked (e.g. selecting two linked shapes with a marquee, which
+// does not also catch every edge between them). Structural connectors carry
+// along the same way — an untouched flowchart edge between two duplicated
+// nodes must still connect the copies — but are never duplicated by explicit
+// selection, since they cannot normally BE selected on their own via the tools
+// that call this (isMarqueeSelectable already excludes them; #542).
+//
+// A FREE endpoint never counts as "attached": before this it trivially passed
+// (`!endpoint.shapeId` is true for any unattached end), so any free-floating
+// line anywhere in the document silently got redrawn beside its original the
+// moment the user duplicated anything else. Remapping falls back to the
+// original shapeId when that shape wasn't part of the duplicated set — safe
+// here (unlike paste's cross-context copy) because the original shape is still
+// live in the same document.
+function duplicateConnectors(state, ids, idMap, newIds) {
   for (const c of state.connectors) {
-    if (!endpointDuplicated(c.from, ids) || !endpointDuplicated(c.to, ids)) continue
+    const selected = isAuthoredConnector(c) && ids.includes(c.id)
+    const carried = endpointAttached(c.from, ids) && endpointAttached(c.to, ids)
+    if (!selected && !carried) continue
     const copy = createConnector({ ...clone(c), id: undefined })
     copy.from = remapDuplicatedEndpoint(c.from, idMap)
     copy.to = remapDuplicatedEndpoint(c.to, idMap)
     state.connectors.push(copy)
+    newIds.push(copy.id)
   }
 }
 
-function endpointDuplicated(endpoint, ids) {
-  return !endpoint?.shapeId || ids.includes(endpoint.shapeId)
+function endpointAttached(endpoint, ids) {
+  return Boolean(endpoint?.shapeId) && ids.includes(endpoint.shapeId)
 }
 
 function remapDuplicatedEndpoint(endpoint, idMap) {
-  if (endpoint?.shapeId) return { ...endpoint, shapeId: idMap[endpoint.shapeId] }
+  if (endpoint?.shapeId) return { ...endpoint, shapeId: idMap[endpoint.shapeId] || endpoint.shapeId }
   return { ...endpoint, x: (endpoint?.x || 0) + 10, y: (endpoint?.y || 0) + 10 }
 }
 
@@ -1186,6 +1208,10 @@ function attachConnectorMutations(store, state, history) {
   }
   store.updateConnector = (id, patch) =>
     history.commit('Update connector', () => applyPatch(store.connectorById(id), patch))
+  // Mirrors updateShapes: a multi-connector patch (e.g. LinkSection setting one
+  // link across a marquee-selected set) is one undo step, not one per connector.
+  store.updateConnectors = (ids, patch) =>
+    history.commit('Update connectors', () => ids.forEach((id) => applyPatch(store.connectorById(id), patch)))
 }
 
 function attachSelection(store, state) {
@@ -1259,8 +1285,11 @@ function attachSelection(store, state) {
 function attachOrdering(store, state, history) {
   store.bringToFront = (ids) => reorder(state, history, 'To front', ids, (s) => 1e6 + (ids.indexOf(s.id)))
   store.sendToBack = (ids) => reorder(state, history, 'To back', ids, (s) => -1e6 - (ids.length - ids.indexOf(s.id)))
-  store.bringForward = (ids) => reorder(state, history, 'Forward', ids, (s) => s.zIndex + 1.5)
-  store.sendBackward = (ids) => reorder(state, history, 'Backward', ids, (s) => s.zIndex - 1.5)
+  // (s.zIndex || 0): a connector newly eligible for Arrange (#542) has never
+  // carried a zIndex before, unlike a shape or whiteboard object, which always
+  // gets one on creation — read raw here and the arithmetic goes to NaN.
+  store.bringForward = (ids) => reorder(state, history, 'Forward', ids, (s) => (s.zIndex || 0) + 1.5)
+  store.sendBackward = (ids) => reorder(state, history, 'Backward', ids, (s) => (s.zIndex || 0) - 1.5)
 }
 
 function reorder(state, history, label, ids, scoreFn) {
