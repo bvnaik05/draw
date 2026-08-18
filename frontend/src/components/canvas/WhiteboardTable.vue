@@ -148,6 +148,14 @@ function cellAtEvent(event) {
   return tableCellAt(props.table, pointAtEvent(event))
 }
 
+// The table is the ONLY thing selected. The grips act on one table's rows and
+// columns, so they have no meaning while a multi-selection is being moved as a
+// unit — and useTableSelection resolves its table from the lone selection, so
+// showing them then would show controls that resolve to nothing.
+const isLoneSelection = computed(
+  () => props.selected && (ui.state.selection || []).length === 1,
+)
+
 // A press on the table (select tool only). The first press and additive toggles
 // fall through to the surface selectAt; once it's selected WE own the press — a
 // shift-click extends a cell range, a drag across the cells selects a range
@@ -155,7 +163,7 @@ function cellAtEvent(event) {
 // caret into the cell (T2).
 function onPointerDown(event) {
   if (event.button !== 0 || editorUi.state.tool !== 'select') return
-  const lone = ui.isSelected('table', props.table.id) && (ui.state.selection || []).length === 1
+  const lone = isLoneSelection.value
   // Shift-click on the lone-selected table grows a cell range for merge (#338).
   if (event.shiftKey && lone) {
     const cell = cellAtEvent(event)
@@ -407,7 +415,7 @@ watch(range, refreshActiveMarks)
     </foreignObject>
 
     <!-- Row / column grips + the move band, only while the table is selected. -->
-    <TableGrips v-if="selected" :table="table" />
+    <TableGrips v-if="isLoneSelection" :table="table" />
 
     <!-- Resize handles: thin drag zones on each column/row edge, only when the
          table is selected so they never fight normal moving/editing. -->

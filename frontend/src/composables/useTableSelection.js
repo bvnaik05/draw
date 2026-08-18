@@ -18,8 +18,19 @@ export function useTableSelection() {
   const store = useDiagramStore()
   const ui = useWhiteboardUi()
 
+  // The table being acted on: the one that owns the cell selection, else the one
+  // selected on the canvas.
+  //
+  // That fallback is what makes the grips work at all. They are drawn as soon as a
+  // table is SELECTED, which is before any cell has been picked — so on the first
+  // click there is no `cellRange` and no `editingCell`, and resolving the table
+  // from those alone left every grip pointing at nothing. `selected` rather than
+  // `selection`: a row grip acts on one table, so it has no meaning while a
+  // multi-selection is being dragged around as a unit.
   const table = computed(() => {
-    const id = ui.state.editingCell?.tableId || ui.state.cellRange?.tableId
+    const owner = ui.state.editingCell?.tableId || ui.state.cellRange?.tableId
+    const lone = ui.state.selected?.kind === 'table' ? ui.state.selected.id : null
+    const id = owner || lone
     return id ? tableById(store.state.whiteboard || {}, id) : null
   })
 
@@ -87,46 +98,58 @@ export function useTableSelection() {
   // click on the same button repeats the action rather than hunting for the row.
 
   function insertRowAbove() {
-    runOnTable((id) => store.insertTableRow(id, bounds.value.top))
-    selectRow(bounds.value.top)
+    onSelection((id, at) => {
+      store.insertTableRow(id, at.top)
+      selectRow(at.top)
+    })
   }
 
   function insertRowBelow() {
-    runOnTable((id) => store.insertTableRow(id, bounds.value.bottom + 1))
-    selectRow(bounds.value.bottom + 1)
+    onSelection((id, at) => {
+      store.insertTableRow(id, at.bottom + 1)
+      selectRow(at.bottom + 1)
+    })
   }
 
   function deleteRows() {
     const targets = rows.value
-    runOnTable((id) => store.deleteTableRows(id, targets))
-    clearSelection()
+    onSelection((id) => {
+      store.deleteTableRows(id, targets)
+      clearSelection()
+    })
   }
 
   function insertColumnBefore() {
-    runOnTable((id) => store.insertTableColumn(id, bounds.value.left))
-    selectColumn(bounds.value.left)
+    onSelection((id, at) => {
+      store.insertTableColumn(id, at.left)
+      selectColumn(at.left)
+    })
   }
 
   function insertColumnAfter() {
-    runOnTable((id) => store.insertTableColumn(id, bounds.value.right + 1))
-    selectColumn(bounds.value.right + 1)
+    onSelection((id, at) => {
+      store.insertTableColumn(id, at.right + 1)
+      selectColumn(at.right + 1)
+    })
   }
 
   function deleteColumns() {
     const targets = columns.value
-    runOnTable((id) => store.deleteTableColumns(id, targets))
-    clearSelection()
+    onSelection((id) => {
+      store.deleteTableColumns(id, targets)
+      clearSelection()
+    })
   }
 
   // The header runs from the top down to the selection's last row, or ends just
   // above it when those rows are already header (#553).
   function toggleHeaderRows() {
-    runOnTable((id) => store.toggleTableHeaderThroughRow(id, bounds.value.bottom))
+    onSelection((id, at) => store.toggleTableHeaderThroughRow(id, at.bottom))
   }
 
   function clearContents() {
     const targets = cells.value
-    runOnTable((id) => store.clearTableCells(id, targets))
+    onSelection((id) => store.clearTableCells(id, targets))
   }
 
   function deleteTable() {
@@ -142,8 +165,15 @@ export function useTableSelection() {
     ui.state.editingCell = null
   }
 
-  function runOnTable(action) {
-    if (table.value && bounds.value) action(table.value.id)
+  // Runs `action(tableId, bounds)` when there is a table AND a selection inside
+  // it, and does nothing otherwise — the single place that guard lives.
+  //
+  // The bounds are handed IN rather than read again inside the action: an insert
+  // shifts every row below it, so a second read of `bounds` mid-action would name
+  // a different row than the one the user picked.
+  function onSelection(action) {
+    if (!table.value || !bounds.value) return
+    action(table.value.id, bounds.value)
   }
 
   return {
