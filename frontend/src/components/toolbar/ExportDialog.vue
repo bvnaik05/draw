@@ -122,7 +122,7 @@ async function print() {
                wraps to two at this width while PNG's and SVG's do not, so an
                unreserved hint is a second height variable behind the same bug. -->
           <div class="mt-1.5 flex min-h-8 items-start justify-between gap-3 text-xs text-ink-gray-5">
-            <p>{{ current.hint }}</p>
+            <!-- frappe-ui-exempt: text-2xs helper text, reading as supporting copy under the Format/Size controls rather than competing with them (#544) --><p class="text-2xs">{{ current.hint }}</p>
             <p class="shrink-0 tabular-nums">{{ sizeLabel }}</p>
           </div>
         </div>

@@ -91,6 +91,15 @@ describe('the eraser menu (#462)', () => {
     expect(source).toContain('title="Clear the canvas?"')
   })
 
+  // #544: opening the eraser's menu arms Eraser (every OPTION_TOOLS trigger
+  // does), but "Clear all" living inside that same menu must not leave Eraser
+  // armed behind it once the canvas is cleared.
+  it('restores the pre-eraser tool after Clear all, instead of leaving Eraser armed', () => {
+    expect(source).toContain('@click="armOptionTool(t.tool)"')
+    const clearAllBody = source.slice(source.indexOf('function clearAll()'), source.indexOf('confirmingClearAll.value = false'))
+    expect(clearAllBody).toContain('editorUi.setTool(toolBeforeEraserMenu)')
+  })
+
   // Picking a mode or a size must arm the tool too, or the previously selected tool
   // is still live under the pointer. Picking a size is what arms ink mode.
   it('arms the eraser when a mode or size is picked', () => {

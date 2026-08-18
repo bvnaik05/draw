@@ -319,10 +319,10 @@ describe('toolbar icons say what their control does', () => {
   // of the same bar.
   it('keeps Guides distinct from Table, on an icon that means dotted grid', () => {
     const guides = read('./groups/GuidesGroup.vue')
-    expect(guides).toContain('icon-left="lucide-grip"')
+    expect(guides).toContain('icon="lucide-grip"')
     // Bound to the attribute, not the bare name: the comment above the control
     // names the icon it replaced, and that is worth keeping.
-    expect(guides).not.toContain('icon-left="lucide-grid-2x2"')
+    expect(guides).not.toContain('icon="lucide-grid-2x2"')
     expect(inPack('lucide-grip')).toBe(true)
     // The icon it used to collide with is unchanged, so the pair is really apart.
     expect(read('../../composables/useInsertCatalog.js')).toContain("icon: 'lucide-table'")
