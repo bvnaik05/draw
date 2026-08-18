@@ -203,10 +203,11 @@ const labelFill = computed(() => {
   return textStyle.value.color
 })
 
-// Shrink-to-fit the rich text when the shape opts in (spec 6.4). Declared last so
-// the inputs getter can reference the computeds above without hitting the TDZ.
+// Shrink-to-fit the rich text, always on (#550 — no opt-in toggle any more).
+// Declared last so the inputs getter can reference the computeds above without
+// hitting the TDZ.
 useAutoFitText(richEl, () => ({
-  enabled: props.shape.text?.autoFit && !isEditingThis.value,
+  enabled: !isEditingThis.value,
   base: props.shape.text?.style?.size || 16,
   w: textArea.value?.w,
   h: textArea.value?.h,
