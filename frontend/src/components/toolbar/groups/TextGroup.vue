@@ -164,7 +164,7 @@ function setTextColor(hex) {
       variant="ghost"
       inputmode="numeric"
       aria-label="Font size"
-      class="w-9 [&_input]:text-center [&_input]:tabular-nums"
+      class="w-9 [&_input]:px-0 [&_input]:text-center [&_input]:tabular-nums"
       @focus="$event.target.select()"
       @keydown.enter="commitFontSizeDraft(); $event.target.blur()"
       @blur="resetFontSizeDraft"
