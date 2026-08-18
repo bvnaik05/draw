@@ -7,7 +7,6 @@
 // overflowMenu.js so it can be unit-tested without mounting this component.
 //
 // Rename is not here (#232): renaming happens by clicking the title.
-// Pin is not here either (#370): pinning organises the library, so it lives on Home.
 // Move … and Version history … are intentionally omitted — see overflowMenu.js.
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -86,7 +85,7 @@ function frappeNow() {
 </script>
 
 <template>
-  <Dropdown :options="menuItems" placement="bottom-end">
+  <Dropdown :options="menuItems" align="end">
     <!-- Same ghost icon button as its neighbours (#229), so the cluster reads as one set. -->
     <Button variant="ghost" icon="lucide-ellipsis" label="More actions" tooltip="More actions" />
   </Dropdown>

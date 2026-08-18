@@ -28,7 +28,7 @@ type picker. Start drawing immediately, and pull in exactly what you need:
 - **Whiteboards** — pen, highlighter, partial eraser, sticky notes, tables, lines, laser pointer and image insert.
 - **Real-time co-editing** — multiple people on the same canvas at once, with live cursors.
 - **Sharing** — Writer-style **view / comment / edit** access per person, plus public or restricted general access, built on Frappe's native permissions.
-- **Library** — organise diagrams into folders, pin favourites, search and filter; per-user and permission-scoped.
+- **Library** — organise diagrams into folders, search and filter; per-user and permission-scoped.
 - **Navigation** — minimap, zoom/pan, fit-to-view, alignment guides and named sections.
 - **Export** — PNG and PDF.
 - **Desk app launcher** — appears in the Frappe `/apps` screen with its own icon.

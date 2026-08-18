@@ -7,16 +7,12 @@
 // Drive is available (`driveAvailable`), since there are no folders to move into
 // otherwise. Backed by draw/api/drive_integration.py + MoveToDriveDialog.vue.
 //
-// Two things are deliberately absent.
+// Rename (#232) is deliberately absent. The title in the top bar is the one way
+// to rename a diagram — click it and it becomes an input. A menu row that only
+// jumped focus there was a second door onto the same edit.
 //
-// Rename (#232). The title in the top bar is the one way to rename a diagram —
-// click it and it becomes an input. A menu row that only jumped focus there was a
-// second door onto the same edit.
-//
-// Pin (#370). Pinning organises the library, so Home is where it belongs: it does
-// nothing to what the editor is showing, and its result is invisible from here.
-// It was also the one pin path that ignored the cap — Home blocks a sixth pin and
-// says why, while this menu wrote the flag unchecked.
+// Pin was never in this menu, and pinning itself is gone from Draw entirely now
+// (#541) — there is nothing left to reference here.
 //
 // Still NOT built — slots in when its backing lands:
 //   • Version history … needs a stored revision history (unbuilt)

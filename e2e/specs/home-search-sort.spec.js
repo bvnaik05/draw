@@ -7,6 +7,10 @@ import { documents } from '../fixtures/documents.js'
 // was about the CONTROLS, and a filter that works behind a field nobody can reach
 // is the same bug to the person using it.
 //
+// #541 moved sorting onto the list view's column headers (frappe-ui ListView) and
+// dropped the standalone "Sort by" control the earlier version of these tests
+// drove, so the sort cases here click "Name" directly.
+//
 // The library on a dev site holds whatever earlier runs left behind, so every
 // assertion is about THESE three rows: seeded with a shared marker in the title,
 // found by that marker, and deleted afterwards.
@@ -57,28 +61,40 @@ test.describe('Home search and sort (#449)', () => {
     await expect(page.getByText('No diagrams match')).toBeVisible()
   })
 
-  test('sorting by name reorders the list and says which sort is on', async ({ page }) => {
-    const sort = page.getByRole('button', { name: /^Sort by/ })
-    await expect(sort, 'the bar does not name the active sort').toContainText('Last edited')
-
+  test('clicking the Name column header sorts the list, and clicking again reverses it', async ({ page }) => {
     // Narrow to the seeded rows first, so the order asserted is only theirs.
     await searchField(page).fill(MARKER)
-    await sort.click()
-    await page.getByRole('menuitem', { name: 'Name (A–Z)' }).click()
+    const nameHeader = page.getByRole('button', { name: 'Name' })
 
-    await expect(sort).toContainText('Name')
+    await nameHeader.click()
     await expect(rows(page).nth(0)).toContainText('alpha')
     await expect(rows(page).nth(1)).toContainText('bravo')
     await expect(rows(page).nth(2)).toContainText('charlie')
+
+    await nameHeader.click()
+    await expect(rows(page).nth(0)).toContainText('charlie')
+    await expect(rows(page).nth(1)).toContainText('bravo')
+    await expect(rows(page).nth(2)).toContainText('alpha')
   })
 
   test('search and sort work together', async ({ page }) => {
     await searchField(page).fill('kite')
-    await page.getByRole('button', { name: /^Sort by/ }).click()
-    await page.getByRole('menuitem', { name: 'Name (A–Z)' }).click()
+    await page.getByRole('button', { name: 'Name' }).click()
 
     await expect(rows(page)).toHaveCount(2)
     await expect(rows(page).nth(0)).toContainText('alpha')
     await expect(rows(page).nth(1)).toContainText('charlie')
+  })
+
+  // #541 item 2: Drive-style — a row's checkbox stays out of the way until you
+  // are actually pointed at that row.
+  test('a row checkbox is hidden until its row is hovered', async ({ page }) => {
+    await searchField(page).fill(MARKER)
+    const row = seededRows(page).first()
+    const checkbox = row.locator('input[type="checkbox"]')
+
+    await expect(checkbox).toHaveCSS('opacity', '0')
+    await row.hover()
+    await expect(checkbox).toHaveCSS('opacity', '1')
   })
 })

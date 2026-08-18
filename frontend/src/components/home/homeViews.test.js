@@ -3,9 +3,6 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import {
-  isPinned,
-  pinnedOnly,
-  unpinned,
   DEFAULT_LAYOUT,
   readLayout,
   writeLayout,
@@ -13,20 +10,21 @@ import {
   searchDiagrams,
   sortDiagrams,
   defaultDirection,
-  SORTS,
   DEFAULT_SORT,
   NO_MATCHES,
   emptyStateFor,
 } from './homeViews.js'
+import { COLUMNS } from './diagramColumns.js'
 
 // Browser-free (node env, no @vue/test-utils): assert the MODEL the home page
-// renders and the pin FILTERS its list uses, then source-check that the SFCs
-// actually bind that model — a regression guard against the old nav / inline filters
+// renders, then source-check that the SFCs actually bind that model — a
+// regression guard against the old nav / inline filters (or pinning, #541)
 // creeping back. Mirrors ShareMenu.test.js (import the model, string-check the SFC).
 const here = path.dirname(fileURLToPath(import.meta.url))
 const read = (rel) => readFileSync(path.join(here, rel), 'utf8')
 const tileGrid = read('TileGrid.vue')
 const diagramTile = read('DiagramTile.vue')
+const diagramListView = read('DiagramListView.vue')
 const homeShell = read('../../pages/HomeShell.vue')
 
 // #407: Home showed a row of tabs — Home · Recent · Shared with you · Pinned ·
@@ -57,49 +55,38 @@ describe('the home page has no view switcher (#407)', () => {
   })
 })
 
-describe('pin filters (#116)', () => {
-  const rows = [
-    { name: 'a', is_pinned: 1 },
-    { name: 'b', is_pinned: 0 },
-    { name: 'c' }, // missing flag reads as unpinned
-    { name: 'd', is_pinned: 1 },
-  ]
-
-  it('isPinned reads the flag as a boolean', () => {
-    expect(isPinned(rows[0])).toBe(true)
-    expect(isPinned(rows[1])).toBe(false)
-    expect(isPinned(rows[2])).toBe(false)
-  })
-
-  it('pinnedOnly / unpinned partition the list', () => {
-    expect(pinnedOnly(rows).map((r) => r.name)).toEqual(['a', 'd'])
-    expect(unpinned(rows).map((r) => r.name)).toEqual(['b', 'c'])
+// #541: pinning is gone from Draw entirely — no flag, no filter, no UI.
+describe('pinning is gone (#541)', () => {
+  it('leaves no pin reference in the home components', () => {
+    for (const source of [tileGrid, diagramTile, diagramListView, homeShell]) {
+      expect(source).not.toMatch(/is_pinned|isPinned|pinnedOnly|togglePin/i)
+    }
   })
 })
 
-describe('the SFCs bind the shared model', () => {
-  it('TileGrid partitions the list through the shared pin predicates', () => {
-    expect(tileGrid).toContain('pinnedOnly')
-    expect(tileGrid).toContain('unpinned')
-    // The old flat "all diagrams" list must be gone.
-    expect(tileGrid).not.toContain('allFlat')
-  })
-})
-
-// #302: the Home list is a flat, Frappe-Drive-style table — no per-row card, just a
-// hairline separator + hover — with sortable, direction-aware column headers.
-describe('Home list is a flat Drive-style table (#302)', () => {
-  it('de-cards the list row (hairline separator, not a bordered card)', () => {
-    expect(diagramTile).not.toContain('rounded-lg border px-3')
-    expect(diagramTile).toContain('border-b border-outline-gray-1')
+// #302 / #541: the Home list is built on frappe-ui's ListView family — Drive's
+// own hover, row spacing and type scale, not the hand-rolled table this replaced —
+// with sortable, direction-aware column headers.
+describe('Home list is a frappe-ui ListView, Drive-style (#302, #541)', () => {
+  it('is built on the ListView family, not a hand-rolled table', () => {
+    expect(diagramListView).toContain("from 'frappe-ui'")
+    expect(diagramListView).toContain('<ListView')
+    expect(diagramListView).toContain('<ListRow')
   })
 
   it('wires sortable, direction-aware column headers', () => {
-    for (const key of ['title', 'creation', 'modified']) {
-      expect(tileGrid).toContain(`setSort('${key}')`)
-    }
-    expect(tileGrid).toContain('sortArrow')
+    expect(diagramListView).toContain("emit('sort', column.key)")
+    expect(tileGrid).toContain('function setSort')
     expect(tileGrid).toContain('sortDir')
+  })
+
+  it('hides the checkbox until its row (or the header) is hovered', () => {
+    expect(diagramListView).toMatch(/input\[type='checkbox'\][^{]*\{\s*opacity:\s*0/)
+  })
+
+  it('drops the standalone sort control (#541 item 1)', () => {
+    expect(tileGrid).not.toMatch(/Sort by/i)
+    expect(tileGrid).not.toContain('sortOptions')
   })
 })
 
@@ -235,15 +222,9 @@ describe('list rows carry no type glyph (#218)', () => {
     expect(diagramTile).not.toContain('lucide-shapes')
   })
 
-  it('drops the header spacer that reserved the glyph lane', () => {
-    // The header aligns column-for-column with the rows, so a leftover spacer
-    // would shift every heading one lane right of its column.
+  it('leaves no hand-rolled glyph-lane spacer behind (#541: column widths are frappe-ui ListView\'s job now)', () => {
     expect(tileGrid).not.toContain('<span class="w-8 flex-none" />')
-    // The pin lane stays — the rows still have a pin button. It is w-7 since #449
-    // item 11 made that button a frappe-ui Button, which is 28px at size sm; the
-    // lane and the control it holds have to be the same width or the headings sit
-    // off their columns.
-    expect(tileGrid).toContain('<span class="w-7 flex-none" />')
+    expect(diagramListView).not.toContain('<span class="w-8 flex-none" />')
   })
 
   it('keeps the tile view showing previews, not a glyph', () => {
@@ -298,9 +279,9 @@ describe('Home fetches documents only where a preview needs one (#223)', () => {
 // and clearing it restores every row, the sort actually reorders, and the two
 // compose.
 const LIBRARY = [
-  { name: 'a', title: 'Quarterly roadmap', modified: '2026-08-14 10:00:00', creation: '2026-08-01 09:00:00' },
-  { name: 'b', title: 'onboarding flow', modified: '2026-08-15 08:00:00', creation: '2026-07-02 09:00:00', is_pinned: 1 },
-  { name: 'c', title: 'Billing states', modified: '2026-08-10 12:00:00', creation: '2026-08-09 09:00:00' },
+  { name: 'a', title: 'Quarterly roadmap', owner: 'carol@example.com', modified: '2026-08-14 10:00:00', creation: '2026-08-01 09:00:00' },
+  { name: 'b', title: 'onboarding flow', owner: 'alice@example.com', modified: '2026-08-15 08:00:00', creation: '2026-07-02 09:00:00' },
+  { name: 'c', title: 'Billing states', owner: 'bob@example.com', modified: '2026-08-10 12:00:00', creation: '2026-08-09 09:00:00' },
 ]
 const titles = (rows) => rows.map((row) => row.title)
 
@@ -342,8 +323,12 @@ describe('sortDiagrams', () => {
     expect(titles(sortDiagrams(LIBRARY, 'creation', 'desc'))[0]).toBe('Billing states')
   })
 
-  it('puts pinned first under Smart, then most recently edited', () => {
-    expect(titles(sortDiagrams(LIBRARY, 'smart'))[0]).toBe('onboarding flow')
+  it('orders by owner A to Z (#541: Owner is a sortable column now)', () => {
+    expect(titles(sortDiagrams(LIBRARY, 'owner', 'asc'))).toEqual([
+      'onboarding flow', // alice
+      'Billing states', // bob
+      'Quarterly roadmap', // carol
+    ])
   })
 
   it('never sorts the caller\'s array in place', () => {
@@ -361,18 +346,15 @@ describe('sortDiagrams', () => {
   })
 })
 
-describe('the sort options the toolbar offers', () => {
-  it('defaults to a key it actually offers', () => {
-    expect(SORTS.some((option) => option.key === DEFAULT_SORT)).toBe(true)
+describe('defaultDirection', () => {
+  it('defaults to a column the list view actually offers a sort on', () => {
+    expect(COLUMNS.some((column) => column.key === DEFAULT_SORT && column.sortable)).toBe(true)
   })
 
-  it('reads names A to Z and everything else newest first', () => {
+  it('reads text fields A to Z and everything else newest first', () => {
     expect(defaultDirection('title')).toBe('asc')
+    expect(defaultDirection('owner')).toBe('asc')
     expect(defaultDirection('modified')).toBe('desc')
     expect(defaultDirection('creation')).toBe('desc')
-  })
-
-  it('names every option, so the bar can show which one is on', () => {
-    expect(SORTS.every((option) => option.key && option.label)).toBe(true)
   })
 })
