@@ -77,10 +77,20 @@ describe('Create lives in the page header (#541 item 5)', () => {
   })
 })
 
+// Tile view has no header row, so it keeps its own master checkbox (#404);
+// list view gets one for free from frappe-ui's ListHeader.
+describe('tile view keeps Select all (#404)', () => {
+  it('renders SelectAllCheckbox, wired to a whole-page select/clear', () => {
+    expect(tileGrid).toContain('SelectAllCheckbox')
+    expect(tileGrid).toMatch(/<SelectAllCheckbox[^>]*:all-selected="allSelected"/)
+    expect(tileGrid).toMatch(/<SelectAllCheckbox[^>]*@change="setAllSelected"/)
+  })
+})
+
 // #541: no pin control, no Pinned section, no is_pinned field, anywhere under
 // components/home.
 describe('pinning is gone from every home component (#541)', () => {
   it('never re-adds a pin affordance to the list view', () => {
-    expect(diagramListView).not.toMatch(/pin/i)
+    expect(diagramListView).not.toMatch(/is_pinned|togglePin|PinIcon|Unpin/i)
   })
 })

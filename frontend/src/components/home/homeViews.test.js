@@ -10,11 +10,11 @@ import {
   searchDiagrams,
   sortDiagrams,
   defaultDirection,
-  SORTS,
   DEFAULT_SORT,
   NO_MATCHES,
   emptyStateFor,
 } from './homeViews.js'
+import { COLUMNS } from './diagramColumns.js'
 
 // Browser-free (node env, no @vue/test-utils): assert the MODEL the home page
 // renders, then source-check that the SFCs actually bind that model — a
@@ -346,9 +346,9 @@ describe('sortDiagrams', () => {
   })
 })
 
-describe('the sort options the toolbar offers', () => {
-  it('defaults to a key it actually offers', () => {
-    expect(SORTS.some((option) => option.key === DEFAULT_SORT)).toBe(true)
+describe('defaultDirection', () => {
+  it('defaults to a column the list view actually offers a sort on', () => {
+    expect(COLUMNS.some((column) => column.key === DEFAULT_SORT && column.sortable)).toBe(true)
   })
 
   it('reads text fields A to Z and everything else newest first', () => {
@@ -356,9 +356,5 @@ describe('the sort options the toolbar offers', () => {
     expect(defaultDirection('owner')).toBe('asc')
     expect(defaultDirection('modified')).toBe('desc')
     expect(defaultDirection('creation')).toBe('desc')
-  })
-
-  it('names every option, so the bar can show which one is on', () => {
-    expect(SORTS.every((option) => option.key && option.label)).toBe(true)
   })
 })

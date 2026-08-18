@@ -85,7 +85,7 @@ function frappeNow() {
 </script>
 
 <template>
-  <Dropdown :options="menuItems" placement="bottom-end">
+  <Dropdown :options="menuItems" align="end">
     <!-- Same ghost icon button as its neighbours (#229), so the cluster reads as one set. -->
     <Button variant="ghost" icon="lucide-ellipsis" label="More actions" tooltip="More actions" />
   </Dropdown>

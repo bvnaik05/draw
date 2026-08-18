@@ -23,9 +23,9 @@ const emit = defineEmits(['open', 'select-all', 'sort', 'copy-link', 'rename', '
 const listRef = ref(null)
 
 // The row checkbox and the "select all" one in the header both come from
-// ListRow / ListHeader themselves — there is no slot to swap them for the
-// shared SelectAllCheckbox tile view uses, so their state is a SEPARATE Set
-// that frappe-ui owns internally. Since this component is only ever mounted
+// ListRow / ListHeader themselves — there is no slot to swap them for
+// SelectAllCheckbox (tile view's own master box, since it has no header row),
+// so their state is a SEPARATE Set that frappe-ui owns internally. Since this component is only ever mounted
 // while list view is active (TileGrid renders it behind a `v-if`), "on mount"
 // already means "list view just became active" — that is the one moment a
 // selection made in tile view needs to be carried in.

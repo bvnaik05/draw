@@ -18,6 +18,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { call, useList, dialog, Dialog, Button, Tooltip, TooltipProvider, TextInput, toast } from 'frappe-ui'
 import DiagramCollection from './DiagramCollection.vue'
 import DiagramListView from './DiagramListView.vue'
+import SelectAllCheckbox from './SelectAllCheckbox.vue'
 import { useOptimisticTrash } from '@/composables/useOptimisticTrash.js'
 import {
   readLayout,
@@ -140,6 +141,15 @@ function applySelection(names) {
   names.forEach((name) => selected.add(name))
 }
 
+// Tile view's own master checkbox (#404) — list view gets one for free from
+// ListHeader, but there is no header row in tile view to carry it.
+const allSelected = computed(() => diagrams.value.length > 0 && diagrams.value.every((d) => selected.has(d.name)))
+const someSelected = computed(() => selectedCount.value > 0 && !allSelected.value)
+function setAllSelected(wanted) {
+  clearSelection()
+  if (wanted) diagrams.value.forEach((d) => selected.add(d.name))
+}
+
 // Nothing on the shelf (a search excluded everything — the truly-empty home
 // renders HomeShell's EmptyState instead of this grid).
 const nothingHere = computed(() => !diagrams.value.length)
@@ -243,6 +253,15 @@ const collectionHandlers = {
          the view toggle sits at the far right (Create moved to the page header,
          #541 item 5). -->
     <div class="mb-5 flex h-9 items-center gap-2 px-3">
+      <!-- List view's master checkbox comes free from ListHeader; tile view has
+           no header row, so it sits here instead. -->
+      <!-- Spacing lives on the wrapper: frappe-ui's Checkbox has no
+           `inheritAttrs: false`, so a class passed to it lands on both its root
+           element and the control inside, doubling the margin. -->
+      <span v-if="view === 'tile' && diagrams.length" class="mr-1 flex flex-none items-center">
+        <SelectAllCheckbox :all-selected="allSelected" :some-selected="someSelected" @change="setAllSelected" />
+      </span>
+
       <template v-if="selectedCount">
         <span class="text-sm font-semibold text-ink-gray-9">{{ selectedCount }} selected</span>
         <Button variant="subtle" theme="red" @click="deleteSelected">

@@ -53,15 +53,9 @@ export function searchDiagrams(rows, query) {
   return rows.filter((diagram) => matchesQuery(diagram, query))
 }
 
-// One registry of sortable fields, read by both the toolbar's sort state and
-// the list view's column headers (#541) — a column that isn't here doesn't
-// offer a sort affordance.
-export const SORTS = [
-  { key: 'title', label: 'Name' },
-  { key: 'owner', label: 'Owner' },
-  { key: 'creation', label: 'Date created' },
-  { key: 'modified', label: 'Last edited' },
-]
+// The sortable fields are `diagramColumns.js`'s COLUMNS (#541) — the list
+// view's headers are the only sort affordance left, so there is no second
+// registry here to drift out of sync with them.
 export const DEFAULT_SORT = 'modified'
 
 // Text fields read A→Z by default; every other key is newest-first.
