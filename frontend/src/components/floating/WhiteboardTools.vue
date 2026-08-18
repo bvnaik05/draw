@@ -116,6 +116,26 @@ const drawOpacityPercent = computed({
 // the outer on its own outside-press.
 const eraserSizesOpen = ref(false)
 
+// The tool that was active before the Eraser button was clicked. Opening the
+// button's popover arms Eraser (openEraserMenu below), same as every other
+// OPTION_TOOLS trigger — but that popover also holds "Clear all", which is an
+// action, not an eraser mode. Restoring this in clearAll() is what keeps
+// Clear All from leaving Eraser armed behind it (#544).
+let toolBeforeEraserMenu = 'select'
+function openEraserMenu() {
+  if (activeTool.value !== 'eraser') toolBeforeEraserMenu = activeTool.value
+  editorUi.setTool('eraser')
+}
+
+// The trigger's own click-to-arm (#544): every OPTION_TOOLS button arms its
+// tool on click, but the eraser's trigger goes through openEraserMenu instead,
+// which is what lets clearAll() find its way back to the tool that was active
+// before the eraser's menu (and its "Clear all" entry) was ever opened.
+function armOptionTool(tool) {
+  if (tool === 'eraser') openEraserMenu()
+  else editorUi.setTool(tool)
+}
+
 // Picking a mode arms the eraser as well as setting it, so choosing one from the
 // menu does not leave the previous tool live under the pointer.
 function armEraser(mode) {
@@ -130,10 +150,13 @@ function pickEraserSize(size) {
 }
 
 // Clearing the canvas cannot be undone by pressing the same button again, so it
-// asks first — the same confirm the mind map's own clear-all uses.
+// asks first — the same confirm the mind map's own clear-all uses. It restores
+// whatever tool was active before the Eraser menu was opened (#544) — Clear all
+// is a one-shot action, not a reason to leave Eraser armed.
 const confirmingClearAll = ref(false)
 function clearAll() {
   store.clearCanvas()
+  editorUi.setTool(toolBeforeEraserMenu)
   confirmingClearAll.value = false
 }
 
@@ -215,7 +238,7 @@ function insertTable({ rows, cols }, close) {
           :active="activeTool === t.tool"
           :icon="t.icon"
           :label="t.label"
-          @click="editorUi.setTool(t.tool)"
+          @click="armOptionTool(t.tool)"
         />
       </template>
       <template #default>

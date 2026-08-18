@@ -39,9 +39,12 @@ function setGuides(value) {
            `lucide-table` at the other end of the same bar — at 16px the two were
            not tellable apart. A dot grid shares no silhouette with it and is also
            what this control actually toggles. "Grip" usually means a drag handle,
-           but the visible "Guides" label carries the meaning here, and no other
-           control in the app uses the icon. -->
-      <ToolbarButton label="Guides" icon-left="lucide-grip" />
+           but no other control in the app uses the icon, and the popover's own
+           "Guides" sub-header (below) carries the meaning once it's open — the
+           bar label was redundant chrome noise, so `icon` (not `icon-left`)
+           keeps this trigger icon-only, with "Guides" as its aria-label/tooltip
+           only (#544). -->
+      <ToolbarButton label="Guides" icon="lucide-grip" />
     </template>
     <template #default>
       <div class="w-[180px] p-2">
