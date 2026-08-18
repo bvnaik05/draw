@@ -441,7 +441,9 @@ describe('table dimensions from an untrusted document (D5)', () => {
     ]
 
     const svg = documentToSvg(doc)
-    const cells = (svg.match(/stroke="#00AA55"/g) || []).length
+    // Cell borders are the neutral grid colour now, not the table's own (#553):
+    // that colour is the table's TEXT colour.
+    const cells = (svg.match(/stroke="#E6E6EA"/g) || []).length
     expect(cells, 'the table loop was not clamped').toBe(50 * 50)
   })
 
@@ -451,7 +453,7 @@ describe('table dimensions from an untrusted document (D5)', () => {
     doc.whiteboard.tables = [
       { id: 'wt', x: 0, y: 0, rows: 2, cols: 2, cellW: 40, cellH: 20, color: '#00AA55', cells: {} },
     ]
-    expect((documentToSvg(doc).match(/stroke="#00AA55"/g) || []).length).toBe(4)
+    expect((documentToSvg(doc).match(/stroke="#E6E6EA"/g) || []).length).toBe(4)
   })
 })
 

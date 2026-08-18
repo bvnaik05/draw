@@ -58,7 +58,9 @@ describe('one colour palette across the app (#495)', () => {
     ['mind-map fill / branch / border', 'components/toolbar/groups/MindmapStyleGroup.vue'],
     ['flowchart fill / border', 'components/toolbar/groups/FlowchartNodeGroup.vue'],
     ['whiteboard line colour', 'components/floating/LineOptions.vue'],
-    ['table colour', 'components/floating/TableOptions.vue'],
+    // A table's colour is its TEXT colour and the control for it sits on the
+    // toolbar beside the table's options, not inside them (#553).
+    ['table text colour', 'components/toolbar/groups/WhiteboardObjectGroup.vue'],
   ])('opens the shared grid for %s', (_name, file) => {
     expect(read(path.join(SRC, file))).toContain('EspressoSwatchGrid')
   })

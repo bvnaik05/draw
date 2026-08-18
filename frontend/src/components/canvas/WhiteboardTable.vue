@@ -16,7 +16,11 @@ import { computed, watch } from 'vue'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
-import { startTableMove, startTableResize } from '@/composables/useWhiteboardInteraction.js'
+import {
+  startCellRangeDrag,
+  startTableMove,
+  startTableResize,
+} from '@/composables/useWhiteboardInteraction.js'
 import { isAdditiveEvent, clientToLogical } from '@/composables/pointer.js'
 import {
   tableWidth,
@@ -36,8 +40,11 @@ import {
   TABLE_FONT_SIZE,
 } from '@/diagram/whiteboardModel.js'
 import { resolveMark } from '@/diagram/richText.js'
+import { TABLE_GRID_COLOR, TABLE_HEADER_FILL, TABLE_SELECT_COLOR } from '@/diagram/whiteboardColors.js'
 import { useTableCellFormat } from '@/composables/useTableCellFormat.js'
 import { useTableCellEditor } from '@/composables/useTableCellEditor.js'
+import { isHeaderRow, tableHeaderRows } from '@/diagram/tableStructure.js'
+import TableGrips from './TableGrips.vue'
 
 const props = defineProps({
   table: { type: Object, required: true },
@@ -64,12 +71,15 @@ const rowHandles = computed(() =>
   rowOffsets(props.table).slice(1).map((offset, row) => ({ row, y: props.table.y + offset })),
 )
 
-// A subtle tinted band behind the first row when it is a header (#338).
-const headerBand = computed(() =>
-  props.table.hasHeader && rows.value > 0
-    ? { x: props.table.x, y: props.table.y, w: width.value, h: rowHeightsOf(props.table)[0] }
-    : null,
-)
+// A subtle tinted band behind the header rows (#338), which is now the first N
+// rows rather than only the first (#553).
+const headerBand = computed(() => {
+  const count = Math.min(tableHeaderRows(props.table), rows.value)
+  if (!count) return null
+  const heights = rowHeightsOf(props.table)
+  const height = heights.slice(0, count).reduce((total, each) => total + each, 0)
+  return { x: props.table.x, y: props.table.y, w: width.value, h: height }
+})
 
 // Horizontal text placement within a cell box, per that CELL's alignment — its own
 // where it has one, else the table's (#508).
@@ -90,7 +100,7 @@ const cellNodes = computed(() => {
       const box = cellSpanBox(props.table, row, col)
       const style = tableCellStyle(props.table, row, col)
       const layout = textLayout(box, style.align)
-      const header = props.table.hasHeader && row === 0
+      const header = isHeaderRow(props.table, row)
       out.push({
         row,
         col,
@@ -135,15 +145,14 @@ function onRowResize(event, row) {
 
 // The cell under a pointer event, in table coordinates.
 function cellAtEvent(event) {
-  const surface = event.target.closest('[data-fdpreset]')
-  const rect = surface ? surface.getBoundingClientRect() : { left: 0, top: 0 }
-  return tableCellAt(props.table, clientToLogical(event, rect, editorUi.viewport))
+  return tableCellAt(props.table, pointAtEvent(event))
 }
 
 // A press on the table (select tool only). The first press and additive toggles
 // fall through to the surface selectAt; once it's selected WE own the press — a
-// shift-click extends a cell range for merge, a drag past a threshold moves it,
-// and a plain click drops the caret into the cell (T2). Mirrors the sticky note.
+// shift-click extends a cell range, a drag across the cells selects a range
+// (#553), a drag on the frame band moves the table, and a plain click drops the
+// caret into the cell (T2).
 function onPointerDown(event) {
   if (event.button !== 0 || editorUi.state.tool !== 'select') return
   const lone = ui.isSelected('table', props.table.id) && (ui.state.selection || []).length === 1
@@ -166,15 +175,23 @@ function onPointerDown(event) {
   }
   if (isAdditiveEvent(event) || !ui.isSelected('table', props.table.id)) return
   event.stopPropagation()
-  // Plain press: remember the single cell (so Split can offer itself for a merged
-  // cell), then run the move / click-to-edit gesture.
-  const cell = cellAtEvent(event)
-  if (cell) {
-    ui.state.cellRange = { tableId: props.table.id, r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col }
+  const point = pointAtEvent(event)
+  // The frame band moves the table (with everything co-selected); so does any
+  // press while the table is part of a multi-selection. Inside the cells of a
+  // lone table, a drag selects a cell range and a click still opens the cell
+  // (#553) — the two gestures cannot both be "drag inside the grid".
+  if (!lone || event.target.hasAttribute('data-table-frame')) {
+    startTableMove(event, store, editorUi, ui, props.table, point)
+    return
   }
+  startCellRangeDrag(event, store, editorUi, ui, props.table, point)
+}
+
+// The press position in canvas units.
+function pointAtEvent(event) {
   const surface = event.target.closest('[data-fdpreset]')
   const rect = surface ? surface.getBoundingClientRect() : { left: 0, top: 0 }
-  startTableMove(event, store, editorUi, ui, props.table, clientToLogical(event, rect, editorUi.viewport))
+  return clientToLogical(event, rect, editorUi.viewport)
 }
 
 // ----- merge / split -----
@@ -206,6 +223,9 @@ const editBox = computed(() =>
   editingCell.value ? cellSpanBox(props.table, editingCell.value.row, editingCell.value.col) : null,
 )
 
+// A range of more than one cell is highlighted (a row, a column, a drag), and so
+// is a lone MERGED cell, which is a rectangle too. A lone plain cell is not: the
+// click that selects it also opens its editor, which draws its own highlight.
 const showRange = computed(() => props.selected && !!range.value && (canMerge.value || canSplit.value))
 
 // Deselecting the table drops any pending cell range.
@@ -281,9 +301,9 @@ watch(range, refreshActiveMarks)
       :width="width"
       :height="height"
       fill="#FFFFFF"
-      :stroke="table.color"
+      :stroke="TABLE_GRID_COLOR"
       stroke-width="1.5"
-      :style="selected ? 'filter: drop-shadow(0 0 2px #006EDB)' : null"
+      :style="selected ? `filter: drop-shadow(0 0 2px ${TABLE_SELECT_COLOR})` : null"
     />
 
     <!-- Header band: a subtle tint behind the first row so it reads apart (#338). -->
@@ -293,7 +313,7 @@ watch(range, refreshActiveMarks)
       :y="headerBand.y"
       :width="headerBand.w"
       :height="headerBand.h"
-      fill="#F4F4F6"
+      :fill="TABLE_HEADER_FILL"
       style="pointer-events: none"
     />
 
@@ -307,7 +327,7 @@ watch(range, refreshActiveMarks)
       :width="cell.box.w"
       :height="cell.box.h"
       fill="none"
-      stroke="#E6E6EA"
+      :stroke="TABLE_GRID_COLOR"
       stroke-width="1"
       style="pointer-events: none"
     />
@@ -319,9 +339,9 @@ watch(range, refreshActiveMarks)
       :y="rangeBox.y"
       :width="rangeBox.w"
       :height="rangeBox.h"
-      fill="#006EDB"
+      :fill="TABLE_SELECT_COLOR"
       fill-opacity="0.08"
-      stroke="#006EDB"
+      :stroke="TABLE_SELECT_COLOR"
       stroke-width="1.5"
       style="pointer-events: none"
     />
@@ -333,9 +353,9 @@ watch(range, refreshActiveMarks)
       :y="editBox.y"
       :width="editBox.w"
       :height="editBox.h"
-      fill="#006EDB"
+      :fill="TABLE_SELECT_COLOR"
       fill-opacity="0.08"
-      stroke="#006EDB"
+      :stroke="TABLE_SELECT_COLOR"
       stroke-width="1.5"
       style="pointer-events: none"
     />
@@ -375,7 +395,7 @@ watch(range, refreshActiveMarks)
         role="textbox"
         aria-label="Cell text"
         class="h-full w-full overflow-x-auto whitespace-nowrap border-0 bg-transparent px-3 outline-none"
-        :class="table.hasHeader && editingCell.row === 0 ? 'font-semibold' : ''"
+        :class="isHeaderRow(table, editingCell.row) ? 'font-semibold' : ''"
         :style="editorStyle"
         @pointerdown.stop
         @keydown="onEditorKeydown"
@@ -385,6 +405,9 @@ watch(range, refreshActiveMarks)
         @drop.prevent="onPasteText($event.dataTransfer?.getData('text/plain'))"
       />
     </foreignObject>
+
+    <!-- Row / column grips + the move band, only while the table is selected. -->
+    <TableGrips v-if="selected" :table="table" />
 
     <!-- Resize handles: thin drag zones on each column/row edge, only when the
          table is selected so they never fight normal moving/editing. -->

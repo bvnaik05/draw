@@ -29,12 +29,15 @@ import {
   cellSpanBox,
   isCoveredCell,
   tableCellRuns,
+  rowHeightsOf,
+  tableWidth,
 } from '@/diagram/whiteboardModel.js'
+import { isHeaderRow, tableHeaderRows } from '@/diagram/tableStructure.js'
 import { resolveMark } from '@/diagram/richText.js'
 import { pointsToPath, smoothPath } from '@/diagram/svgPath.js'
 import { polygonPointsString, isPresetPolygon, presetPolygonPoints } from '@/diagram/polygon.js'
 import { shapeCornerRadius, SHARP_CORNER_RADIUS } from '@/diagram/shapeGeometry.js'
-import { contrastInk, strokeOpacity } from '@/diagram/whiteboardColors.js'
+import { contrastInk, strokeOpacity, TABLE_GRID_COLOR, TABLE_HEADER_FILL } from '@/diagram/whiteboardColors.js'
 import { safeImageSrc } from '@/utils/safeUrl.js'
 
 const THROTTLE_MS = 30000
@@ -653,12 +656,14 @@ function whiteboardTable(table) {
   const safe = { ...table, cellW: num(table.cellW, 120), cellH: num(table.cellH, 40) }
   const color = safeColor(table.color, '#171717')
   const align = table.align || 'left'
-  let out = ''
+  let out = headerBand(safe)
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
       if (isCoveredCell(safe, r, c)) continue
       const box = cellSpanBox(safe, r, c)
-      out += `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.w)}" height="${num(box.h)}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.45"/>`
+      // Gridlines are neutral, not the table's colour (#553): that colour is the
+      // table's TEXT colour, which is what the control on a table now sets.
+      out += `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.w)}" height="${num(box.h)}" fill="none" stroke="${TABLE_GRID_COLOR}" stroke-width="1"/>`
       const runs = tableCellRuns(safe, r, c)
       if (runs.length) {
         const ty = box.y + box.h / 2 + 5
@@ -674,13 +679,23 @@ function whiteboardTable(table) {
         // A tspan per run, so an export carries the same per-cell bold/italic/
         // underline the canvas shows (#344) — including the header row's bold,
         // which this path used to drop.
-        const header = table.hasHeader === true && r === 0
+        const header = isHeaderRow(safe, r)
         const spans = runs.map((run) => `<tspan${runAttributes(run, header)}>${escapeText(run.text)}</tspan>`).join('')
         out += `<text x="${num(tx)}" y="${num(ty)}"${anchor} fill="${color}" font-size="13" font-family="Inter, sans-serif">${spans}</text>`
       }
     }
   }
   return out
+}
+
+// The tinted band behind the header rows, matching the live canvas (#553).
+function headerBand(table) {
+  const count = tableHeaderRows(table)
+  if (!count) return ''
+  const heights = rowHeightsOf(table).slice(0, count)
+  const height = heights.reduce((total, each) => total + each, 0)
+  const width = tableWidth(table)
+  return `<rect x="${num(table.x)}" y="${num(table.y)}" width="${num(width)}" height="${num(height)}" fill="${TABLE_HEADER_FILL}"/>`
 }
 
 // The SVG attributes for one formatted run. A header cell bolds by default; an
