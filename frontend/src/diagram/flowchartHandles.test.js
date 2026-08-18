@@ -107,16 +107,14 @@ describe('a decision offers one labelled handle per branch', () => {
     })
   }
 
-  it('sends every branch DOWNWARD, spread across the bottom edge', () => {
+  // #549 item 3: each branch takes a SIDE OF ITS OWN, in side order, so Yes and No
+  // read as two directions rather than two marks ~40px apart on one edge — which is
+  // what let a branch preview land on the branch beside it.
+  it('gives every branch a side of its own, in branch order', () => {
     const handles = handlesForNode('d', buildContext([decision('d', 0, 0)])).filter((h) => h.port)
     expect(handles).toHaveLength(2)
     expect(handles.map((h) => h.label)).toEqual(['Yes', 'No'])
-    // Both leave downward — a fork, not two different kinds of thing.
-    expect(handles.map((h) => h.side)).toEqual(['bottom', 'bottom'])
-    expect(new Set(handles.map((h) => h.cy)).size).toBe(1)
-    // Spread along that edge, so neither preview hides the other.
-    expect(new Set(handles.map((h) => h.cx)).size).toBe(2)
-    expect(handles[0].cx).toBeLessThan(handles[1].cx)
+    expect(handles.map((h) => h.side)).toEqual(['bottom', 'right'])
   })
 
   it('carries the branch port, so pressing one extends THAT branch', () => {
@@ -124,13 +122,15 @@ describe('a decision offers one labelled handle per branch', () => {
     expect(handles.filter((h) => h.port).map((h) => h.port)).toEqual(['yes', 'no'])
   })
 
-  it('keeps both branch handles one drop below the node', () => {
-    const [yes, no] = handlesForNode('d', buildContext([decision('d', 0, 0)])).filter((h) => h.port)
+  it('offers nothing but its branches, so no unlabelled "+" competes with them', () => {
+    const handles = handlesForNode('d', buildContext([decision('d', 0, 0)]))
+    expect(handles.every((handle) => handle.port)).toBe(true)
+  })
+
+  it('hangs the first branch one drop below the node, on its centre line', () => {
+    const [yes] = handlesForNode('d', buildContext([decision('d', 0, 0)])).filter((h) => h.port)
     expect(yes.cy).toBe(96 + ADD_OFFSET)
-    expect(no.cy).toBe(96 + ADD_OFFSET)
-    // Either side of the node's centre line (75 = half of 150).
-    expect(yes.cx).toBeLessThan(75)
-    expect(no.cx).toBeGreaterThan(75)
+    expect(yes.cx).toBe(75) // half of 150
   })
 
   it('gives a plain node unlabelled handles on every side', () => {
@@ -191,17 +191,15 @@ describe('handlesForNode', () => {
     }
   })
 
-  it('hangs a decision\'s branch handles below the diamond, off its bottom edge', () => {
+  it('hangs a decision\'s first branch below the diamond, off its bottom edge', () => {
     const ctx = buildContext([fcNode('d', 0, 0, 150, 96, 'decision')])
     const branches = handlesForNode('d', ctx).filter((handle) => handle.port)
     expect(branches.map((handle) => handle.port)).toEqual(['yes', 'no'])
-    for (const handle of branches) {
-      expect(handle.cy).toBe(96 + ADD_OFFSET)
-      expect(handle.stubY).toBe(96)
-    }
-    // The other three sides are plain, unlabelled adds.
-    const plain = handlesForNode('d', ctx).filter((handle) => !handle.port)
-    expect(plain.map((handle) => handle.side).sort()).toEqual(['left', 'right', 'top'])
+    const [yes] = branches
+    expect(yes.cy).toBe(96 + ADD_OFFSET)
+    expect(yes.stubY).toBe(96)
+    // Each branch owns a side, so nothing else on the node offers a "+".
+    expect(handlesForNode('d', ctx).filter((handle) => !handle.port)).toEqual([])
   })
 
   it('returns nothing for a non-flowchart / unknown id', () => {
@@ -226,6 +224,68 @@ describe('handlesForNode', () => {
     expect(handle.cx).toBe(box.x + box.w / 2)
     expect(handle.cy).toBe(box.y + box.h + ADD_OFFSET)
     expect(handle.cy).toBeGreaterThan(box.y + box.h)
+  })
+})
+
+// #549 items 2 and 4. A "+" is an offer to create something; a side that already
+// carries a connector has nothing to offer, and the pair of "+" marks that used to
+// frame every finished connection made a completed flow read as an unfinished one.
+describe('an occupied connection point offers no "+"', () => {
+  // The two nodes of `twoNodeChart`, connected a \u2192 b with b directly below a.
+  function twoNodeChart() {
+    const model = createFlowchart('TB')
+    const a = addFlowchartNode(model, 'process', 'Step A', 40, 40)
+    const b = addFlowchartNode(model, 'process', 'Step B', 40, 300)
+    addFlowchartEdge(model, a, b)
+    const out = flattenSubmodels(docWith({ flowchart: model }))
+    return { ...out, a, b }
+  }
+
+  it('drops the source\'s bottom and the target\'s top \u2014 one connection, no marks', () => {
+    const { shapes, connectors, a, b } = twoNodeChart()
+    const ctx = buildContext(shapes, connectors)
+    expect(handlesForNode(a, ctx).map((handle) => handle.side).sort()).toEqual(['left', 'right', 'top'])
+    expect(handlesForNode(b, ctx).map((handle) => handle.side).sort()).toEqual(['bottom', 'left', 'right'])
+  })
+
+  it('follows the connector after a drag, because the side is derived not stored', () => {
+    const { shapes, connectors, a, b } = twoNodeChart()
+    // Move the target to the RIGHT of its source: the edge now leaves through the
+    // source's right side, so that is the side that stops offering a "+".
+    const target = shapes.find((shape) => shape.id === b)
+    target.x = shapes.find((shape) => shape.id === a).x + 400
+    target.y = shapes.find((shape) => shape.id === a).y
+    const ctx = buildContext(shapes, connectors)
+    expect(handlesForNode(a, ctx).map((handle) => handle.side)).not.toContain('right')
+    expect(handlesForNode(a, ctx).map((handle) => handle.side)).toContain('bottom')
+  })
+
+  it('hides a decision branch that has already been extended', () => {
+    const model = createFlowchart('TB')
+    const decisionId = addFlowchartNode(model, 'decision', 'Ship it?', 40, 40)
+    const yes = addFlowchartNode(model, 'process', 'Ship', 40, 300)
+    addFlowchartEdge(model, decisionId, yes, { fromPort: 'yes', label: 'Yes' })
+    const out = flattenSubmodels(docWith({ flowchart: model }))
+    const handles = handlesForNode(decisionId, buildContext(out.shapes, out.connectors))
+    // Only the branch still free is offered, and it takes the first side left over.
+    expect(handles.map((handle) => handle.port)).toEqual(['no'])
+    expect(handles[0].label).toBe('No')
+    expect(handles[0].side).toBe('right')
+  })
+
+  it('moves a branch off a side whose PREVIEW would land on a node', () => {
+    // The "+" below the decision is in clear space, but the pill announcing the
+    // branch would hang straight onto the node parked just past it.
+    const decision = fcNode('d', 0, 0, 150, 96, 'decision')
+    const blocker = fcNode('near', 40, 96 + ADD_OFFSET + 20, 160, 72)
+    const handles = handlesForNode('d', buildContext([decision, blocker]))
+    expect(handles.find((handle) => handle.port === 'yes').side).not.toBe('bottom')
+  })
+
+  it('ignores connectors that are not flowchart edges', () => {
+    const { shapes, connectors, a } = twoNodeChart()
+    const plain = { ...connectors[0], id: 'plain', role: undefined }
+    expect(handlesForNode(a, buildContext(shapes, [plain]))).toHaveLength(4)
   })
 })
 
@@ -406,15 +466,15 @@ describe('handles keep off the neighbours', () => {
     expect(handles.map((handle) => handle.side).sort()).toEqual(['left', 'right', 'top'])
   })
 
-  it('keeps a decision\'s branch handle off an existing child', () => {
+  it('moves a decision\'s branch off a blocked side rather than dropping it', () => {
     const decision = fcNode('d', 0, 0, 150, 96, 'decision')
     const ctx0 = buildContext([decision])
     const yes = handlesForNode('d', ctx0).find((handle) => handle.port === 'yes')
-    // Sized to cover the Yes handle only — wide enough and it would swallow No too.
     const child = fcNode('child', yes.cx - 10, yes.cy - 10, 20, 20)
-    const ports = handlesForNode('d', buildContext([decision, child])).map((handle) => handle.port)
-    expect(ports).not.toContain('yes')
-    expect(ports).toContain('no')
+    const handles = handlesForNode('d', buildContext([decision, child]))
+    // Both outcomes are still offered; Yes simply took the next side along.
+    expect(handles.map((handle) => handle.port)).toEqual(['yes', 'no'])
+    expect(handles[0].side).not.toBe('bottom')
   })
 
   it('falls back to the full set when every side is blocked', () => {

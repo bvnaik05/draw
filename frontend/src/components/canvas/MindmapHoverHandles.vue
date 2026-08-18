@@ -24,7 +24,7 @@
 // ops (it never reimplements the add). It is a no-op when there are no migrated
 // mind-map shapes, so legacy single-type mind maps (which still render via
 // MindMapNodeLayer from the non-null state.mindmap) are untouched.
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import {
@@ -146,11 +146,20 @@ const handleOwner = computed(() =>
   }),
 )
 
-// The mind-map node being named, if any. Its handles are suppressed until it commits.
+// The mind-map node being named, if any. While it is named its handles reveal on
+// hover only, never on its selection alone.
 const editingNodeId = computed(() => {
   const id = editing?.editingShapeId?.value
   return id && ctx.value.boxes[id] ? id : null
 })
+
+// Opening an editor drops the hover, so a handle needs a FRESH pointer move to come
+// back. This is what lets #549 and #510 both hold. Clicking a "+" leaves the pointer
+// parked exactly where the handle was, and the child is born under it — so without
+// this the new node would offer a "+" of its own before it even has a name, which is
+// the complaint #510 fixed. Reaching back toward the node still produces one, because
+// that is a real pointermove and the user is asking.
+watch(editingNodeId, clearHover)
 
 const targetIds = computed(() => {
   // A drag is already showing where the node will land; a column of "+" marks
@@ -168,14 +177,15 @@ const targetIds = computed(() => {
 })
 
 // Every "+" to draw: the whole column for the node that owns the hover, plus the one
-// slot the pointer is sitting in when no node does. A drag or an open node editor
-// suppresses both — the same argument in each case, that something else already has
-// the user's attention (#427, #510).
+// slot the pointer is sitting in when no node does. A drag suppresses both — the
+// ghost already shows where the node will land, so a column of "+" marks would only
+// compete for the same attention (#427). Naming a node no longer suppresses them:
+// both routes here are hover-driven, and a pointer asking for a handle gets one
+// whatever the caret is doing (#549 item 1).
 const handles = computed(() => {
   const list = targetIds.value.flatMap((id) => handlesForNode(id, ctx.value))
   const slot = hoveredSlot.value
-  const quiet = drag.state.active || editingNodeId.value
-  if (!quiet && slot && !list.some((handle) => handle.key === slot.key)) list.push(slot)
+  if (!drag.state.active && slot && !list.some((handle) => handle.key === slot.key)) list.push(slot)
   return list
 })
 

@@ -35,3 +35,18 @@ describe('mind-map drag layer (#427)', () => {
     )
   })
 })
+
+// #549 item 1 against #510. Handles must be reachable while a node is being named,
+// but a node must not be born already asking for a child: clicking a "+" leaves the
+// pointer parked where the handle was, so the child appears under a pointer that
+// never moved. Clearing the hover when the editor opens is what separates the two —
+// hover only re-arms on a real pointermove.
+describe('a node being named answers the pointer, not the parked cursor (#549)', () => {
+  it('drops the hover when an editor opens, so the "+" needs a fresh move', () => {
+    expect(handles).toContain('watch(editingNodeId, clearHover)')
+  })
+
+  it('no longer suppresses the handles outright while editing', () => {
+    expect(handles).not.toContain('const quiet = drag.state.active || editingNodeId.value')
+  })
+})

@@ -197,8 +197,9 @@ export function removeDecisionBranch(model, id, port) {
   )
 }
 
-// ----- auto-numbering (spec 14.4) --------------------------------------------
-// A leading "N. " step number on a node's label.
+// ----- flow order -------------------------------------------------------------
+// A leading "N. " step number a user has typed into a node's label, which the
+// outline/mind-map conversions strip so it is not duplicated by their own numbering.
 const STEP_PREFIX = /^\s*\d+\.\s+/
 
 export function stripStepNumber(text) {
@@ -234,41 +235,6 @@ export function orderedFlowNodes(model) {
     if (!visited.has(node.id)) out.push(node)
   }
   return out
-}
-
-// Whether the flow is currently auto-numbered. Tracked with an explicit model
-// flag rather than sniffing the text for a leading "N. " — a user's own label
-// like "3. 14 kg batch" must NOT read as (or be mistaken for) a step number.
-export function isFlowNumbered(model) {
-  return !!model.numbered
-}
-
-// Toggle sequential "1. / 2. / …" prefixes on the flow's nodes (junctions are
-// skipped). Re-running strips them, so the palette button reads as a toggle.
-// Each numbered node remembers the EXACT prefix we added (`_stepPrefix`); toggling
-// off removes only that stored prefix, so content that legitimately begins with a
-// number ("3. 14 kg batch") round-trips untouched.
-export function autoNumberFlow(model) {
-  if (model.numbered) {
-    for (const node of model.nodes) {
-      const prefix = node._stepPrefix
-      if (prefix && (node.text || '').startsWith(prefix)) {
-        node.text = node.text.slice(prefix.length)
-      }
-      delete node._stepPrefix
-    }
-    model.numbered = false
-    return
-  }
-  let step = 0
-  for (const node of orderedFlowNodes(model)) {
-    if (node.nodeType === 'connector') continue
-    step += 1
-    const prefix = `${step}. `
-    node._stepPrefix = prefix
-    node.text = `${prefix}${node.text || ''}`
-  }
-  model.numbered = true
 }
 
 // Insert a new node in the middle of an edge (spec B7 insert-in-the-middle).

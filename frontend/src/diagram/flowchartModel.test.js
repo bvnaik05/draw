@@ -13,8 +13,6 @@ import {
   outgoingEdges,
   incomingEdges,
   flowchartNodeById,
-  autoNumberFlow,
-  isFlowNumbered,
   orderedFlowNodes,
 } from './flowchartModel.js'
 
@@ -114,49 +112,6 @@ describe('flowchart model', () => {
   it('orders nodes in flow order from the entry node', () => {
     const { model, a, b, c } = linearFlow()
     expect(orderedFlowNodes(model).map((n) => n.id)).toEqual([a, b, c])
-  })
-
-  it('auto-numbers nodes in flow order and toggles back off', () => {
-    const { model } = linearFlow()
-    expect(isFlowNumbered(model)).toBe(false)
-    autoNumberFlow(model)
-    expect(model.nodes.map((n) => n.text)).toEqual(['1. Start', '2. Work', '3. End'])
-    expect(isFlowNumbered(model)).toBe(true)
-    autoNumberFlow(model) // re-running strips the numbers
-    expect(model.nodes.map((n) => n.text)).toEqual(['Start', 'Work', 'End'])
-    expect(isFlowNumbered(model)).toBe(false)
-  })
-
-  it('auto-numbering is idempotent — no double prefixes', () => {
-    const { model } = linearFlow()
-    autoNumberFlow(model)
-    // Toggle off then on again; numbers must not stack (e.g. "1. 1. Start").
-    autoNumberFlow(model)
-    autoNumberFlow(model)
-    expect(model.nodes.map((n) => n.text)).toEqual(['1. Start', '2. Work', '3. End'])
-  })
-
-  it('skips junction (connector) nodes when numbering', () => {
-    const model = createFlowchart()
-    const a = addFlowchartNode(model, 'process', 'A', 0, 0)
-    addFlowchartNode(model, 'connector', '', 0, 120) // junction, no label
-    const c = addFlowchartNode(model, 'process', 'C', 0, 240)
-    autoNumberFlow(model)
-    expect(flowchartNodeById(model, a).text).toBe('1. A')
-    expect(flowchartNodeById(model, c).text).toBe('2. C')
-  })
-
-  // Batch-2/3 regression: a label that legitimately begins with "N. " must not be
-  // mistaken for a step number and eaten on the number-steps toggle round-trip.
-  it('preserves a label that starts with a number across a number toggle', () => {
-    const model = createFlowchart()
-    const id = addFlowchartNode(model, 'process', '3. 14 kg batch', 0, 0)
-    autoNumberFlow(model) // on
-    expect(flowchartNodeById(model, id).text).toBe('1. 3. 14 kg batch')
-    expect(isFlowNumbered(model)).toBe(true)
-    autoNumberFlow(model) // off
-    expect(flowchartNodeById(model, id).text).toBe('3. 14 kg batch') // user content intact
-    expect(isFlowNumbered(model)).toBe(false)
   })
 })
 

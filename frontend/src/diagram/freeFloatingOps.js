@@ -295,14 +295,13 @@ export function flowchartDirectionOfShapes(shapes) {
   return tagged?.flowchart.direction || 'TB'
 }
 
-// Run a whole-graph layout action (Tidy up / flip direction / number steps) over the
-// free-floating flowchart shapes, the way the toolbar's MapLayoutGroup runs it
-// over state.flowchart. Reconstructs the pure model so the existing, tested layout
-// logic runs unchanged, seeds the persisted direction + step-number state, applies
-// `action(model)`, then returns the shape/connector PATCHES to write back — never
-// mutating the inputs. The store applies the patches inside one commit().
-//   - node patches: new x/y, text (numbering), and the manuallyPositioned /
-//     direction / stepPrefix tags.
+// Run a whole-graph layout action (the flow-direction flip) over the free-floating
+// flowchart shapes, the way the toolbar's MapLayoutGroup runs it over
+// state.flowchart. Reconstructs the pure model so the existing, tested layout logic
+// runs unchanged, seeds the persisted direction, applies `action(model)`, then
+// returns the shape/connector PATCHES to write back — never mutating the inputs.
+// The store applies the patches inside one commit().
+//   - node patches: new x/y, text, and the manuallyPositioned / direction tags.
 //   - edge patches: recomputed anchors, so arrows leave the right side after a flip.
 // `rootId` is the selected node: the action is scoped to that node's connected
 // component so a second, independent flowchart on the same canvas is left untouched
@@ -323,7 +322,6 @@ export function flowchartLayoutPatches(shapes, connectors, action, rootId = null
   )
   const direction = flowchartDirectionOfShapes(nodeShapes)
   const model = flowchartModelFromShapes(nodeShapes, edgeConnectors, direction)
-  seedStepNumbers(model, nodeShapes)
   action(model)
 
   const boxes = {}
@@ -336,7 +334,6 @@ export function flowchartLayoutPatches(shapes, connectors, action, rootId = null
       text: node.text || '',
       manuallyPositioned: !!node.manuallyPositioned,
       direction: model.direction || 'TB',
-      stepPrefix: node._stepPrefix || null,
     }
   })
   const edges = edgeConnectors
@@ -349,19 +346,4 @@ export function flowchartLayoutPatches(shapes, connectors, action, rootId = null
     })
     .filter(Boolean)
   return { nodes, edges }
-}
-
-// Seed the reconstructed model with the persisted step-number state so autoNumberFlow
-// toggles correctly across calls (the model itself is rebuilt each time): the flow is
-// "numbered" when any node carries a stored prefix, and each node's _stepPrefix is
-// restored so toggling OFF strips exactly the prefix that was added.
-function seedStepNumbers(model, nodeShapes) {
-  const prefixById = {}
-  for (const shape of nodeShapes) {
-    if (shape.flowchart?.stepPrefix) prefixById[shape.id] = shape.flowchart.stepPrefix
-  }
-  model.numbered = Object.keys(prefixById).length > 0
-  for (const node of model.nodes) {
-    if (prefixById[node.id]) node._stepPrefix = prefixById[node.id]
-  }
 }

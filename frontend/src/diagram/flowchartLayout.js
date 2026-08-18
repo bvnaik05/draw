@@ -407,11 +407,53 @@ function laneOffset(branchIndex, branchCount, childSize, direction) {
 // Re-flow the whole chart from its roots, assigning every node a clean
 // column/lane position and clearing manuallyPositioned (spec B7/F5, Part G7).
 // Mutates the model in place; run inside one commit() for a single undo unit.
+//
+// The re-flow is then ANCHORED back onto the chart's own centre (#549 item 6).
+// positionByLevels lays every chart out from the same origin, so without this the
+// chart teleported to the top-left of the canvas on every re-flow — and since a
+// direction change is a re-flow, toggling L→R / T→B walked the diagram across the
+// canvas and eventually on top of whatever else was there. Anchoring also makes the
+// operation idempotent: the same direction applied twice lands on the same pixels.
 export function tidyLayout(model) {
+  const before = nodesBounds(model)
   const order = topoOrder(model)
   const levels = assignLevels(model, order)
   positionByLevels(model, levels)
+  anchorToBounds(model, before)
   for (const node of model.nodes) node.manuallyPositioned = false
+}
+
+// The box around every node, or null for an empty chart.
+function nodesBounds(model) {
+  if (!model.nodes.length) return null
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const node of model.nodes) {
+    const size = nodeSize(node)
+    minX = Math.min(minX, node.x)
+    minY = Math.min(minY, node.y)
+    maxX = Math.max(maxX, node.x + size.w)
+    maxY = Math.max(maxY, node.y + size.h)
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+}
+
+// Translate every node so the chart's centre lands back on `before`'s centre.
+// The CENTRE rather than a corner: a direction change swaps the chart's long axis
+// for its short one, and growing evenly around where it already sits disturbs the
+// user's canvas least.
+function anchorToBounds(model, before) {
+  const after = nodesBounds(model)
+  if (!before || !after) return
+  const dx = Math.round(before.x + before.w / 2 - (after.x + after.w / 2))
+  const dy = Math.round(before.y + before.h / 2 - (after.y + after.h / 2))
+  if (!dx && !dy) return
+  for (const node of model.nodes) {
+    node.x += dx
+    node.y += dy
+  }
 }
 
 // Roots have no incoming flow edges; everything else follows them.
@@ -456,6 +498,11 @@ function assignLevels(model, order) {
 function positionByLevels(model, levels) {
   const direction = model.direction || 'TB'
   const byLevel = groupByLevel(model, levels)
+  // Measured ONCE, up front. Read inside the loop it saw nodes this very pass had
+  // already moved, so each level was centred on a different line than the one before
+  // and a second run of the same layout landed a few pixels off the first — which is
+  // what made repeated re-flows creep (#549 item 6).
+  const center = crossCenter(model, direction)
   let main = PAD
   for (const level of Object.keys(byLevel).map(Number).sort((a, b) => a - b)) {
     // Keep each level in its existing top→bottom (LR) / left→right (TB) order so
@@ -470,7 +517,7 @@ function positionByLevels(model, levels) {
     const extents = nodes.map((node, i) => Math.max(dim(sizes[i]), incomingLabelWidth(model, node.id)))
     const crossTotal = extents.reduce((sum, e) => sum + e, 0) + (nodes.length - 1) * SIBLING_GAP
     const deepest = maxOf(sizes.map((s) => (direction === 'LR' ? s.w : s.h)))
-    let cross = PAD - crossTotal / 2 + crossCenter(model, direction)
+    let cross = PAD - crossTotal / 2 + center
     nodes.forEach((node, index) => {
       // Centre the node within its (possibly wider) label slot.
       placeAtLevel(node, sizes[index], main, cross + (extents[index] - dim(sizes[index])) / 2, direction)
@@ -612,17 +659,7 @@ function clampRange(value, min, max) {
 
 // Bounding box over all node boxes, padded, or a sensible empty box.
 export function flowchartContentBounds(model) {
-  if (!model || !model.nodes.length) return { x: 0, y: 0, w: 200, h: 120 }
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const node of model.nodes) {
-    const size = nodeSize(node)
-    minX = Math.min(minX, node.x)
-    minY = Math.min(minY, node.y)
-    maxX = Math.max(maxX, node.x + size.w)
-    maxY = Math.max(maxY, node.y + size.h)
-  }
-  return { x: minX - PAD, y: minY - PAD, w: maxX - minX + PAD * 2, h: maxY - minY + PAD * 2 }
+  const bounds = model ? nodesBounds(model) : null
+  if (!bounds) return { x: 0, y: 0, w: 200, h: 120 }
+  return { x: bounds.x - PAD, y: bounds.y - PAD, w: bounds.w + PAD * 2, h: bounds.h + PAD * 2 }
 }

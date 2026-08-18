@@ -154,6 +154,52 @@ describe('flowchart direction toggle', () => {
   })
 })
 
+// #549 item 6. A re-flow used to lay every chart out from the canvas origin, so a
+// chart the user had placed in the middle of their canvas teleported to the top-left
+// corner — and each further toggle moved it again, walking it across the canvas and
+// eventually on top of unrelated content.
+describe('a re-flow stays where the chart already is', () => {
+  const centreOf = (model) => {
+    const boxes = model.nodes.map((node) => ({ ...node, ...nodeSize(node) }))
+    const minX = Math.min(...boxes.map((box) => box.x))
+    const minY = Math.min(...boxes.map((box) => box.y))
+    const maxX = Math.max(...boxes.map((box) => box.x + box.w))
+    const maxY = Math.max(...boxes.map((box) => box.y + box.h))
+    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+  }
+
+  it('keeps the chart centred where it was, instead of jumping to the origin', () => {
+    const { model } = sampleChart()
+    for (const node of model.nodes) {
+      node.x += 2000
+      node.y += 1500
+    }
+    const before = centreOf(model)
+    tidyLayout(model)
+    const after = centreOf(model)
+    expect(Math.abs(after.x - before.x)).toBeLessThanOrEqual(1)
+    expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1)
+  })
+
+  it('is idempotent — re-applying the same direction moves nothing', () => {
+    const { model } = sampleChart()
+    tidyLayout(model)
+    const once = model.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y }))
+    tidyLayout(model)
+    expect(model.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y }))).toEqual(once)
+  })
+
+  it('returns to the same layout after a full L→R→T→B toggle cycle', () => {
+    const { model } = sampleChart()
+    tidyLayout(model) // start from a clean TB layout
+    const start = model.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y }))
+    toggleDirection(model) // LR
+    toggleDirection(model) // back to TB
+    expect(model.direction).toBe('TB')
+    expect(model.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y }))).toEqual(start)
+  })
+})
+
 // #96: the node-type picker must open close below the node and never slip behind
 // the bottom palette — flipping above / clamping when there is not room below.
 describe('flowchart picker placement (#96)', () => {

@@ -201,11 +201,13 @@ export function shouldShowHandles({
   selectTool = false,
   editing = false,
 } = {}) {
-  // A node being named is not asking for a child yet (#510). Same argument as the
-  // drag suppression: the node already has the user's attention for one thing, and
-  // a "+" beside a nameless node asks for the next one before this one exists.
-  // Handles return on commit, so Escape or clicking away brings them straight back.
-  if (editing) return false
+  // While a node is being named, only HOVER may reveal handles (#549 item 1). The
+  // editor no longer suppresses them outright (#510): a user who reaches for the
+  // "+" while the caret is still blinking was left hunting for an affordance that
+  // had been deliberately hidden. Dropping only the selection half keeps what #510
+  // was actually protecting — a nameless node does not push a "+" at the user
+  // unprompted — while the pointer can still ask for one at any time.
+  if (editing) return Boolean(selectTool && hovered)
   // #261: a node shows its add-node CTAs while hovered OR while it is the sole
   // selection — so selecting a node (not only hovering it) surfaces the affordance.
   // Which node gets to ask is the caller's decision (#515/#516): this stays a pure
