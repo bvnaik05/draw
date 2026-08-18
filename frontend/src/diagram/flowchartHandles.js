@@ -14,19 +14,25 @@
 // into the viewport <g>. The radius/glyph/colour conventions mirror the mind-map
 // handles so the two migrated-shape overlays read as one feature.
 //
-// Handles PROTRUDE DOWNWARD from the node's bottom edge (#441 round 2): a plain
-// node offers one on its centre line, and a DECISION offers one per branch, spread
-// across that edge and each previewing the label it would create. A decision is the
-// one node type whose whole point is more than one outgoing flow, so making the
-// user discover that through a single "+" that silently cycled branches was hiding
-// the feature.
+// Each handle protrudes from the CENTRE of one side of the node, and a DECISION
+// gives each branch a side of its own, previewing the label it would create. A
+// decision is the one node type whose whole point is more than one outgoing flow,
+// so making the user discover that through a single "+" that silently cycled
+// branches was hiding the feature.
 //
 // An earlier pass moved the "+" to whichever part of the edge was clearest, to keep
 // it off the outgoing connector. That is dropped: it put the handle somewhere
 // different on every node, which reads as arbitrary. The "+" now paints above the
 // connectors and carries a white disc, so a route passing under it stays legible.
+//
+// A handle is an AVAILABLE action, never a decoration (#549 items 2/3/4). A side
+// that already carries a connector offers no "+", and a decision branch that has
+// already been taken offers none either — so a built-up chart shows a mark only
+// where a new flow can actually go, and one connection is not framed by a "+" at
+// each of its ends.
 
-import { isFlowchartShape } from './freeFloating.js'
+import { ROLE, isFlowchartShape } from './freeFloating.js'
+import { chooseSides } from './flowchartRouting.js'
 
 // --- geometry constants (shared with the mind-map handles for visual parity) ----
 //
@@ -83,12 +89,8 @@ function sideAnchor(box, side) {
   return { x: cx, y: box.y + box.h, dx: 0, dy: 1 }
 }
 
-// `lane` shifts a handle along the side it sits on, so a decision's branches can
-// share the bottom edge without stacking. 0 keeps it on the centre line.
-function makeHandle(box, nodeId, side, { port = null, label = '', lane = 0, key = side } = {}) {
+function makeHandle(box, nodeId, side, { port = null, label = '', key = side } = {}) {
   const anchor = sideAnchor(box, side)
-  const alongX = side === 'top' || side === 'bottom' ? lane : 0
-  const alongY = side === 'left' || side === 'right' ? lane : 0
   return {
     key: `add-${nodeId}-${key}`,
     kind: 'child',
@@ -96,27 +98,18 @@ function makeHandle(box, nodeId, side, { port = null, label = '', lane = 0, key 
     side,
     port,
     label,
-    cx: Math.round(anchor.x + anchor.dx * ADD_OFFSET + alongX),
-    cy: Math.round(anchor.y + anchor.dy * ADD_OFFSET + alongY),
-    stubX: Math.round(anchor.x + alongX),
-    stubY: Math.round(anchor.y + alongY),
+    cx: Math.round(anchor.x + anchor.dx * ADD_OFFSET),
+    cy: Math.round(anchor.y + anchor.dy * ADD_OFFSET),
+    stubX: Math.round(anchor.x),
+    stubY: Math.round(anchor.y),
   }
 }
 
-// Where the `index`-th of `count` branch handles sits along the bottom edge,
-// relative to its centre. Evenly spread across the usable width, so two branches
-// read as a fork rather than as one handle hiding another.
-const BRANCH_MARGIN = 16
-function branchLane(box, index, count) {
-  if (count <= 1) return 0
-  const usable = Math.max(0, box.w - BRANCH_MARGIN * 2)
-  return -usable / 2 + (usable * (index + 1)) / (count + 1)
-}
-
 // A reusable index of the migrated flowchart: each node's absolute box keyed by id
-// (for placement + hit-testing), plus the branch set of any decision node, which is
-// what lets a decision offer one labelled handle per branch.
-export function buildContext(shapes) {
+// (for placement + hit-testing), the branch set of any decision node, and what is
+// already connected — which sides carry a connector, and which decision branches
+// have been taken. Everything a handle needs to know whether it is a real offer.
+export function buildContext(shapes, connectors) {
   const boxes = {}
   const branches = {}
   for (const shape of shapes || []) {
@@ -126,53 +119,104 @@ export function buildContext(shapes) {
       branches[shape.id] = (shape.flowchart.branches || []).map((b) => ({ ...b }))
     }
   }
-  return { boxes, branches }
+  return { boxes, branches, ...occupancy(boxes, connectors) }
 }
 
-// The "+" handle(s) for one node, in absolute logical coords. A decision gets one
-// per branch, spread along its bottom edge and carrying that branch's label so the
-// user can see which outcome they are about to extend; everything else gets a
-// single centred handle. Empty for an id that is not a migrated flowchart node.
+// Which sides and which branch ports are already spoken for.
+//
+// The SIDE comes from chooseSides — the same function the renderer routes with — so
+// "occupied" means exactly the side the drawn connector leaves or arrives on, and it
+// stays right after a drag moves a node to the other side of its neighbour. Reading
+// the connector's stored anchor instead would go stale the moment anything moved.
+function occupancy(boxes, connectors) {
+  const usedSides = {}
+  const usedPorts = {}
+  const mark = (map, id, value) => {
+    if (!map[id]) map[id] = new Set()
+    map[id].add(value)
+  }
+  for (const connector of connectors || []) {
+    if (connector.role !== ROLE.flowchartEdge) continue
+    const fromId = connector.from?.shapeId
+    const toId = connector.to?.shapeId
+    if (!boxes[fromId] || !boxes[toId] || fromId === toId) continue
+    const sides = chooseSides(boxes[fromId], boxes[toId])
+    mark(usedSides, fromId, sides.from)
+    mark(usedSides, toId, sides.to)
+    mark(usedPorts, fromId, connector.flowchart?.fromPort || 'out')
+  }
+  return { usedSides, usedPorts }
+}
+
+// The sides a "+" may take, in the order they are handed out. Bottom leads because
+// a flowchart reads downward, so the first offer is always the natural one.
+const SIDE_ORDER = ['bottom', 'right', 'left', 'top']
+
+// The sides of `nodeId` that no connector already uses.
+function freeSides(nodeId, ctx) {
+  const used = ctx.usedSides?.[nodeId]
+  return SIDE_ORDER.filter((side) => !used?.has(side))
+}
+
+// A decision's branches that have not been extended yet, in branch order.
+function openBranches(nodeId, ctx) {
+  const used = ctx.usedPorts?.[nodeId]
+  return (ctx.branches?.[nodeId] || []).filter((branch) => !used?.has(branch.port))
+}
+
+// The "+" handle(s) for one node, in absolute logical coords.
+//
+// A plain node offers one per FREE side. A decision gives each of its untaken
+// branches a free side of its own — Yes down, No right — rather than crowding them
+// onto the bottom edge, so the two outcomes read as two separate directions and a
+// branch preview can never land on the branch next to it (#549 item 3). A decision
+// whose every branch has been extended falls back to the plain offers, which is how
+// it grows a further outcome (#441 item 15). Empty for an id that is not a migrated
+// flowchart node, and empty for a node whose every side is already connected: there
+// is no new flow to offer it.
 export function handlesForNode(nodeId, ctx) {
   const box = ctx.boxes[nodeId]
   if (!box) return []
-  const branches = ctx.branches?.[nodeId]
-  // The bottom edge is the flow direction, so it carries a decision's labelled
-  // branches; every other side offers a plain "+". A chart is not always a column,
-  // and forcing every child below its parent is what pushed later additions into
-  // long routes across the chart (#441 round 3).
-  const bottom = branches?.length
-    ? branches.map((branch, index) =>
-        makeHandle(box, nodeId, 'bottom', {
-          port: branch.port,
-          label: branch.label,
-          lane: branchLane(box, index, branches.length),
-          key: branch.port,
-        }),
-      )
-    : [makeHandle(box, nodeId, 'bottom')]
-  const all = [...bottom, ...SIDES.map((side) => makeHandle(box, nodeId, side))]
-  // Drop any "+" that would land on ANOTHER node (#441 round 3). With a handle on
-  // every side, a node in a built-up chart offered several that sat on top of its
-  // neighbours — pointing at space that is already taken, and covering the node
-  // underneath with a stray mark and, on a decision, a branch pill too.
-  //
-  // If every side is blocked the full set comes back rather than nothing: a node
-  // hemmed in on all four sides must still be extendable, and placement will find
-  // room even when the handle's own spot has none.
-  const clear = all.filter((handle) => !handleHitsAnotherNode(handle, nodeId, ctx))
-  return clear.length ? clear : all
+  const branches = openBranches(nodeId, ctx)
+  const sides = offerableSides(box, nodeId, ctx, branches.length > 0)
+  if (!branches.length) return sides.map((side) => makeHandle(box, nodeId, side))
+  // Branches are handed the usable sides in order, so a side that is blocked moves
+  // a branch along to the next one rather than costing it its handle.
+  return branches
+    .slice(0, sides.length)
+    .map((branch, index) =>
+      makeHandle(box, nodeId, sides[index], {
+        port: branch.port,
+        label: branch.label,
+        key: branch.port,
+      }),
+    )
 }
 
-// Whether a handle's mark overlaps some other node's box.
-function handleHitsAnotherNode(handle, nodeId, ctx) {
+// The free sides a "+" can actually be offered on: those whose handle would not
+// land on ANOTHER node (#441 round 3). A mark in taken space points at room that
+// is not there, and covers the node underneath.
+//
+// If every free side is blocked they all come back rather than nothing: a node
+// hemmed in on all sides must still be extendable, and placement will find room
+// even when the handle's own spot has none.
+function offerableSides(box, nodeId, ctx, preview) {
+  const free = freeSides(nodeId, ctx)
+  const clear = free.filter(
+    (side) => !hitsAnotherNode(footprintOf(makeHandle(box, nodeId, side), preview), nodeId, ctx),
+  )
+  return clear.length ? clear : free
+}
+
+// Whether a footprint overlaps some other node's box.
+function hitsAnotherNode(footprint, nodeId, ctx) {
   for (const [otherId, box] of Object.entries(ctx.boxes || {})) {
     if (otherId === nodeId) continue
     if (
-      handle.cx + ADD_R >= box.x &&
-      handle.cx - ADD_R <= box.x + box.w &&
-      handle.cy + ADD_R >= box.y &&
-      handle.cy - ADD_R <= box.y + box.h
+      footprint.x + footprint.w >= box.x &&
+      footprint.x <= box.x + box.w &&
+      footprint.y + footprint.h >= box.y &&
+      footprint.y <= box.y + box.h
     ) {
       return true
     }
@@ -180,9 +224,35 @@ function handleHitsAnotherNode(handle, nodeId, ctx) {
   return false
 }
 
-// The sides that always offer a plain "+", whatever the node type. Bottom is not
-// among them: it is built above, because a decision spreads its branches there.
-const SIDES = ['right', 'left', 'top']
+// What a handle actually covers: its mark, plus — when it carries a branch preview
+// — the room the pill takes just beyond the mark, further along the direction that
+// branch would travel (#549 item 3). Without this, a "+" could sit in clear space
+// while the label announcing it landed on the node behind. The pill's real width
+// comes from measuring its text, which is the renderer's job, so this is a nominal
+// span sized for a normal branch label.
+// Keep in step with the pill FlowchartHoverHandles draws (its drop plus its height).
+const PREVIEW_REACH = 34 // how far past the mark a pill hangs
+const PREVIEW_HALF_SPAN = 30 // half the room a pill takes across its own direction
+
+function footprintOf(handle, preview = false) {
+  let left = handle.cx - ADD_R
+  let right = handle.cx + ADD_R
+  let top = handle.cy - ADD_R
+  let bottom = handle.cy + ADD_R
+  if (preview) {
+    const vertical = handle.side === 'top' || handle.side === 'bottom'
+    if (vertical) {
+      left = handle.cx - PREVIEW_HALF_SPAN
+      right = handle.cx + PREVIEW_HALF_SPAN
+      if (handle.side === 'bottom') bottom = handle.cy + PREVIEW_REACH
+      else top = handle.cy - PREVIEW_REACH
+    } else {
+      if (handle.side === 'right') right = handle.cx + PREVIEW_REACH
+      else left = handle.cx - PREVIEW_REACH
+    }
+  }
+  return { x: left, y: top, w: right - left, h: bottom - top }
+}
 
 // Whether a node should currently reveal its handle: only with the select tool,
 // and only while it is hovered or the sole selection (mirrors the mind-map

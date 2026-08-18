@@ -10,7 +10,7 @@ import {
 } from './freeFloatingOps.js'
 import { flattenSubmodels, ROLE } from './freeFloating.js'
 import { createMindMap, addChild } from './mindmapModel.js'
-import { createFlowchart, addFlowchartNode, addFlowchartEdge, autoNumberFlow } from './flowchartModel.js'
+import { createFlowchart, addFlowchartNode, addFlowchartEdge } from './flowchartModel.js'
 import { tidyLayout, toggleDirection } from './flowchartLayout.js'
 
 // A migrated single-root mind map's shapes[] (root only), to grow from.
@@ -427,22 +427,6 @@ describe('flowchartLayoutPatches', () => {
     expect(patches.edges).toHaveLength(1)
     expect(patches.edges[0].fromAnchor).toBe('right')
     expect(patches.edges[0].toAnchor).toBe('left')
-  })
-
-  it('Number steps prefixes each node in flow order, then strips them on toggle off', () => {
-    const { shapes, connectors, startId, childId } = twoNodeChart()
-    const on = flowchartLayoutPatches(shapes, connectors, (m) => autoNumberFlow(m))
-    const start = on.nodes.find((n) => n.id === startId)
-    const kid = on.nodes.find((n) => n.id === childId)
-    expect(start.text).toBe('1. Start')
-    expect(kid.text).toBe('2. Process')
-    expect(start.stepPrefix).toBe('1. ')
-    // Persist, then toggle off — the exact prefixes are removed, text restored.
-    applyNodePatches(shapes, on.nodes)
-    const off = flowchartLayoutPatches(shapes, connectors, (m) => autoNumberFlow(m))
-    const startOff = off.nodes.find((n) => n.id === startId)
-    expect(startOff.text).toBe('Start')
-    expect(startOff.stepPrefix).toBeNull()
   })
 
   // #167: two independent flowcharts share the canvas; an action seeded with a node in

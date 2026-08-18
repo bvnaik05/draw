@@ -1,6 +1,11 @@
 <script setup>
-// Whole-map layout actions (#362): tidy, flow direction, step numbering, and the
-// mind map's collapse/expand.
+// Whole-map layout actions (#362): flow direction for a flowchart, and the mind
+// map's tidy / collapse / expand.
+//
+// A flowchart's "Tidy up" and "Number steps" are gone (#549 items 5/7). Both asked
+// the user to re-arrange a chart they had already arranged by hand; the flow
+// direction is the one whole-chart action that changes what the chart MEANS, so it
+// is the one that stays.
 //
 // These had two homes. A legacy single-type document got them from the bottom
 // palette; a free-floating map got them from a bar pinned to the top-centre of
@@ -19,8 +24,7 @@ import { useSelectionContext } from '@/composables/useSelectionContext.js'
 import { isMindmapShape, isFlowchartShape } from '@/diagram/freeFloating.js'
 import { flowchartDirectionOfShapes } from '@/diagram/freeFloatingOps.js'
 import { flowchartComponentIds } from '@/diagram/freeFloatingGraph.js'
-import { tidyLayout, toggleDirection } from '@/diagram/flowchartLayout.js'
-import { autoNumberFlow, isFlowNumbered } from '@/diagram/flowchartModel.js'
+import { toggleDirection } from '@/diagram/flowchartLayout.js'
 import { collapseAll } from '@/diagram/mindmapOperations.js'
 import ToolbarButton from '../ToolbarButton.vue'
 
@@ -39,9 +43,9 @@ const isLegacyMindmap = computed(() => chromeType.value === 'mindmap')
 const showsFlowchart = computed(() => isLegacyFlowchart.value || flowchartRootId.value !== null)
 const showsMindmap = computed(() => isLegacyMindmap.value || mindmapRootId.value !== null)
 
-// Direction and numbering are whole-graph properties. For a free-floating chart
-// they are read off the selected chart's own shapes, so a second chart pointing
-// the other way does not skew the readout.
+// Direction is a whole-graph property. For a free-floating chart it is read off
+// the selected chart's own shapes, so a second chart pointing the other way does
+// not skew the readout.
 const memberIds = computed(() =>
   flowchartRootId.value
     ? flowchartComponentIds(store.state.shapes, store.state.connectors, flowchartRootId.value)
@@ -51,28 +55,15 @@ const direction = computed(() => {
   if (!memberIds.value) return store.state.flowchart?.direction || 'TB'
   return flowchartDirectionOfShapes(store.state.shapes.filter((s) => memberIds.value.has(s.id)))
 })
-const numbered = computed(() => {
-  if (!memberIds.value) return store.state.flowchart ? isFlowNumbered(store.state.flowchart) : false
-  return store.state.shapes.some((s) => memberIds.value.has(s.id) && s.flowchart?.stepPrefix)
-})
 
 function applyFlowchart(label, mutate) {
   if (flowchartRootId.value) store.applyFlowchartShapeLayout(label, mutate, flowchartRootId.value)
   else store.updateFlowchartModel(label, mutate)
 }
 
-function tidyFlowchart() {
-  editorUi.pulseLayoutAnimation()
-  applyFlowchart('Tidy up', (m) => tidyLayout(m))
-}
-
 function flipFlowchart() {
   editorUi.pulseLayoutAnimation()
   applyFlowchart('Flow direction', (m) => toggleDirection(m))
-}
-
-function numberFlowchart() {
-  applyFlowchart('Number steps', (m) => autoNumberFlow(m))
 }
 
 function tidyMindmap() {
@@ -84,23 +75,10 @@ function tidyMindmap() {
 <template>
   <template v-if="showsFlowchart">
     <ToolbarButton
-      label="Tidy up"
-      tooltip="Tidy up — re-flow the whole chart"
-      icon="lucide-grid-2x2"
-      @click="tidyFlowchart"
-    />
-    <ToolbarButton
       label="Flow direction"
       :tooltip="direction === 'TB' ? 'Flow left → right' : 'Flow top → bottom'"
       :icon="direction === 'TB' ? 'lucide-arrow-right' : 'lucide-arrow-down'"
       @click="flipFlowchart"
-    />
-    <ToolbarButton
-      label="Number steps"
-      :tooltip="numbered ? 'Clear step numbers' : 'Number the steps'"
-      icon="lucide-list"
-      :active="numbered"
-      @click="numberFlowchart"
     />
   </template>
 

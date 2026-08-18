@@ -261,11 +261,13 @@ describe('shouldShowHandles', () => {
     expect(shouldShowHandles()).toBe(false)
   })
 
-  // #510: a node being named is not asking for a child yet. Beats both halves of
-  // the rule — a new child is selected AND sits under the pointer that added it.
-  it('shows nothing while the node is being named (#510)', () => {
-    expect(shouldShowHandles({ selectTool: true, hovered: true, editing: true })).toBe(false)
+  // #510 kept a nameless node from pushing a "+" at the user unprompted; #549 item 1
+  // keeps the pointer able to ask for one anyway. So editing drops the SELECTION
+  // half of the rule and leaves the hover half alone.
+  it('reveals handles on hover while the node is being named, but not on selection', () => {
+    expect(shouldShowHandles({ selectTool: true, hovered: true, editing: true })).toBe(true)
     expect(shouldShowHandles({ selectTool: true, soleSelected: true, editing: true })).toBe(false)
+    expect(shouldShowHandles({ selectTool: false, hovered: true, editing: true })).toBe(false)
   })
 
   it('brings the handles back once the name is committed', () => {

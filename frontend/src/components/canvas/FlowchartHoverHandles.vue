@@ -27,6 +27,7 @@ import {
   ADD_HIT_R,
   GLYPH,
   buildContext,
+  handleAtPoint,
   handlesForNode,
   shouldShowHandles,
   nextHoverTarget,
@@ -39,14 +40,20 @@ const layer = ref(null)
 let svg = null
 let surface = null
 
-// The migrated flowchart index (boxes by id), rebuilt whenever shapes change.
-const ctx = computed(() => buildContext(store.state.shapes))
+// The migrated flowchart index, rebuilt whenever shapes or connectors change. The
+// connectors are what tell a node which of its sides are already spoken for, so a
+// "+" only ever marks a direction a new flow can actually take (#549).
+const ctx = computed(() => buildContext(store.state.shapes, store.state.connectors))
 const hasNodes = computed(() => Object.keys(ctx.value.boxes).length > 0)
 const selectTool = computed(() => editorUi.state.tool === 'select')
 
 // The flowchart node the cursor is over (or reaching toward). Only the select tool
 // drives it — the "+" is a select-mode affordance, like FlowchartLayer's.
 const hoveredId = ref(null)
+// The single handle the pointer is aiming at, which is drawn emphasised. Aiming is
+// forgiving (the hit radius is far wider than the mark), so the user needs telling
+// WHICH direction the press they are about to make will take (#549 item 1).
+const aimedKey = ref(null)
 
 // Convert a pointer event into logical canvas units via the group CTM (HoverArrows).
 function toLogical(event) {
@@ -66,14 +73,18 @@ function onPointerMove(event) {
   clearPendingLeave()
   if (!hasNodes.value || !selectTool.value) {
     hoveredId.value = null
+    aimedKey.value = null
     return
   }
+  const point = toLogical(event)
   hoveredId.value = nextHoverTarget({
-    point: toLogical(event),
+    point,
     currentId: hoveredId.value,
     ctx: ctx.value,
     shapes: store.state.shapes,
   })
+  const aimed = hoveredId.value ? handleAtPoint(point, hoveredId.value, ctx.value) : null
+  aimedKey.value = aimed?.key || null
 }
 
 // Leaving the surface drops the hover, but only after a beat, so a frame's worth of
@@ -91,6 +102,7 @@ function onPointerLeave() {
   clearPendingLeave()
   leaveTimer = setTimeout(() => {
     hoveredId.value = null
+    aimedKey.value = null
     leaveTimer = null
   }, LEAVE_GRACE_MS)
 }
@@ -141,6 +153,23 @@ const handles = computed(() => targetIds.value.flatMap((id) => handlesForNode(id
 // a coloured parent tinting its "+" promised a colour the node would not have.
 const HANDLE_COLOR = '#A1A1A1'
 const HANDLE_INK = '#6B7280'
+// The one the pointer is aiming at darkens and grows a little, so a forgiving hit
+// area still says exactly which direction a press would take (#549 item 1).
+const AIMED_COLOR = '#525252'
+const AIMED_GROWTH = 1.5
+
+function isAimed(handle) {
+  return handle.key === aimedKey.value
+}
+function markRadius(handle) {
+  return isAimed(handle) ? ADD_R + AIMED_GROWTH : ADD_R
+}
+function markColor(handle) {
+  return isAimed(handle) ? AIMED_COLOR : HANDLE_COLOR
+}
+function inkColor(handle) {
+  return isAimed(handle) ? AIMED_COLOR : HANDLE_INK
+}
 
 // The "+" glyph centred in a handle circle.
 function glyphPath(handle) {
@@ -167,16 +196,18 @@ function openPicker(handle) {
 
 // A decision's handles preview the branch they would create ("Yes", "No", …).
 //
-// The pill sits BELOW its own "+", centred on it. It used to sit beside the handle,
-// which is what made the preview look shabby (#441 round 3): two branch handles are
-// only ~40px apart, so the "Yes" pill ran straight into the "No" handle — covering
-// the target the user was aiming at and reading as one smeared blob rather than two
-// labelled choices. Centred underneath, each pill stays inside its own handle's
-// column however many branches a decision grows.
+// The pill sits OUTSIDE its own "+", further along the direction that branch would
+// travel — below a bottom handle, right of a right handle, and so on. Each branch
+// now owns a whole side (#549 item 3), so pushing the pill outward is what keeps it
+// off the node, off the connectors already leaving the other sides, and off the
+// branch that was created before it.
 const LABEL_DROP = 15
 const LABEL_H = 17
 function labelBox(handle) {
   const w = labelWidth(handle)
+  if (handle.side === 'top') return { x: handle.cx - w / 2, y: handle.cy - LABEL_DROP - LABEL_H, w, h: LABEL_H }
+  if (handle.side === 'right') return { x: handle.cx + LABEL_DROP, y: handle.cy - LABEL_H / 2, w, h: LABEL_H }
+  if (handle.side === 'left') return { x: handle.cx - LABEL_DROP - w, y: handle.cy - LABEL_H / 2, w, h: LABEL_H }
   return { x: handle.cx - w / 2, y: handle.cy + LABEL_DROP, w, h: LABEL_H }
 }
 // Measured, not estimated: textMetrics.textWidth exists for exactly this, and a
@@ -229,17 +260,17 @@ function screenBoxOf(nodeId) {
           :height="labelBox(handle).h"
           rx="8"
           fill="#FFFFFF"
-          :stroke="HANDLE_COLOR"
+          :stroke="markColor(handle)"
           stroke-width="1"
         />
         <text
-          :x="handle.cx"
+          :x="labelBox(handle).x + labelBox(handle).w / 2"
           :y="labelBox(handle).y + labelBox(handle).h / 2"
           text-anchor="middle"
           dominant-baseline="central"
           font-size="11"
           font-family="Inter, sans-serif"
-          :fill="HANDLE_INK"
+          :fill="inkColor(handle)"
         >
           {{ handle.label }}
         </text>
@@ -249,7 +280,7 @@ function screenBoxOf(nodeId) {
         :y1="handle.stubY"
         :x2="handle.cx"
         :y2="handle.cy"
-        :stroke="HANDLE_COLOR"
+        :stroke="markColor(handle)"
         stroke-width="1.5"
         stroke-linecap="round"
         stroke-dasharray="2 3"
@@ -261,15 +292,15 @@ function screenBoxOf(nodeId) {
       <circle
         :cx="handle.cx"
         :cy="handle.cy"
-        :r="ADD_R"
+        :r="markRadius(handle)"
         fill="#FFFFFF"
-        :stroke="HANDLE_COLOR"
+        :stroke="markColor(handle)"
         stroke-width="1.25"
         style="pointer-events: none"
       />
       <path
         :d="glyphPath(handle)"
-        :stroke="HANDLE_INK"
+        :stroke="inkColor(handle)"
         stroke-width="1.5"
         stroke-linecap="round"
         fill="none"

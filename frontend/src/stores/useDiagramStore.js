@@ -705,13 +705,13 @@ function attachFlowchart(store, state, history) {
     history.commit('Delete edge', () => removeFlowchartEdge(state.flowchart, id))
   }
   // Generic per-type model update so the agent can run a custom multi-step edit
-  // (Tidy up, insert-reflow, direction toggle) as one undoable unit (Part G6).
+  // (insert-reflow, direction toggle) as one undoable unit (Part G6).
   store.updateFlowchartModel = (label, mutatorFn) => {
     if (!state.flowchart) return
     history.commit(label, () => mutatorFn(state.flowchart))
   }
-  // The unified-canvas counterpart (#98): run a whole-graph layout action (Tidy up /
-  // flip direction / number steps) over the FREE-FLOATING flowchart shapes, the way
+  // The unified-canvas counterpart (#98): run a whole-graph layout action (the flow
+  // direction flip) over the FREE-FLOATING flowchart shapes, the way
   // updateFlowchartModel runs it over the standalone sub-model. The pure helper
   // reconstructs the model, applies `action(model)`, and returns the shape/connector
   // patches; here we just write them back as one undoable unit. No-op when the canvas
@@ -733,8 +733,6 @@ function attachFlowchart(store, state, history) {
           manuallyPositioned: patch.manuallyPositioned,
           direction: patch.direction,
         }
-        if (patch.stepPrefix) shape.flowchart.stepPrefix = patch.stepPrefix
-        else delete shape.flowchart.stepPrefix
       }
       for (const patch of patches.edges) {
         const connector = state.connectors.find((c) => c.id === patch.id)
