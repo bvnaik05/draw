@@ -24,7 +24,7 @@
 // ops (it never reimplements the add). It is a no-op when there are no migrated
 // mind-map shapes, so legacy single-type mind maps (which still render via
 // MindMapNodeLayer from the non-null state.mindmap) are untouched.
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useDiagramStore } from '@/stores/useDiagramStore.js'
 import { useEditorUi } from '@/stores/useEditorUi.js'
 import {
@@ -152,6 +152,14 @@ const editingNodeId = computed(() => {
   const id = editing?.editingShapeId?.value
   return id && ctx.value.boxes[id] ? id : null
 })
+
+// Opening an editor drops the hover, so a handle needs a FRESH pointer move to come
+// back. This is what lets #549 and #510 both hold. Clicking a "+" leaves the pointer
+// parked exactly where the handle was, and the child is born under it — so without
+// this the new node would offer a "+" of its own before it even has a name, which is
+// the complaint #510 fixed. Reaching back toward the node still produces one, because
+// that is a real pointermove and the user is asking.
+watch(editingNodeId, clearHover)
 
 const targetIds = computed(() => {
   // A drag is already showing where the node will land; a column of "+" marks
