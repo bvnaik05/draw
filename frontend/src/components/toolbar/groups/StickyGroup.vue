@@ -115,12 +115,16 @@ function removeSticky() {
 
     <!-- Text colour, which is a different axis from the note's PAPER colour above.
          The paper stays the six named fills from the spec, deliberately out of the
-         palette sweep (#495); the ink is on the shared grid like every other text. -->
+         palette sweep (#495); the ink is on the shared grid like every other text.
+         The trigger is the "A" every other text object wears (#550): a filled disc
+         here read as one more paper swatch, on a bar whose first six controls ARE
+         paper swatches. The label stays note-specific so it cannot collide with
+         TextGroup's "Text colour" in a name lookup. -->
     <Popover>
       <template #trigger>
         <ToolbarButton label="Note text colour">
           <template #icon>
-            <span class="size-4 rounded-full" :style="{ background: textStyle.color }" />
+            <span class="grid size-4 place-items-center rounded text-sm font-semibold" :style="{ color: textStyle.color }">A</span>
           </template>
         </ToolbarButton>
       </template>

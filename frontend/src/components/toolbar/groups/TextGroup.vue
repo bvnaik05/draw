@@ -1,13 +1,14 @@
 <script setup>
 // Text formatting for the current block selection (#361): font, size, the four
-// marks, alignment, colour and auto-fit.
+// marks, alignment and colour. Fitting text to its shape is automatic and no
+// longer a control here (#550) — see useAutoFitText.
 //
 // This group is shown for a shape whether or not its label is being edited. It
 // IS the text-only menu while editing (#259), and part of the shape menu
 // otherwise — which is why every control drives the live rich-text editor when
 // one is open and the shape-level base style when it is not.
-import { computed } from 'vue'
-import { Popover, Select } from 'frappe-ui'
+import { computed, ref, watch } from 'vue'
+import { Popover, Select, TextInput } from 'frappe-ui'
 import { useBlockSelection } from '@/composables/useBlockSelection.js'
 import { richCommands, isMarkActive } from '@/composables/useRichText.js'
 import EspressoSwatchGrid from '@/components/palette-right/EspressoSwatchGrid.vue'
@@ -64,8 +65,15 @@ const textAlign = computed(() => textRef.value?.text?.align || 'center')
 // on every shape that has never had a font chosen — which is most of them.
 const font = computed(() => textStyle.value.font || ESPRESSO_SANS)
 const fontSize = computed(() => textStyle.value.size ?? 16)
-const autoFit = computed(() => Boolean(textRef.value?.text?.autoFit))
 const currentTextColor = computed(() => textStyle.value.color || '#171717')
+
+// The typed draft, kept separate from `fontSize` so a half-typed value (the "3"
+// on its way to "32") never round-trips through the store. Re-synced whenever
+// the committed size changes from elsewhere (the +/- steppers, another shape).
+const fontSizeDraft = ref(String(fontSize.value))
+watch(fontSize, (value) => {
+  fontSizeDraft.value = String(value)
+})
 
 function updateTextStyle(patch) {
   if (textIds.value.length) store.updateShapes(textIds.value, { text: { style: patch } })
@@ -109,8 +117,30 @@ function setFont(value) {
   updateTextStyle({ font: value })
 }
 
-function toggleAutoFit() {
-  if (textIds.value.length) store.updateShapes(textIds.value, { text: { autoFit: !autoFit.value } })
+// Applies the typed draft as the shape's base font size (#550): same clamp as
+// the +/- steppers, so typing "9999" lands at the same ceiling clicking + a
+// hundred times would. A draft that isn't a positive number is discarded —
+// the input snaps back to the last committed size via the `fontSize` watcher.
+//
+// Committed on Enter only, never on blur (matching ZoomGroup's typed-value
+// control) — clicking a different shape while a size is half-typed fires blur
+// AFTER the canvas's pointerdown has already moved the selection, which would
+// otherwise write the typed size onto whatever got clicked instead of the
+// shape the user was actually editing.
+function commitFontSizeDraft() {
+  const parsed = Number(fontSizeDraft.value)
+  if (Number.isFinite(parsed) && parsed > 0) {
+    updateTextStyle({ size: Math.max(6, Math.min(200, Math.round(parsed))) })
+  } else {
+    fontSizeDraft.value = String(fontSize.value)
+  }
+}
+
+// Blur with no Enter is a cancel: an edit abandoned by clicking elsewhere
+// reverts rather than silently committing to a shape the click may have
+// just changed the selection to.
+function resetFontSizeDraft() {
+  fontSizeDraft.value = String(fontSize.value)
 }
 
 // Recolours the caret selection live while editing, else sets the shape's base
@@ -127,7 +157,18 @@ function setTextColor(hex) {
 
   <div class="flex items-center rounded-md border border-outline-gray-2">
     <ToolbarButton class="!w-6" label="Decrease font size" icon="lucide-minus" @click="stepFontSize(-1)" />
-    <span class="w-6 text-center text-sm tabular-nums text-ink-gray-8">{{ fontSize }}</span>
+    <TextInput
+      v-model="fontSizeDraft"
+      type="text"
+      size="sm"
+      variant="ghost"
+      inputmode="numeric"
+      aria-label="Font size"
+      class="w-9 [&_input]:px-0 [&_input]:text-center [&_input]:tabular-nums"
+      @focus="$event.target.select()"
+      @keydown.enter="commitFontSizeDraft(); $event.target.blur()"
+      @blur="resetFontSizeDraft"
+    />
     <ToolbarButton class="!w-6" label="Increase font size" icon="lucide-plus" @click="stepFontSize(1)" />
   </div>
 
@@ -166,7 +207,7 @@ function setTextColor(hex) {
     <template #trigger>
       <ToolbarButton label="Text colour">
         <template #icon>
-          <span class="grid size-4 place-items-center rounded text-xs font-semibold" :style="{ color: currentTextColor }">A</span>
+          <span class="grid size-4 place-items-center rounded text-sm font-semibold" :style="{ color: currentTextColor }">A</span>
         </template>
       </ToolbarButton>
     </template>
@@ -176,11 +217,4 @@ function setTextColor(hex) {
       </div>
     </template>
   </Popover>
-
-  <ToolbarButton
-    label="Auto-fit text to shape"
-    icon="lucide-scaling"
-    :active="autoFit"
-    @click="toggleAutoFit"
-  />
 </template>

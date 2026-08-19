@@ -1,7 +1,7 @@
-// Shrink-to-fit text inside a shape (spec 6.4). When a shape's text.autoFit is
-// on, the rendered text is scaled DOWN from its base font size until it fits the
-// box (height first, then width), never below a floor. Growing past the base
-// size is intentionally not done here — base size is the ceiling.
+// Shrink-to-fit text inside a shape (spec 6.4). Always on for a shape that isn't
+// being edited (#550) — the rendered text is scaled DOWN from its base font size
+// until it fits the box (height first, then width), never below a floor. Growing
+// past the base size is intentionally not done here — base size is the ceiling.
 //
 // Driven from ShapeView: pass the inner text element ref and a getter for the
 // fit inputs. We re-measure whenever the box, content, or base size changes.

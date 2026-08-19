@@ -15,7 +15,10 @@ import { isTextElement, selectionOutline, handleCenter, NEUTRAL_SELECT } from '@
 import { cornerRadiusOf, supportsCornerRounding, maxCornerRadius } from '@/diagram/shapeGeometry.js'
 import { arrowProportions } from '@/diagram/blockArrow.js'
 
-const HANDLE = 12
+// Smaller than the shape's own outline stroke would suggest is legible — the
+// Slides-style discoverable-but-quiet affordance #550 asks for, not a control
+// that reads as bigger than the box it resizes.
+const HANDLE = 8
 const ROTATION_ARM = 28
 const HANDLES = [
   'top-left', 'top', 'top-right', 'right',
@@ -316,7 +319,7 @@ function startRotate(event) {
         :y="handlePosition(name).y - handleSize / 2"
         :width="handleSize"
         :height="handleSize"
-        :rx="2.5 / zoom"
+        :rx="1.5 / zoom"
         fill="#FFFFFF"
         :stroke="handleColor"
         :stroke-width="strokeWidth"

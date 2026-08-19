@@ -23,6 +23,7 @@ import { safeHref } from '@/utils/safeUrl.js'
 import { stickyRuns, stickyTextStyle } from '@/diagram/whiteboardModel.js'
 import { domToRuns, runsToDom } from '@/utils/richTextDom.js'
 import { runsToText, trimRuns } from '@/diagram/richText.js'
+import { NEUTRAL_SELECT } from '@/diagram/selectionChrome.js'
 import { roughenRect } from '@/diagram/sketch.js'
 import { pointsToPath } from '@/diagram/svgPath.js'
 import {
@@ -319,14 +320,14 @@ function openLink(event) {
       :height="note.h"
       rx="4"
       :fill="note.color"
-      :stroke="selected ? '#006EDB' : 'rgba(0,0,0,0.08)'"
+      :stroke="selected ? NEUTRAL_SELECT : 'rgba(0,0,0,0.08)'"
       :stroke-width="selected ? 1.5 : 1"
       style="cursor: move; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.12))"
       @pointerdown="startMove"
     />
     <g v-else style="cursor: move" @pointerdown="startMove">
       <rect :width="note.w" :height="note.h" rx="4" :fill="note.color" />
-      <path :d="sketchOutline" fill="none" :stroke="selected ? '#006EDB' : 'rgba(0,0,0,0.35)'" stroke-width="1.5" />
+      <path :d="sketchOutline" fill="none" :stroke="selected ? NEUTRAL_SELECT : 'rgba(0,0,0,0.35)'" stroke-width="1.5" />
     </g>
 
     <!-- Editable text (auto-contrast ink). -->
@@ -352,15 +353,17 @@ function openLink(event) {
       <path d="M4 7 a3 3 0 0 1 3 -3 M10 7 a3 3 0 0 1 -3 3" stroke="#006EDB" stroke-width="1.3" fill="none" stroke-linecap="round" transform="translate(0 0)" />
     </g>
 
-    <!-- Resize handle (bottom-right), shown only for a lone selection. -->
+    <!-- Resize handle (bottom-right), shown only for a lone selection. Same
+         size and neutral grey as every other object's handles (#550). -->
     <rect
       v-if="solo"
-      :x="note.w - 12"
-      :y="note.h - 12"
-      width="12"
-      height="12"
+      :x="note.w - 8"
+      :y="note.h - 8"
+      width="8"
+      height="8"
+      rx="1.5"
       fill="#FFFFFF"
-      stroke="#006EDB"
+      :stroke="NEUTRAL_SELECT"
       stroke-width="1.5"
       style="cursor: nwse-resize"
       @pointerdown="startResize"
