@@ -30,9 +30,11 @@ import {
   isCoveredCell,
   tableCellRuns,
   rowHeightsOf,
+  colWidthsOf,
   tableWidth,
+  tableHeight,
 } from '@/diagram/whiteboardModel.js'
-import { isHeaderRow, tableHeaderRows } from '@/diagram/tableStructure.js'
+import { isHeaderRow, tableHeaderRows, isHeaderColumn, tableHeaderCols } from '@/diagram/tableStructure.js'
 import { resolveMark } from '@/diagram/richText.js'
 import { pointsToPath, smoothPath } from '@/diagram/svgPath.js'
 import { polygonPointsString, isPresetPolygon, presetPolygonPoints } from '@/diagram/polygon.js'
@@ -656,7 +658,7 @@ function whiteboardTable(table) {
   const safe = { ...table, cellW: num(table.cellW, 120), cellH: num(table.cellH, 40) }
   const color = safeColor(table.color, '#171717')
   const align = table.align || 'left'
-  let out = headerBand(safe)
+  let out = headerBand(safe) + headerColBand(safe)
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols; c += 1) {
       if (isCoveredCell(safe, r, c)) continue
@@ -679,7 +681,7 @@ function whiteboardTable(table) {
         // A tspan per run, so an export carries the same per-cell bold/italic/
         // underline the canvas shows (#344) — including the header row's bold,
         // which this path used to drop.
-        const header = isHeaderRow(safe, r)
+        const header = isHeaderRow(safe, r) || isHeaderColumn(safe, c)
         const spans = runs.map((run) => `<tspan${runAttributes(run, header)}>${escapeText(run.text)}</tspan>`).join('')
         out += `<text x="${num(tx)}" y="${num(ty)}"${anchor} fill="${color}" font-size="13" font-family="Inter, sans-serif">${spans}</text>`
       }
@@ -695,6 +697,16 @@ function headerBand(table) {
   const heights = rowHeightsOf(table).slice(0, count)
   const height = heights.reduce((total, each) => total + each, 0)
   const width = tableWidth(table)
+  return `<rect x="${num(table.x)}" y="${num(table.y)}" width="${num(width)}" height="${num(height)}" fill="${TABLE_HEADER_FILL}"/>`
+}
+
+// Same tint, mirrored onto the header columns (#556), matching the live canvas.
+function headerColBand(table) {
+  const count = tableHeaderCols(table)
+  if (!count) return ''
+  const widths = colWidthsOf(table).slice(0, count)
+  const width = widths.reduce((total, each) => total + each, 0)
+  const height = tableHeight(table)
   return `<rect x="${num(table.x)}" y="${num(table.y)}" width="${num(width)}" height="${num(height)}" fill="${TABLE_HEADER_FILL}"/>`
 }
 

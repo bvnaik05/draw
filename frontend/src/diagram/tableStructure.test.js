@@ -11,6 +11,9 @@ import {
   tableHeaderRows,
   isHeaderRow,
   toggleHeaderThroughRow,
+  tableHeaderCols,
+  isHeaderColumn,
+  toggleHeaderThroughColumn,
   clearTableCells,
 } from './tableStructure.js'
 
@@ -123,6 +126,39 @@ describe('header rows', () => {
     expect(tableHeaderRows(grid)).toBe(2)
     deleteTableRow(grid, 0)
     expect(tableHeaderRows(grid)).toBe(1)
+  })
+})
+
+describe('header columns', () => {
+  it('starts with no header column, unlike rows there is no legacy boolean to read', () => {
+    expect(tableHeaderCols(table())).toBe(0)
+  })
+
+  it('makes the header run out to the selected column, and reverts it', () => {
+    const grid = table()
+    toggleHeaderThroughColumn(grid, 1)
+    expect(tableHeaderCols(grid)).toBe(2)
+    expect(isHeaderColumn(grid, 1)).toBe(true)
+    toggleHeaderThroughColumn(grid, 1)
+    expect(tableHeaderCols(grid)).toBe(1)
+    toggleHeaderThroughColumn(grid, 0)
+    expect(tableHeaderCols(grid)).toBe(0)
+  })
+
+  it('follows the columns inserted before or deleted from the header', () => {
+    const grid = table({ headerCols: 1 })
+    insertTableColumn(grid, 0)
+    expect(tableHeaderCols(grid)).toBe(2)
+    deleteTableColumn(grid, 0)
+    expect(tableHeaderCols(grid)).toBe(1)
+  })
+
+  it('is independent of the header row', () => {
+    const grid = table({ headerRows: 1, headerCols: 1 })
+    expect(isHeaderRow(grid, 0)).toBe(true)
+    expect(isHeaderColumn(grid, 0)).toBe(true)
+    expect(isHeaderRow(grid, 1)).toBe(false)
+    expect(isHeaderColumn(grid, 1)).toBe(false)
   })
 })
 

@@ -10,6 +10,7 @@ const props = defineProps({
   rows: { type: Number, default: 3 },
   cols: { type: Number, default: 3 },
   headerRows: { type: Number, default: 0 },
+  headerCols: { type: Number, default: 0 },
   align: { type: String, default: 'left' },
   // 'create' → grid picker to size a new table; 'edit' → steppers on the table.
   mode: { type: String, default: 'create', validator: (v) => ['create', 'edit'].includes(v) },
@@ -91,11 +92,20 @@ function step(field, delta) {
          works on the row you have selected (#553). -->
     <Checkbox
       v-if="mode === 'edit'"
-      class="mb-2.5"
+      class="mb-2"
       size="sm"
       label="Header row"
       :model-value="headerRows > 0"
       @update:model-value="emit('change', { headerRows: $event ? 1 : 0 })"
+    />
+    <!-- Same idea on the column axis, independently configurable (#556). -->
+    <Checkbox
+      v-if="mode === 'edit'"
+      class="mb-2.5"
+      size="sm"
+      label="Header column"
+      :model-value="headerCols > 0"
+      @update:model-value="emit('change', { headerCols: $event ? 1 : 0 })"
     />
 
     <!-- Cell text alignment — edit only, a property of the whole table (#338). -->

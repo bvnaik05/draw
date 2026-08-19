@@ -26,6 +26,8 @@ import {
   deleteTableColumn,
   toggleHeaderThroughRow,
   setTableHeaderRows,
+  toggleHeaderThroughColumn,
+  setTableHeaderCols,
   clearTableCells,
 } from '@/diagram/tableStructure.js'
 import { mindmapModelFromShapes, flowchartModelFromShapes, mindmapComponentIds } from '@/diagram/freeFloatingGraph.js'
@@ -969,6 +971,10 @@ function attachWhiteboardTables(store, state, history) {
     commitOnTable(state, history, 'Header row', id, (table) => setTableHeaderRows(table, count))
   store.toggleTableHeaderThroughRow = (id, row) =>
     commitOnTable(state, history, 'Header row', id, (table) => toggleHeaderThroughRow(table, row))
+  store.setTableHeaderCols = (id, count) =>
+    commitOnTable(state, history, 'Header column', id, (table) => setTableHeaderCols(table, count))
+  store.toggleTableHeaderThroughColumn = (id, col) =>
+    commitOnTable(state, history, 'Header column', id, (table) => toggleHeaderThroughColumn(table, col))
   store.clearTableCells = (id, cells) =>
     commitOnTable(state, history, 'Clear cells', id, (table) => clearTableCells(table, cells))
   store.removeTable = (id) => {

@@ -132,6 +132,7 @@ export function insertTableColumn(table, at) {
   table.merges = keptMerges(mergesAfterInsert(table, 'col', index))
   table.colWidths = sizesAfterInsert(table.colWidths, index, table.cellW)
   table.cols = cols + 1
+  if (index < tableHeaderCols(table)) setTableHeaderCols(table, tableHeaderCols(table) + 1)
 }
 
 // Delete column `col`, keeping the last one for the same reason as the row.
@@ -139,12 +140,14 @@ export function deleteTableColumn(table, col) {
   const cols = tableCols(table)
   if (cols <= 1) return
   const index = clampIndex(col, cols - 1)
+  const headerCols = tableHeaderCols(table)
   table.cells = shiftKeyedCells(table.cells, 'col', index, -1) || {}
   table.cellRuns = shiftKeyedCells(table.cellRuns, 'col', index, -1)
   table.cellStyles = shiftKeyedCells(table.cellStyles, 'col', index, -1)
   table.merges = keptMerges(mergesAfterDelete(table, 'col', index))
   table.colWidths = sizesAfterDelete(table.colWidths, index)
   table.cols = cols - 1
+  if (index < headerCols) setTableHeaderCols(table, headerCols - 1)
 }
 
 // ----- header rows -----------------------------------------------------------
@@ -174,6 +177,31 @@ export function setTableHeaderRows(table, count) {
 export function toggleHeaderThroughRow(table, row) {
   const index = clampIndex(row, Math.max(0, tableRows(table) - 1))
   setTableHeaderRows(table, isHeaderRow(table, index) ? index : index + 1)
+}
+
+// ----- header columns ---------------------------------------------------------
+// Same shape as header rows, mirrored onto the column axis, independently
+// configurable (#556). No legacy boolean here — `hasHeader` only existed for
+// documents saved before the row count generalised it (#338); columns never had
+// a single-column predecessor to stay compatible with.
+
+export function tableHeaderCols(table) {
+  return clampIndex(Number.isFinite(table.headerCols) ? table.headerCols : 0, tableCols(table))
+}
+
+export function isHeaderColumn(table, col) {
+  return col < tableHeaderCols(table)
+}
+
+export function setTableHeaderCols(table, count) {
+  table.headerCols = clampIndex(count, tableCols(table)) || undefined
+}
+
+// One click on a selected column: make the header run out to it, or — when it
+// is already a header column — end the header just before it.
+export function toggleHeaderThroughColumn(table, col) {
+  const index = clampIndex(col, Math.max(0, tableCols(table) - 1))
+  setTableHeaderCols(table, isHeaderColumn(table, index) ? index : index + 1)
 }
 
 // Empty the given cells, keeping their style overrides — "clear contents" is

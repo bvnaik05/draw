@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest'
 import { createDiagramStore } from './useDiagramStore.js'
 import { createDiagramDocument } from '@/diagram/schema.js'
 import { tableById } from '@/diagram/whiteboardModel.js'
-import { tableHeaderRows } from '@/diagram/tableStructure.js'
+import { tableHeaderRows, tableHeaderCols } from '@/diagram/tableStructure.js'
 
 function setup() {
   const store = createDiagramStore(createDiagramDocument(undefined, 'unified'))
@@ -65,6 +65,24 @@ describe('header rows', () => {
     expect(table().hasHeader).toBe(true)
     store.setTableHeaderRows(id, 0)
     expect(table().hasHeader).toBe(false)
+  })
+})
+
+describe('header columns', () => {
+  it('makes the header run out to the column that was picked, then reverts it', () => {
+    const { store, id, table } = setup()
+    store.toggleTableHeaderThroughColumn(id, 1)
+    expect(tableHeaderCols(table())).toBe(2)
+    store.toggleTableHeaderThroughColumn(id, 1)
+    expect(tableHeaderCols(table())).toBe(1)
+  })
+
+  it('undoes a header-column change in one step', () => {
+    const { store, id, table } = setup()
+    store.setTableHeaderCols(id, 2)
+    expect(tableHeaderCols(table())).toBe(2)
+    store.undo()
+    expect(tableHeaderCols(table())).toBe(0)
   })
 })
 

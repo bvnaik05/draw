@@ -1,9 +1,10 @@
 <script setup>
 // One whiteboard table — a grid with per-cell text (spec diagram-types Part C9).
-// Cells render as SVG; double-clicking one, or clicking one on an already-
-// selected table, sets ui.state.editingCell (see editTableCellAt and
-// startTableMove), mounting an inline contenteditable over it — rich rather
-// than a plain <input>, so part of a cell can be bold (#344). Columns/rows resize
+// Cells render as SVG; a click on an already-selected table selects the cell
+// (ui.state.cellRange), a double click opens it for editing (ui.state.editingCell,
+// #556 — see editTableCellAt and startTableMove), mounting an inline
+// contenteditable over it — rich rather than a plain input element, so part of a
+// cell can be bold (#344). Columns/rows resize
 // by dragging their edges when selected, and a shift-click cell range can be
 // merged / split (#338). Selection is surface-driven like lines/strokes. One
 // store mutation per committed edit (Part G6).
@@ -30,6 +31,7 @@ import {
   colOffsets,
   rowOffsets,
   rowHeightsOf,
+  colWidthsOf,
   cellBox,
   cellSpanBox,
   isCoveredCell,
@@ -43,7 +45,7 @@ import { resolveMark } from '@/diagram/richText.js'
 import { TABLE_GRID_COLOR, TABLE_HEADER_FILL, TABLE_SELECT_COLOR } from '@/diagram/whiteboardColors.js'
 import { useTableCellFormat } from '@/composables/useTableCellFormat.js'
 import { useTableCellEditor } from '@/composables/useTableCellEditor.js'
-import { isHeaderRow, tableHeaderRows } from '@/diagram/tableStructure.js'
+import { isHeaderRow, tableHeaderRows, isHeaderColumn, tableHeaderCols } from '@/diagram/tableStructure.js'
 import TableGrips from './TableGrips.vue'
 
 const props = defineProps({
@@ -81,6 +83,16 @@ const headerBand = computed(() => {
   return { x: props.table.x, y: props.table.y, w: width.value, h: height }
 })
 
+// The same tinted band, mirrored onto the header COLUMNS (#556) — independently
+// configurable from header rows.
+const headerColBand = computed(() => {
+  const count = Math.min(tableHeaderCols(props.table), cols.value)
+  if (!count) return null
+  const widths = colWidthsOf(props.table)
+  const bandWidth = widths.slice(0, count).reduce((total, each) => total + each, 0)
+  return { x: props.table.x, y: props.table.y, w: bandWidth, h: height.value }
+})
+
 // Horizontal text placement within a cell box, per that CELL's alignment — its own
 // where it has one, else the table's (#508).
 function textLayout(box, align) {
@@ -100,7 +112,7 @@ const cellNodes = computed(() => {
       const box = cellSpanBox(props.table, row, col)
       const style = tableCellStyle(props.table, row, col)
       const layout = textLayout(box, style.align)
-      const header = isHeaderRow(props.table, row)
+      const header = isHeaderRow(props.table, row) || isHeaderColumn(props.table, col)
       out.push({
         row,
         col,
@@ -159,8 +171,8 @@ const isLoneSelection = computed(
 // A press on the table (select tool only). The first press and additive toggles
 // fall through to the surface selectAt; once it's selected WE own the press — a
 // shift-click extends a cell range, a drag across the cells selects a range
-// (#553), a drag on the frame band moves the table, and a plain click drops the
-// caret into the cell (T2).
+// (#553), a drag on the frame band moves the table, and a plain click selects
+// the cell under it (#556) without opening it for editing.
 function onPointerDown(event) {
   if (event.button !== 0 || editorUi.state.tool !== 'select') return
   const lone = isLoneSelection.value
@@ -186,8 +198,9 @@ function onPointerDown(event) {
   const point = pointAtEvent(event)
   // The frame band moves the table (with everything co-selected); so does any
   // press while the table is part of a multi-selection. Inside the cells of a
-  // lone table, a drag selects a cell range and a click still opens the cell
-  // (#553) — the two gestures cannot both be "drag inside the grid".
+  // lone table, a drag selects a cell range and a plain click selects the one
+  // cell under it (#553, #556) — the two gestures cannot both be "drag inside
+  // the grid".
   if (!lone || event.target.hasAttribute('data-table-frame')) {
     startTableMove(event, store, editorUi, ui, props.table, point)
     return
@@ -231,10 +244,11 @@ const editBox = computed(() =>
   editingCell.value ? cellSpanBox(props.table, editingCell.value.row, editingCell.value.col) : null,
 )
 
-// A range of more than one cell is highlighted (a row, a column, a drag), and so
-// is a lone MERGED cell, which is a rectangle too. A lone plain cell is not: the
-// click that selects it also opens its editor, which draws its own highlight.
-const showRange = computed(() => props.selected && !!range.value && (canMerge.value || canSplit.value))
+// Any active range is highlighted while the table is selected and nothing in it
+// is being edited (#556: a plain click selects, it no longer opens the editor,
+// so even a lone plain cell needs this highlight now). editBox draws its own
+// highlight while editing, so the two never overlap.
+const showRange = computed(() => props.selected && !!range.value && !editingCell.value)
 
 // Deselecting the table drops any pending cell range.
 watch(
@@ -325,6 +339,18 @@ watch(range, refreshActiveMarks)
       style="pointer-events: none"
     />
 
+    <!-- Same tint, mirrored onto the header columns (#556) — independent of the
+         header row band, so both can be on at once. -->
+    <rect
+      v-if="headerColBand"
+      :x="headerColBand.x"
+      :y="headerColBand.y"
+      :width="headerColBand.w"
+      :height="headerColBand.h"
+      :fill="TABLE_HEADER_FILL"
+      style="pointer-events: none"
+    />
+
     <!-- One border rect per visible cell (a merge anchor spans its rectangle), so
          the light-neutral grid naturally breaks around merged cells. -->
     <rect
@@ -403,7 +429,7 @@ watch(range, refreshActiveMarks)
         role="textbox"
         aria-label="Cell text"
         class="h-full w-full overflow-x-auto whitespace-nowrap border-0 bg-transparent px-3 outline-none"
-        :class="isHeaderRow(table, editingCell.row) ? 'font-semibold' : ''"
+        :class="isHeaderRow(table, editingCell.row) || isHeaderColumn(table, editingCell.col) ? 'font-semibold' : ''"
         :style="editorStyle"
         @pointerdown.stop
         @keydown="onEditorKeydown"
