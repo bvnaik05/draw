@@ -21,6 +21,8 @@ import {
   startCellRangeDrag,
   startTableMove,
   startTableResize,
+  onColumnAutoFit as autoFitColumn,
+  onRowAutoFit as autoFitRow,
 } from '@/composables/useWhiteboardInteraction.js'
 import { isAdditiveEvent, clientToLogical } from '@/composables/pointer.js'
 import {
@@ -36,7 +38,6 @@ import {
   cellSpanBox,
   isCoveredCell,
   tableCellAt,
-  tableCellRuns,
   tableCellStyle,
   TABLE_FONT_SIZE,
 } from '@/diagram/whiteboardModel.js'
@@ -44,7 +45,14 @@ import { resolveMark } from '@/diagram/richText.js'
 import { TABLE_GRID_COLOR, TABLE_HEADER_FILL, TABLE_SELECT_COLOR } from '@/diagram/whiteboardColors.js'
 import { useTableCellFormat } from '@/composables/useTableCellFormat.js'
 import { useTableCellEditor } from '@/composables/useTableCellEditor.js'
-import { isHeaderRow, tableHeaderRows, isHeaderColumn, tableHeaderCols } from '@/diagram/tableStructure.js'
+import {
+  isHeaderRow,
+  tableHeaderRows,
+  isHeaderColumn,
+  tableHeaderCols,
+  wrappedCellRunLines,
+  TABLE_LINE_HEIGHT,
+} from '@/diagram/tableStructure.js'
 import TableGrips from './TableGrips.vue'
 
 const props = defineProps({
@@ -112,29 +120,41 @@ const cellNodes = computed(() => {
       const style = tableCellStyle(props.table, row, col)
       const layout = textLayout(box, style.align)
       const header = isHeaderRow(props.table, row) || isHeaderColumn(props.table, col)
+      const wrappedLines = wrappedCellRunLines(props.table, row, col)
+      const lineHeight = style.size * TABLE_LINE_HEIGHT
       out.push({
         row,
         col,
         box,
-        // One tspan per run so per-cell formatting renders (#344). A header cell
-        // bolds by default; a run may override that either way.
-        spans: tableCellRuns(props.table, row, col).map((run) => ({
-          text: run.text,
-          weight: resolveMark(run, 'bold', header) ? 600 : 400,
-          style: resolveMark(run, 'italic') ? 'italic' : null,
-          // Both decorations in one attribute so they combine (#508); SVG has the
-          // same single text-decoration property CSS does.
-          decoration: [
-            resolveMark(run, 'underline') ? 'underline' : null,
-            resolveMark(run, 'strike') ? 'line-through' : null,
-          ].filter(Boolean).join(' ') || null,
-        })),
+        // One entry per wrapped LINE, each holding one tspan per formatted run
+        // within it (#344, #556 — a cell can wrap across several lines, and
+        // marks still need to land on the right characters within each). A
+        // header cell bolds by default; a run may override that either way.
+        lines: wrappedLines.map((line) =>
+          line.map((run) => ({
+            text: run.text,
+            weight: resolveMark(run, 'bold', header) ? 600 : 400,
+            style: resolveMark(run, 'italic') ? 'italic' : null,
+            // Both decorations in one attribute so they combine (#508); SVG has the
+            // same single text-decoration property CSS does.
+            decoration: [
+              resolveMark(run, 'underline') ? 'underline' : null,
+              resolveMark(run, 'strike') ? 'line-through' : null,
+            ].filter(Boolean).join(' ') || null,
+          })),
+        ),
         header,
         tx: layout.x,
-        ty: box.y + box.h / 2,
+        // The whole block of lines centres in the box (#507/#556): the first
+        // line's baseline sits half a block above the box's own midpoint, and
+        // each following line steps down by one lineHeight (see the template's
+        // dy on each line's first tspan).
+        ty: box.y + box.h / 2 - ((wrappedLines.length - 1) * lineHeight) / 2,
+        lineHeight,
         anchor: layout.anchor,
         color: style.color,
         size: style.size,
+        font: style.font,
       })
     }
   }
@@ -152,6 +172,17 @@ function onColumnResize(event, col) {
 }
 function onRowResize(event, row) {
   startTableResize(event, store, editorUi, props.table, 'row', row)
+}
+// Double-clicking the same handle fits the column/row to its content instead
+// of dragging it (#12). `.stop` on the template's @dblclick keeps this from
+// also reaching the canvas's own double-click handler, which would otherwise
+// open a cell editor right after (editTableCellAt resolves by canvas point,
+// and a resize handle sits exactly on a cell boundary).
+function onColumnAutoFit(col) {
+  autoFitColumn(store, props.table, col)
+}
+function onRowAutoFit(row) {
+  autoFitRow(store, props.table, row)
 }
 
 // The cell under a pointer event, in table coordinates.
@@ -266,14 +297,26 @@ const editingStyle = computed(() =>
 // `items-center` (#507). An EMPTY cell has no text node, so a flex box has no item
 // to centre and the caret dropped to the top of the box — then jumped to the middle
 // as soon as the first character created one. A full-height line box centres the
-// caret whether or not anything has been typed. Cells are single-line
-// (`whitespace-nowrap`), so one line box is the whole content.
+// caret whether or not anything has been typed — and still does here for the
+// common ONE-line case (#556: cells wrap now, but most stay one line).
+//
+// A line-height spanning the whole box only works for exactly one line — two
+// lines at "box height" each would together be twice the box's own height. So
+// once a cell has actually wrapped past one line (lineCount from
+// useTableCellEditor, live as it's typed into), this switches to a normal
+// per-line value and lets the block simply start at the top of its now-taller
+// row, rather than trying to keep every line individually centred.
 const editorStyle = computed(() => ({
   fontSize: `${editingStyle.value?.size || TABLE_FONT_SIZE}px`,
-  lineHeight: editBox.value ? `${editBox.value.h}px` : undefined,
+  lineHeight:
+    lineCount.value > 1
+      ? String(TABLE_LINE_HEIGHT)
+      : editBox.value
+        ? `${editBox.value.h}px`
+        : undefined,
   color: editingStyle.value?.color,
   textAlign: editingStyle.value?.align,
-  fontFamily: 'Inter, sans-serif',
+  fontFamily: editingStyle.value?.font || 'Inter, sans-serif',
 }))
 // Published on the shared UI store so the cell's B / I / U control — which has to
 // render from the HTML tree, see TableCellToolbar — can act on this editor's
@@ -287,7 +330,7 @@ const { toggleMark, refreshActiveMarks } = useTableCellFormat({
   editorEl,
   range,
 })
-const { onEditorKeydown, onPasteText } = useTableCellEditor({
+const { onEditorKeydown, onPasteText, onEditorInput, lineCount } = useTableCellEditor({
   table: () => props.table,
   store,
   editingCell,
@@ -383,26 +426,32 @@ watch(range, refreshActiveMarks)
       style="pointer-events: none"
     />
 
-    <!-- Committed cell text: aligned per table.align, one tspan per formatted
-         run. The header row is bold unless a run says otherwise (#344). -->
+    <!-- Committed cell text: aligned per table.align, wrapped into as many
+         lines as the column width forces, one tspan per formatted run within
+         each line (#344, #556). The header row/column is bold unless a run
+         says otherwise. Only the FIRST tspan of a line carries x/dy — that is
+         what resets the horizontal cursor and steps down a line; a run
+         continuing the same line carries neither, so it picks up right where
+         the previous one left off. -->
     <text
       v-for="cell in cellNodes"
       v-show="!isCellEditing(cell)"
       :key="`t${cell.row},${cell.col}`"
-      :x="cell.tx"
       :y="cell.ty"
       :text-anchor="cell.anchor"
       dominant-baseline="central"
       :font-size="cell.size"
       :fill="cell.color"
-      style="font-family: Inter, sans-serif; pointer-events: none"
-    ><tspan
-        v-for="(span, index) in cell.spans"
-        :key="index"
+      :style="{ fontFamily: cell.font, pointerEvents: 'none' }"
+    ><template v-for="(line, lineIndex) in cell.lines" :key="lineIndex"><tspan
+        v-for="(span, spanIndex) in line"
+        :key="spanIndex"
+        :x="spanIndex === 0 ? cell.tx : undefined"
+        :dy="spanIndex === 0 ? (lineIndex === 0 ? 0 : cell.lineHeight) : undefined"
         :font-weight="span.weight"
         :font-style="span.style"
         :text-decoration="span.decoration"
-      >{{ span.text }}</tspan></text>
+      >{{ span.text }}</tspan></template></text>
 
     <!-- Inline cell editor (aligned + padded to match the committed text). -->
     <foreignObject
@@ -417,13 +466,14 @@ watch(range, refreshActiveMarks)
         contenteditable="true"
         role="textbox"
         aria-label="Cell text"
-        class="h-full w-full overflow-x-auto whitespace-nowrap border-0 bg-transparent px-3 outline-none"
+        class="h-full w-full whitespace-pre-wrap break-words border-0 bg-transparent px-3 outline-none"
         :class="isHeaderRow(table, editingCell.row) || isHeaderColumn(table, editingCell.col) ? 'font-semibold' : ''"
         :style="editorStyle"
         @pointerdown.stop
         @keydown="onEditorKeydown"
         @keyup="refreshActiveMarks"
         @mouseup="refreshActiveMarks"
+        @input="onEditorInput"
         @paste.prevent="onPasteText($event.clipboardData?.getData('text/plain'))"
         @drop.prevent="onPasteText($event.dataTransfer?.getData('text/plain'))"
       />
@@ -445,6 +495,7 @@ watch(range, refreshActiveMarks)
         fill="transparent"
         style="cursor: col-resize"
         @pointerdown.stop.prevent="onColumnResize($event, handle.col)"
+        @dblclick.stop="onColumnAutoFit(handle.col)"
       />
       <rect
         v-for="handle in rowHandles"
@@ -456,6 +507,7 @@ watch(range, refreshActiveMarks)
         fill="transparent"
         style="cursor: row-resize"
         @pointerdown.stop.prevent="onRowResize($event, handle.row)"
+        @dblclick.stop="onRowAutoFit(handle.row)"
       />
     </template>
   </g>

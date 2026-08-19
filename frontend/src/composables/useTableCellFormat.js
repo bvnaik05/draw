@@ -33,7 +33,10 @@ export function useTableCellFormat({ table, store, editingCell, editorEl, range 
 
   function toggleInEditor(mark) {
     const element = editorEl.value
-    const runs = domToRuns(element)
+    // multiline: a cell can wrap across several lines now (#556) — reading
+    // without it would silently join them back into one before the mark gets
+    // reapplied, dropping every break the cell had.
+    const runs = domToRuns(element, { multiline: true })
     const { start, end } = targetRange(element, runs)
     const inherited = inheritedFor(mark, editingCell.value.row, editingCell.value.col)
     const value = nextValue(markState(runs, start, end, mark), inherited)
@@ -56,7 +59,7 @@ export function useTableCellFormat({ table, store, editingCell, editorEl, range 
 
   function stateOf(mark) {
     if (editingCell.value && editorEl.value) {
-      const runs = domToRuns(editorEl.value)
+      const runs = domToRuns(editorEl.value, { multiline: true })
       const { start, end } = targetRange(editorEl.value, runs)
       const state = markState(runs, start, end, mark)
       return state === undefined ? inheritedFor(mark, editingCell.value.row, editingCell.value.col) : state

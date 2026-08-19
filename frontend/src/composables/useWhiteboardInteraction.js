@@ -591,6 +591,16 @@ export function startTableResize(event, store, editorUi, table, axis, index) {
   window.addEventListener('pointercancel', finish)
 }
 
+// Double-clicking a resize handle fits that column/row to its content instead
+// of dragging it (#12/#556) — a thin call into the store, kept here rather than
+// inline in the component for the same testability startTableResize gets.
+export function onColumnAutoFit(store, table, col) {
+  store.autoFitTableColumn(table.id, col)
+}
+export function onRowAutoFit(store, table, row) {
+  store.autoFitTableRow(table.id, row)
+}
+
 // Open the table cell under `point` for editing, if there is one. Exported
 // because the unified canvas reaches it directly: there the select tool does not
 // delegate surface events to the whiteboard layer, so this is the only route

@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import { createDiagramStore } from './useDiagramStore.js'
 import { createDiagramDocument } from '@/diagram/schema.js'
-import { tableById } from '@/diagram/whiteboardModel.js'
+import { tableById, rowHeightsOf } from '@/diagram/whiteboardModel.js'
 import { tableHeaderRows, tableHeaderCols } from '@/diagram/tableStructure.js'
 
 function setup() {
@@ -83,6 +83,50 @@ describe('header columns', () => {
     expect(tableHeaderCols(table())).toBe(2)
     store.undo()
     expect(tableHeaderCols(table())).toBe(0)
+  })
+})
+
+// #556: a cell wraps and its row grows to hold what it wraps to.
+describe('growTableRow', () => {
+  it('grows a row live, with no history commit of its own', () => {
+    const { store, id, table } = setup()
+    const before = rowHeightsOf(table())[0]
+    store.growTableRow(id, 0, before + 50)
+    expect(rowHeightsOf(table())[0]).toBe(before + 50)
+    // Same contract as growStickyNote: nothing pushed to the undo stack, so
+    // ONE undo() still fully unwinds all the way back to before setup's own
+    // addTable (removing the table) — there is no separate "grow" step
+    // sitting on top of it to absorb that undo instead.
+    store.undo()
+    expect(table()).toBeUndefined()
+  })
+
+  it('never shrinks a row — growth only, like growStickyNote', () => {
+    const { store, id, table } = setup()
+    const before = rowHeightsOf(table())[0]
+    store.growTableRow(id, 0, before + 50)
+    store.growTableRow(id, 0, before)
+    expect(rowHeightsOf(table())[0]).toBe(before + 50)
+  })
+})
+
+describe('setTableCellRuns with a row height (#556)', () => {
+  it('bundles the text and the grown height into one undo step', () => {
+    const { store, id, table } = setup()
+    const before = rowHeightsOf(table())[0]
+    store.setTableCellRuns(id, 0, 0, [{ text: 'wrapped text' }], before + 40)
+    expect(table().cells['0,0']).toBe('wrapped text')
+    expect(rowHeightsOf(table())[0]).toBe(before + 40)
+    store.undo()
+    expect(table().cells['0,0']).toBeUndefined()
+    expect(rowHeightsOf(table())[0]).toBe(before)
+  })
+
+  it('omitting the height leaves the row alone, as every other caller already expects', () => {
+    const { store, id, table } = setup()
+    const before = rowHeightsOf(table())[0]
+    store.setTableCellRuns(id, 0, 0, [{ text: 'plain' }])
+    expect(rowHeightsOf(table())[0]).toBe(before)
   })
 })
 
