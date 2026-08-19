@@ -532,7 +532,6 @@ export function startCellRangeDrag(event, store, editorUi, ui, table, point) {
   const anchor = mergeAnchor(table, pressed)
   const surface = event.target.closest('[data-fdpreset]')
   const rect = surface ? surface.getBoundingClientRect() : { left: 0, top: 0 }
-  let extended = false
   const setRange = (cell) => {
     ui.state.cellRange = { tableId: table.id, r0: anchor.row, c0: anchor.col, r1: cell.row, c1: cell.col }
   }
@@ -542,7 +541,6 @@ export function startCellRangeDrag(event, store, editorUi, ui, table, point) {
   const move = (moveEvent) => {
     const cell = tableCellAt(table, clientToLogical(moveEvent, rect, editorUi.viewport))
     if (!cell) return
-    if (cell.row !== anchor.row || cell.col !== anchor.col) extended = true
     setRange(cell)
   }
   const finish = () => {

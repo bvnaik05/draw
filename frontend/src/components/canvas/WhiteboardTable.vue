@@ -35,7 +35,6 @@ import {
   cellBox,
   cellSpanBox,
   isCoveredCell,
-  mergeCovering,
   tableCellAt,
   tableCellRuns,
   tableCellStyle,
@@ -226,16 +225,6 @@ const rangeBox = computed(() => {
   const b = cellBox(props.table, Math.max(r.r0, r.r1), Math.max(r.c0, r.c1))
   return { x: a.x, y: a.y, w: b.x + b.w - a.x, h: b.y + b.h - a.y }
 })
-const canMerge = computed(
-  () => !!range.value && (range.value.r0 !== range.value.r1 || range.value.c0 !== range.value.c1),
-)
-const canSplit = computed(
-  () =>
-    !!range.value &&
-    range.value.r0 === range.value.r1 &&
-    range.value.c0 === range.value.c1 &&
-    !!mergeCovering(props.table, range.value.r0, range.value.c0),
-)
 // The cell open for editing, and its box.
 const editingCell = computed(() =>
   ui.state.editingCell?.tableId === props.table.id ? ui.state.editingCell : null,
