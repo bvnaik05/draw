@@ -87,6 +87,7 @@ declare module 'vue' {
     StickyGroup: typeof import('./src/components/toolbar/groups/StickyGroup.vue')['default']
     StyleGroup: typeof import('./src/components/toolbar/groups/StyleGroup.vue')['default']
     TableCellGroup: typeof import('./src/components/toolbar/groups/TableCellGroup.vue')['default']
+    TableGrips: typeof import('./src/components/canvas/TableGrips.vue')['default']
     TableOptions: typeof import('./src/components/floating/TableOptions.vue')['default']
     TableSizePicker: typeof import('./src/components/floating/TableSizePicker.vue')['default']
     TextEditor: typeof import('./src/components/canvas/TextEditor.vue')['default']

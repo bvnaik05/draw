@@ -19,6 +19,15 @@ import {
   FLOWCHART_FALLBACK_TYPE,
 } from '@/diagram/freeFloating.js'
 import { createWhiteboard } from '@/diagram/whiteboardModel.js'
+import {
+  insertTableRow,
+  deleteTableRow,
+  insertTableColumn,
+  deleteTableColumn,
+  toggleHeaderThroughRow,
+  setTableHeaderRows,
+  clearTableCells,
+} from '@/diagram/tableStructure.js'
 import { mindmapModelFromShapes, flowchartModelFromShapes, mindmapComponentIds } from '@/diagram/freeFloatingGraph.js'
 import { buildMindmapChild, buildMindmapSibling, buildFlowchartChild, flowchartLayoutPatches, mindmapLayoutPatches } from '@/diagram/freeFloatingOps.js'
 import { mindmapSizeForShape } from '@/diagram/mindmapNodeSize.js'
@@ -938,10 +947,43 @@ function attachWhiteboardTables(store, state, history) {
       const table = tableById(state.whiteboard || {}, id)
       if (table) unmergeTableCell(table, row, col)
     })
+  // Structural edits (#553). Each is one undoable step, and each goes through
+  // tableStructure so the cell text, its runs, its styles, the merges and any
+  // dragged sizes move together — the store never reshapes a grid by hand.
+  store.insertTableRow = (id, at) =>
+    commitOnTable(state, history, 'Insert row', id, (table) => insertTableRow(table, at))
+  // A range delete is ONE undo step, so putting three deleted rows back takes one
+  // undo rather than three. Bottom-up, so each removal leaves the rows still to go
+  // at the index they were named by.
+  store.deleteTableRows = (id, rows) =>
+    commitOnTable(state, history, 'Delete rows', id, (table) => {
+      for (const row of [...rows].sort((a, b) => b - a)) deleteTableRow(table, row)
+    })
+  store.insertTableColumn = (id, at) =>
+    commitOnTable(state, history, 'Insert column', id, (table) => insertTableColumn(table, at))
+  store.deleteTableColumns = (id, cols) =>
+    commitOnTable(state, history, 'Delete columns', id, (table) => {
+      for (const col of [...cols].sort((a, b) => b - a)) deleteTableColumn(table, col)
+    })
+  store.setTableHeaderRows = (id, count) =>
+    commitOnTable(state, history, 'Header row', id, (table) => setTableHeaderRows(table, count))
+  store.toggleTableHeaderThroughRow = (id, row) =>
+    commitOnTable(state, history, 'Header row', id, (table) => toggleHeaderThroughRow(table, row))
+  store.clearTableCells = (id, cells) =>
+    commitOnTable(state, history, 'Clear cells', id, (table) => clearTableCells(table, cells))
   store.removeTable = (id) => {
     if (!state.whiteboard) return
     history.commit('Delete table', () => removeTable(state.whiteboard, id))
   }
+}
+
+// Run one edit on a table inside a single history commit — every structural
+// action above is otherwise the same three lines.
+function commitOnTable(state, history, label, id, edit) {
+  history.commit(label, () => {
+    const table = tableById(state.whiteboard || {}, id)
+    if (table) edit(table)
+  })
 }
 
 // Read helpers that features lean on.

@@ -60,3 +60,12 @@ function luminance(hex) {
 export function contrastInk(backgroundHex) {
   return luminance(backgroundHex) > 0.5 ? '#171717' : '#FFFFFF'
 }
+
+// A table's gridlines, header band and grips are chrome-neutral rather than the
+// table's own colour (#553). The colour a table carries is its TEXT colour — the
+// same thing the colour control on a text box sets — so it must not also be
+// painting the grid. `TABLE_SELECT_COLOR` is the canvas selection blue every
+// other whiteboard object already highlights with.
+export const TABLE_GRID_COLOR = '#E6E6EA'
+export const TABLE_HEADER_FILL = '#F4F4F6'
+export const TABLE_SELECT_COLOR = '#006EDB'

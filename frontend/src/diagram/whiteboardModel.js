@@ -129,6 +129,11 @@ export const TABLE_CELL_H = 40
 // (#507).
 export const TABLE_FONT_SIZE = 14
 
+// A new table's header size, from either form it can be given in (#553).
+function headerRowsOf(partial) {
+  return partial.headerRows ?? (partial.hasHeader ? 1 : 0)
+}
+
 // A simple fixed grid table. `cells` maps "row,col" → text. `rows`/`cols` are
 // required: every creation path supplies an explicit size (the size picker, or
 // the armed-tool default) — there is no built-in 3×3 fallback anymore (#134).
@@ -142,8 +147,11 @@ export function makeTable(x, y, partial = {}) {
     cellW: partial.cellW || TABLE_CELL_W,
     cellH: partial.cellH || TABLE_CELL_H,
     color: partial.color || '#171717',
-    // First row rendered as a header (tinted band + bold text) when set (#338).
-    hasHeader: partial.hasHeader ?? false,
+    // How many leading rows are header rows — a tinted band + bold text (#553).
+    // `hasHeader` is the older boolean form (#338), kept in step so a document
+    // saved here still reads as a header table in an older client.
+    headerRows: headerRowsOf(partial) || undefined,
+    hasHeader: headerRowsOf(partial) > 0,
     // Horizontal text alignment for every cell: 'left' | 'center' | 'right'.
     align: partial.align || 'left',
     // Per-column widths / per-row heights only materialise once a border is
@@ -589,6 +597,17 @@ export function translateWhiteboardObject(model, kind, id, dx, dy) {
     const t = tableById(model, id)
     if (t) { t.x += dx; t.y += dy }
   }
+}
+
+// Which column / row an x / y falls in, clamped to the table — the grips sit
+// OUTSIDE the grid (#553), so a press on one has no cell under it and only one
+// of the two axes says anything.
+export function tableColumnAt(table, x) {
+  return segmentIndex(colOffsets(table), x - table.x)
+}
+
+export function tableRowAt(table, y) {
+  return segmentIndex(rowOffsets(table), y - table.y)
 }
 
 // Which cell of `table` the point falls in, as { row, col }, or null if outside.

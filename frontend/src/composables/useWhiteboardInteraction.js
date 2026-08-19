@@ -28,7 +28,7 @@ function mergeAnchor(table, cell) {
 }
 import { eraseInkAt, eraseObjectsAt, sweepPoints } from '@/diagram/eraser.js'
 import { rectsIntersect } from '@/diagram/geometry.js'
-import { isAdditiveEvent, runMarqueeDrag } from '@/composables/pointer.js'
+import { clientToLogical, isAdditiveEvent, runMarqueeDrag } from '@/composables/pointer.js'
 // Shared drag flag (see useShapeTransform.js) so WhiteboardSelectionEditor can
 // hide while a group/table is actively being dragged, not just while selected (#248).
 
@@ -515,6 +515,43 @@ export function startTableMove(event, store, editorUi, ui, table, point) {
   window.addEventListener('pointerup', finish)
   // Match startGroupMove: a pointercancel must tear the listeners down and land any
   // in-progress move as one undoable step, never stranding the preview.
+  window.addEventListener('pointercancel', finish)
+}
+
+// Press inside the cells of a lone-selected table: drag to select a cell range
+// (#553), release without leaving the cell to open it for editing — the click
+// that used to reach startTableMove. Moving the table is the frame band's job
+// now (TableGrips), because a drag across cells has to mean "select these".
+export function startCellRangeDrag(event, store, editorUi, ui, table, point) {
+  const pressed = tableCellAt(table, point)
+  if (!pressed) return
+  const anchor = mergeAnchor(table, pressed)
+  const surface = event.target.closest('[data-fdpreset]')
+  const rect = surface ? surface.getBoundingClientRect() : { left: 0, top: 0 }
+  let extended = false
+  const setRange = (cell) => {
+    ui.state.cellRange = { tableId: table.id, r0: anchor.row, c0: anchor.col, r1: cell.row, c1: cell.col }
+  }
+  ui.state.editingCell = null
+  setRange(anchor)
+
+  const move = (moveEvent) => {
+    const cell = tableCellAt(table, clientToLogical(moveEvent, rect, editorUi.viewport))
+    if (!cell) return
+    if (cell.row !== anchor.row || cell.col !== anchor.col) extended = true
+    setRange(cell)
+  }
+  const finish = (finishEvent) => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', finish)
+    window.removeEventListener('pointercancel', finish)
+    // A press that never left the cell is a click: drop the caret in it (T2).
+    if (!extended && finishEvent?.type !== 'pointercancel') {
+      ui.state.editingCell = { tableId: table.id, row: anchor.row, col: anchor.col }
+    }
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', finish)
   window.addEventListener('pointercancel', finish)
 }
 

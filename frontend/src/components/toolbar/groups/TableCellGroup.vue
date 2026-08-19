@@ -17,7 +17,9 @@ import { useWhiteboardUi } from '@/composables/useWhiteboardUi.js'
 import { useTableCellFormat } from '@/composables/useTableCellFormat.js'
 import { mergeCovering, tableById, tableCellStyle, TABLE_FONT_SIZE } from '@/diagram/whiteboardModel.js'
 import EspressoSwatchGrid from '@/components/palette-right/EspressoSwatchGrid.vue'
-import { Popover } from 'frappe-ui'
+import { useTableSelection } from '@/composables/useTableSelection.js'
+import { tableMenuOptions } from './tableMenu.js'
+import { Dropdown, Popover } from 'frappe-ui'
 import ToolbarButton from '../ToolbarButton.vue'
 import ToolbarSeparator from '../ToolbarSeparator.vue'
 
@@ -54,6 +56,19 @@ const { activeMarks, toggleMark, refreshActiveMarks } = useTableCellFormat({
   range,
 })
 
+// Structural edits act on whatever cells are selected — one cell, a dragged
+// range, a whole row from its grip (#553). The composable owns both the reading
+// and the actions, so this group only has to name them.
+const selection = useTableSelection()
+const tableMenu = computed(() =>
+  tableMenuOptions({
+    rowCount: selection.rows.value.length,
+    columnCount: selection.columns.value.length,
+    isHeader: selection.selectionIsHeader.value,
+    actions: selection,
+  }),
+)
+
 const canMerge = computed(
   () => !!range.value && (range.value.r0 !== range.value.r1 || range.value.c0 !== range.value.c1),
 )
@@ -64,9 +79,9 @@ const canSplit = computed(
     range.value.c0 === range.value.c1 &&
     !!mergeCovering(table.value, range.value.r0, range.value.c0),
 )
-const show = computed(
-  () => !!table.value && (!!editingCell.value || canMerge.value || canSplit.value),
-)
+// Any picked cell brings the bar up now, not only an open editor or a mergeable
+// range: selecting a row and formatting it is the whole point of #553.
+const show = computed(() => !!table.value && (!!editingCell.value || selection.hasSelection.value))
 
 // A new target — another cell opened, or a different range — makes the buttons
 // re-read what it carries.
@@ -168,6 +183,11 @@ function stepFontSize(delta) {
         </template>
       </Popover>
     </template>
+
+    <ToolbarSeparator />
+    <Dropdown :options="tableMenu" align="start">
+      <ToolbarButton label="Table actions" icon="lucide-table" allows-blur />
+    </Dropdown>
 
     <template v-if="canMerge || canSplit">
       <ToolbarSeparator />

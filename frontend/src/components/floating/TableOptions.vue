@@ -1,17 +1,15 @@
 <script setup>
-// Row/column count + color controls for a whiteboard table. In 'create' mode
+// Row/column count controls for a whiteboard table. In 'create' mode
 // (the insert-table menu) the primary control is a Google-Docs-style grid picker
 // (T2); in 'edit' mode (a selected table) that picker is hidden and the size is
 // adjusted with add/remove row & column steppers instead. Pure: emits a patch.
 import { ref, computed } from 'vue'
 import { Button, Checkbox } from 'frappe-ui'
-import EspressoSwatchGrid from '@/components/palette-right/EspressoSwatchGrid.vue'
 
 const props = defineProps({
   rows: { type: Number, default: 3 },
   cols: { type: Number, default: 3 },
-  color: { type: String, default: '#171717' },
-  hasHeader: { type: Boolean, default: false },
+  headerRows: { type: Number, default: 0 },
   align: { type: String, default: 'left' },
   // 'create' → grid picker to size a new table; 'edit' → steppers on the table.
   mode: { type: String, default: 'create', validator: (v) => ['create', 'edit'].includes(v) },
@@ -88,14 +86,16 @@ function step(field, delta) {
         <Button variant="ghost" theme="gray" size="sm" icon="lucide-plus" label="Add column" @click="step('cols', 1)" />
       </div>
     </div>
-    <!-- A tinted, bold first row — a property of an existing table, so edit only (#338). -->
+    <!-- A tinted, bold first row — a property of an existing table, so edit only
+         (#338). More rows than the first become header from the table menu, which
+         works on the row you have selected (#553). -->
     <Checkbox
       v-if="mode === 'edit'"
       class="mb-2.5"
       size="sm"
       label="Header row"
-      :model-value="hasHeader"
-      @update:model-value="emit('change', { hasHeader: $event })"
+      :model-value="headerRows > 0"
+      @update:model-value="emit('change', { headerRows: $event ? 1 : 0 })"
     />
 
     <!-- Cell text alignment — edit only, a property of the whole table (#338). -->
@@ -116,14 +116,8 @@ function step(field, delta) {
       </div>
     </template>
 
-    <div class="mb-1 text-xs font-semibold text-ink-gray-5">Color</div>
-    <!-- The shared Espresso grid (#495). allow-none is false: a table with no text
-         colour has nothing to read. -->
-    <EspressoSwatchGrid
-      mode="fill"
-      :model-value="color"
-      :allow-none="false"
-      @select="emit('change', { color: $event })"
-    />
+    <!-- No colour grid here (#553). A table's one colour is the colour of its
+         text, and it is set from the toolbar's text-colour control — the same
+         control, in the same place, a text box has. -->
   </div>
 </template>

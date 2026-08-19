@@ -5,7 +5,12 @@
 // tables could be selected but never drag-moved — nothing on the table started a
 // move gesture, so startGroupMove was only ever reached from the sticky/frame.
 import { describe, it, expect, vi } from 'vitest'
-import { startTableMove, editTableCellAt, extendStroke } from './useWhiteboardInteraction.js'
+import {
+  startCellRangeDrag,
+  startTableMove,
+  editTableCellAt,
+  extendStroke,
+} from './useWhiteboardInteraction.js'
 import { useWhiteboardUi } from './useWhiteboardUi.js'
 import { createWhiteboard, addTable } from '@/diagram/whiteboardModel.js'
 
@@ -175,5 +180,37 @@ describe('thinning a stroke while it is drawn', () => {
     const creep = Array.from({ length: 6 }, (_, i) => ({ x: (i + 1) * 0.4, y: 0 }))
     const { kept } = draw({ x: 0, y: 0 }, ...creep)
     expect(kept.length, 'a slow drag never reached the threshold').toBeGreaterThan(1)
+  })
+})
+
+// #553: a drag across the cells of a selected table selects a cell range — the
+// gesture that used to move the table, which now belongs to its frame band.
+describe('startCellRangeDrag', () => {
+  // A press event carrying the same target contract the component hands over: a
+  // canvas surface to measure client→logical against.
+  function press(x, y) {
+    const surface = document.createElement('div')
+    surface.setAttribute('data-fdpreset', 'ocean')
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0 })
+    document.body.appendChild(surface)
+    return { clientX: x, clientY: y, target: surface }
+  }
+
+  it('selects the range dragged across, anchored at the pressed cell', () => {
+    const { table, store, editorUi, ui } = setup()
+    startCellRangeDrag(press(110, 110), store, editorUi, ui, table, { x: 110, y: 110 })
+    pointer('pointermove', 350, 190)
+    pointer('pointerup', 350, 190)
+
+    expect(ui.state.cellRange).toEqual({ tableId: table.id, r0: 0, c0: 0, r1: 2, c1: 2 })
+    expect(ui.state.editingCell, 'a drag opened the cell editor').toBe(null)
+  })
+
+  it('opens the cell for editing when the press never left it', () => {
+    const { table, store, editorUi, ui } = setup()
+    startCellRangeDrag(press(150, 150), store, editorUi, ui, table, { x: 150, y: 150 })
+    pointer('pointerup', 150, 150)
+
+    expect(ui.state.editingCell).toEqual({ tableId: table.id, row: 1, col: 0 })
   })
 })
