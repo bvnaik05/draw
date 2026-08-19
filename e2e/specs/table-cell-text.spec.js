@@ -41,8 +41,14 @@ async function openCell(page) {
 // outside the table entirely is its own separate, currently-broken thing on a
 // unified document (tracked outside this PR), and has nothing to do with what
 // these tests are asserting.
+//
+// A fixed 200px offset, not a multiple of `box`: `box` is the "CELL-TEXT"
+// GLYPH's own bounding box (only as wide as the rendered string, ~60-90px),
+// not the cell's — the fixtures seed 120-160px-wide cells, so 200px past the
+// text's left edge reliably lands one column over without a third column's
+// width in play.
 async function commitCell(page, box) {
-  await page.mouse.click(box.x + box.width * 1.5, box.y + box.height / 2)
+  await page.mouse.click(box.x + 200, box.y + 10)
   await expect(page.locator('[role="textbox"][contenteditable]')).toHaveCount(0)
 }
 
