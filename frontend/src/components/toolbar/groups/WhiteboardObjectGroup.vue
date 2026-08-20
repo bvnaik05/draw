@@ -184,7 +184,7 @@ function remove() {
 
     <Popover v-else-if="table">
       <template #trigger>
-        <ToolbarButton label="Table" icon="lucide-table" allows-blur />
+        <ToolbarButton label="Table" icon="lucide-table-properties" allows-blur />
       </template>
       <template #default="{ toggle }">
         <TableOptions
@@ -197,8 +197,16 @@ function remove() {
           @change="changeTable"
         />
         <div class="mx-2 my-1 h-px bg-outline-gray-2" />
-        <div class="w-44 px-1 pb-1">
-          <div v-for="group in tableMenu" :key="group.key" class="py-1 first:pt-0 last:pb-0">
+        <!-- Rows / Columns side by side, Table (the last group) spanning both —
+             a single narrow column here was what ran this popup off the bottom
+             of the screen (#556 feedback). Matches TableOptions' own w-72. -->
+        <div class="grid w-72 grid-cols-2 gap-x-1 px-1 pb-1">
+          <div
+            v-for="(group, index) in tableMenu"
+            :key="group.key"
+            class="py-1 first:pt-0 last:pb-0"
+            :class="index === tableMenu.length - 1 ? 'col-span-2' : ''"
+          >
             <div class="flex h-7 items-center px-2 text-sm font-medium text-ink-gray-4">{{ group.group }}</div>
             <ItemListRow
               v-for="item in group.options"
