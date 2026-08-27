@@ -188,6 +188,14 @@ describe('wrappedCellLines / wrappedCellHeight (#556)', () => {
   it('keeps a hard line break as its own line even when it would otherwise fit', () => {
     expect(wrappedCellLines(200, 'a\nb', 14)).toEqual(['a', 'b'])
   })
+
+  it('counts a run of consecutive spaces the same way wrappedCellRunLines does, so a row grown by one agrees with what it renders (#557)', () => {
+    const text = 'one   two   three   four' // three-space gaps, like the review's repro
+    const width = 120
+    const grid = table({ cells: { '0,0': text } })
+    grid.colWidths = [width, grid.cellW, grid.cellW]
+    expect(wrappedCellLines(width, text, 14).length).toBe(wrappedCellRunLines(grid, 0, 0).length)
+  })
 })
 
 describe('wrappedCellRunLines (#556)', () => {

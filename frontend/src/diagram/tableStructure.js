@@ -24,7 +24,7 @@ import {
   resizeTableRow,
 } from './whiteboardModel.js'
 import { runsToText, wrapRuns } from './richText.js'
-import { textWidth, wrapLines, charsPerLine } from './textMetrics.js'
+import { textWidth, charsPerLine } from './textMetrics.js'
 
 // Keys of `cells` / `cellRuns` / `cellStyles` are "row,col". Shift every key on
 // one axis at or past `at` by `delta`; a delete (delta -1) drops that line's own
@@ -233,13 +233,15 @@ export const TABLE_LINE_HEIGHT = 1.3
 const CHAR_WIDTH_RATIO = 0.55 // Inter's average advance, relative to the font size — matches stickyText.js
 
 // A cell's text as the lines it wraps to at `width`: hard breaks first, then the
-// wrap that width forces. Shared by the live render, the export, and the height
-// below, so a cell that fits on the canvas fits in the exported image.
+// wrap that width forces. Goes through wrapRuns' own per-character tokenizer
+// (richText.js) rather than textMetrics.js's plain-string wrapLines — those two
+// count a run of whitespace differently (one column vs. one per character), so
+// using wrapLines here sized a row for fewer lines than wrappedCellRunLines and
+// the export actually draw it with. Shared by the live render, the export, and
+// the height below, so a cell that fits on the canvas fits in the exported image.
 export function wrappedCellLines(width, text, fontSize = TABLE_FONT_SIZE) {
   const perLine = charsPerLine(width - TABLE_CELL_PAD_X, fontSize * CHAR_WIDTH_RATIO)
-  return String(text || '')
-    .split(/\r?\n/)
-    .flatMap((line) => wrapLines(line, perLine))
+  return wrapRuns(String(text || ''), perLine).map((line) => line.map((run) => run.text).join(''))
 }
 
 // The height a cell's text needs at `width` — how far a row has to grow to hold it.

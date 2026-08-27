@@ -173,11 +173,15 @@ function clamp(value, low, high) {
   return Math.min(Math.max(value, low), high)
 }
 
-// Greedy word-wrap at `perLine` characters, like textMetrics.js's wrapLines —
-// but per RUN instead of a plain string, so a wrapped table cell keeps its
-// bold/italic/underline/strike marks on the right characters after it splits
-// across lines (#556). Kept here rather than in textMetrics.js because it needs
-// the mark algebra (sameMarks, MARKS) that file deliberately has none of.
+// Greedy word-wrap at `perLine` characters, per RUN instead of a plain string,
+// so a wrapped table cell keeps its bold/italic/underline/strike marks on the
+// right characters after it splits across lines (#556). This is the ONE wrap
+// tableStructure.js sizes cells with (wrappedCellLines) as well as the one the
+// canvas render and export use (wrappedCellRunLines) — a plain string just goes
+// in as a single run — so a row grown for a cell always agrees with how many
+// lines that cell is drawn with (#557). Kept here rather than in textMetrics.js
+// because it needs the mark algebra (sameMarks, MARKS) that file deliberately
+// has none of.
 //
 // Operates on individual characters rather than whole runs so a word made of
 // several runs (bold "CELL-" next to plain "TEXT") still wraps as one word: a
@@ -202,19 +206,21 @@ function splitCharsOnBreaks(chars) {
 }
 
 // One hard line's characters, greedily packed into lines of at most `perLine`
-// characters — same algorithm as textMetrics.js's wrapLines, so a cell wraps
-// exactly where the height that was measured for it expects it to.
+// characters.
 //
 // Tokenised into words and the ORIGINAL whitespace characters BETWEEN them,
-// kept apart rather than reconstructed: textMetrics.js's plain-string wrapLines
-// can get away with re-joining words on a fresh single space because nothing
-// downstream cares which run a space belongs to, but here the space itself
-// carries a mark (bold text has a bold space in the middle of it) — dropping
-// and reinserting it would silently hand that character whichever neighbour's
-// mark happened to run the reconstruction, moving a bold/underline boundary by
-// one character. A wrapped line may end with a trailing space (the one that
-// caused the wrap) rather than trimming it — invisible either way, under
-// `white-space: pre-wrap` and in the SVG export alike.
+// kept apart rather than reconstructed: a plain-string wrap can get away with
+// re-joining words on a fresh single space because nothing downstream cares
+// which run a space belongs to, but here the space itself carries a mark (bold
+// text has a bold space in the middle of it) — dropping and reinserting it
+// would silently hand that character whichever neighbour's mark happened to
+// run the reconstruction, moving a bold/underline boundary by one character.
+// Reconstruction would also cost a run of N whitespace characters only ONE
+// column instead of N — this is the divergence #557 fixed by moving
+// wrappedCellLines onto this same per-character tokenizer. A wrapped line may
+// end with a trailing space (the one that caused the wrap) rather than
+// trimming it — invisible either way, under `white-space: pre-wrap` and in the
+// SVG export alike.
 function wrapCharLine(chars, perLine) {
   const tokens = []
   let word = []
