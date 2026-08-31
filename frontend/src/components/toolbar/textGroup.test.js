@@ -62,3 +62,11 @@ describe('the canvas font menu (#475)', () => {
     expect(source).toContain('textStyle.value.font || ESPRESSO_SANS')
   })
 })
+
+describe('the text colour picker (#581)', () => {
+  it('uses Writer’s compact quick-colour row with an arbitrary-colour picker', () => {
+    expect(source).toContain("const WRITER_TEXT_COLORS = ['#FFB3E6', '#00B3E6', '#E6B333', '#3366E6', '#999966', '#99FF99', '#B34D4D', '#80B300']")
+    expect(source).toContain('class="w-[176px] p-3"')
+    expect(source).toContain('<ColorPickerBody :show-quick-colors="false"')
+  })
+})
