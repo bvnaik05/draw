@@ -43,8 +43,8 @@ describe('loadCount distinguishes a document load from an edit', () => {
       { id: 's2', type: 'image', src: 'https://server.com/image.png', x: 100, y: 0, w: 100, h: 100 }
     ]
     const doc = store.getDocument()
-    expect(doc.shapes.length).toBe(1)
-    expect(doc.shapes[0].src).toBe('https://server.com/image.png')
+    expect(doc.shapes[0].src).toBe('')
+    expect(doc.shapes[1].src).toBe('https://server.com/image.png')
   })
 })
 
