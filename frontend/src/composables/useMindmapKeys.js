@@ -148,7 +148,8 @@ function freeFloatingMindmapKey(event, store, editorUi, ids) {
   if (event.key === 'Tab' && !event.shiftKey && id) return name(store.addChildNode(id))
   if (event.key === 'Enter' && id) return name(store.addSiblingNode(id))
   if (event.key === 'Delete' || event.key === 'Backspace') {
-    store.deleteMindmapSubtrees(ids)
+    const allSelected = store.state.selection?.length ? [...store.state.selection] : [...ids]
+    store.deleteMindmapSubtrees(allSelected)
     selectNode(store, null)
     return true
   }
