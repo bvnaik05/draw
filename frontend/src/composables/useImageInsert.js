@@ -97,7 +97,7 @@ export function useImageInsert(store, editorUi = null) {
           if (!src) throw new Error('No URL returned from upload')
           try { URL.revokeObjectURL(localUrl) } catch {}
           if (!store.shapeById?.(id)) {
-            const fileName = fileDoc?.name || fileDoc?.message?.name
+            const fileName = fileDoc?.name || fileDoc?.message?.name || fileDoc?.file_name || fileDoc?.message?.file_name
             if (fileName) {
               call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
             }
@@ -143,7 +143,7 @@ export function useImageInsert(store, editorUi = null) {
         if (!src) throw new Error('No URL returned from upload')
         try { URL.revokeObjectURL(localUrl) } catch {}
         if (!store.shapeById?.(id)) {
-          const fileName = fileDoc?.name || fileDoc?.message?.name
+          const fileName = fileDoc?.name || fileDoc?.message?.name || fileDoc?.file_name || fileDoc?.message?.file_name
           if (fileName) {
             call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
           }

@@ -148,12 +148,12 @@ function hasPendingBlob(document) {
 function scheduleSave(session, store, status, frozen) {
   if (frozen.value) return
   const doc = store.getDocument()
-  if (hasPendingBlob(doc)) return
   session.pendingDocument = doc
-  status.value = 'saving'
   clearTimeout(session.debounceTimer)
-  session.debounceTimer = setTimeout(session.flushNow, DEBOUNCE_MS)
   clearTimeout(session.localTimer)
+  if (hasPendingBlob(doc)) return
+  status.value = 'saving'
+  session.debounceTimer = setTimeout(session.flushNow, DEBOUNCE_MS)
   session.localTimer = setTimeout(() => {
     putLocalDoc(session.diagramName(), session.pendingDocument, session.revision())
   }, LOCAL_DEBOUNCE_MS)
