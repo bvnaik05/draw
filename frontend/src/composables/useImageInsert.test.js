@@ -34,6 +34,8 @@ function fakeStore(name) {
     state: { name, canvas: { width: 1280, height: 720 } },
     addShape: vi.fn(() => 'shape-1'),
     select: vi.fn(),
+    updateShape: vi.fn(),
+    removeShapes: vi.fn(),
   }
   store.insertImage = (image, at) => {
     const cx = at?.x ?? store.state.canvas.width / 2
@@ -59,7 +61,12 @@ describe('useImageInsert', () => {
     captured.result = null
     captured.error = null
     toast.error.mockClear()
+    toast.success.mockClear()
     vi.stubGlobal('Image', FakeImage)
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:foo'),
+      revokeObjectURL: vi.fn(),
+    })
   })
   afterEach(() => vi.unstubAllGlobals())
 
@@ -76,7 +83,9 @@ describe('useImageInsert', () => {
       method: 'draw.api.diagram.upload_diagram_image',
     })
     expect(store.addShape).toHaveBeenCalledOnce()
-    expect(store.addShape.mock.calls[0][0]).toMatchObject({ type: 'image', src: '/files/inserted.png' })
+    expect(store.addShape.mock.calls[0][0]).toMatchObject({ type: 'image', src: 'blob:foo' })
+    await vi.waitFor(() => expect(store.updateShape).toHaveBeenCalledWith('shape-1', { src: '/files/inserted.png' }))
+    expect(toast.success).toHaveBeenCalledWith('Image uploaded successfully')
     expect(id).toBe('shape-1')
   })
 
@@ -116,17 +125,19 @@ describe('useImageInsert', () => {
     it('reports the server’s own message when the upload throws', async () => {
       const store = fakeStore('my-diagram')
       captured.error = { messages: ['Image is too large'] }
-      expect(await useImageInsert(store).insert(pngFile)).toBeNull()
+      await useImageInsert(store).insert(pngFile)
+      expect(store.addShape).toHaveBeenCalled()
+      await vi.waitFor(() => expect(store.removeShapes).toHaveBeenCalledWith(['shape-1']))
       expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Image is too large'))
-      expect(store.addShape).not.toHaveBeenCalled()
     })
 
     it('reports an upload that comes back without a file url', async () => {
       const store = fakeStore('my-diagram')
       captured.result = {}
-      expect(await useImageInsert(store).insert(pngFile)).toBeNull()
+      await useImageInsert(store).insert(pngFile)
+      expect(store.addShape).toHaveBeenCalled()
+      await vi.waitFor(() => expect(store.removeShapes).toHaveBeenCalledWith(['shape-1']))
       expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('photo.png'))
-      expect(store.addShape).not.toHaveBeenCalled()
     })
 
     it('says nothing when the insert works', async () => {
@@ -155,9 +166,15 @@ describe('useImageInsert', () => {
       useImageInsert(store).pick(onReady)
       await input.listeners.change()
       await vi.waitFor(() => expect(onReady).toHaveBeenCalled())
-      expect(onReady.mock.calls[0][0]).toMatchObject({ src: '/files/inserted.png' })
+      const image = onReady.mock.calls[0][0]
+      expect(image).toMatchObject({ src: 'blob:foo' })
       // Armed, not placed: nothing reaches the canvas until the click.
       expect(store.addShape).not.toHaveBeenCalled()
+      
+      // Simulate placement on the canvas
+      image.onPlaced('shape-1')
+      await vi.waitFor(() => expect(store.updateShape).toHaveBeenCalledWith('shape-1', { src: '/files/inserted.png' }))
+      expect(toast.success).toHaveBeenCalledWith('Image uploaded successfully')
     })
 
     it('arms nothing when the chosen file is refused', async () => {

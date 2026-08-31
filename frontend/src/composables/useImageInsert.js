@@ -41,33 +41,104 @@ export function useImageInsert(store) {
     input.accept = ACCEPT
     input.addEventListener('change', () => {
       const file = input.files && input.files[0]
-      if (file) upload(file).then((image) => image && onReady?.(image))
+      if (file) startOptimisticUpload(file, onReady)
     })
     input.click()
   }
 
-  // Upload `file` and return `{ src, w, h }` ready to place, or null having told the
-  // user why not. The box is measured here rather than at placement so an armed
-  // image knows its own size before the click that drops it.
-  async function upload(file) {
+  async function startOptimisticUpload(file, onReady) {
     const refusal = refusalFor(file)
     if (refusal) return report(refusal)
-    let fileDoc = null
+
+    let localUrl = ''
     try {
-      fileDoc = await handler.upload(file, uploadOptions())
-    } catch (error) {
-      return report(uploadFailure(error, file))
+      localUrl = URL.createObjectURL(file)
+    } catch {
+      localUrl = 'blob:' + Math.random().toString(36).slice(2)
     }
-    const src = fileDoc?.file_url || fileDoc?.message?.file_url
-    if (!src) return report(`Could not insert ${nameOf(file)} — the upload returned no file.`)
-    return boxFor(src, await naturalSize(src))
+    const size = await naturalSize(localUrl)
+    const image = boxFor(localUrl, size)
+
+    let placedShapeId = null
+    let uploadResolved = false
+    let uploadedSrc = null
+    let uploadError = null
+
+    // Start background upload
+    handler.upload(file, uploadOptions())
+      .then((fileDoc) => {
+        const src = fileDoc?.file_url || fileDoc?.message?.file_url
+        if (!src) throw new Error('No URL returned from upload')
+        uploadedSrc = src
+        uploadResolved = true
+        if (placedShapeId) {
+          store.updateShape(placedShapeId, { src })
+          try { URL.revokeObjectURL(localUrl) } catch {}
+          toast.success('Image uploaded successfully')
+        }
+      })
+      .catch((err) => {
+        uploadError = err
+        uploadResolved = true
+        if (placedShapeId) {
+          store.removeShapes([placedShapeId])
+          try { URL.revokeObjectURL(localUrl) } catch {}
+          report(uploadFailure(err, file))
+        }
+      })
+
+    image.onPlaced = (id) => {
+      placedShapeId = id
+      if (uploadResolved) {
+        if (uploadedSrc) {
+          store.updateShape(placedShapeId, { src: uploadedSrc })
+          try { URL.revokeObjectURL(localUrl) } catch {}
+          toast.success('Image uploaded successfully')
+        } else if (uploadError) {
+          store.removeShapes([placedShapeId])
+          try { URL.revokeObjectURL(localUrl) } catch {}
+          report(uploadFailure(uploadError, file))
+        }
+      }
+    }
+
+    onReady?.(image)
   }
 
   // Upload `file` and place it; `at` (canvas-unit point) centers it, else canvas center.
   // Used by drop and paste, which already know where the image goes.
   async function insert(file, at) {
-    const image = await upload(file)
-    return image ? store.insertImage(image, at) : null
+    const refusal = refusalFor(file)
+    if (refusal) return report(refusal)
+
+    let localUrl = ''
+    try {
+      localUrl = URL.createObjectURL(file)
+    } catch {
+      localUrl = 'blob:' + Math.random().toString(36).slice(2)
+    }
+    const size = await naturalSize(localUrl)
+    const image = boxFor(localUrl, size)
+
+    // Place the shape immediately with the local URL
+    const id = store.insertImage(image, at)
+
+    // Start background upload
+    handler.upload(file, uploadOptions())
+      .then((fileDoc) => {
+        const src = fileDoc?.file_url || fileDoc?.message?.file_url
+        if (!src) throw new Error('No URL returned from upload')
+        store.updateShape(id, { src })
+        try { URL.revokeObjectURL(localUrl) } catch {}
+        toast.success('Image uploaded successfully')
+      })
+      .catch((err) => {
+        store.removeShapes([id])
+        try { URL.revokeObjectURL(localUrl) } catch {}
+        report(uploadFailure(err, file))
+      })
+
+    return id
   }
 
   // Attach to the diagram + route through Draw's endpoint when we know the diagram

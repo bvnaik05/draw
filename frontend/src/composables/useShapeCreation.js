@@ -94,7 +94,10 @@ export function useShapeCreation(store, editorUi) {
     // A picked image is already uploaded and measured by the time it is armed, so
     // the click only has to say where (#503). One click, no drag to size — the
     // width is capped for us, and there is nothing else to decide.
-    else if (starter.kind === 'image') store.insertImage(starter.image, point)
+    else if (starter.kind === 'image') {
+      const id = store.insertImage(starter.image, point)
+      if (starter.image.onPlaced) starter.image.onPlaced(id)
+    }
     editorUi.setTool('select')
     // A dropped mind-map root drops you straight into typing (#263): the insert
     // selected it, so edit it with "New idea" pre-selected — the first keystroke
