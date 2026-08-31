@@ -30,26 +30,25 @@ const EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
 
 export function useImageInsert(store, editorUi) {
   const handler = new FileUploadHandler()
-  let pendingFileDoc = null
   let activePickId = 0
 
   if (editorUi) {
     watch(
       () => editorUi.state.pendingStarter,
       (current, previous) => {
-        if (previous?.kind === 'image' && previous.image?.src !== current?.image?.src && pendingFileDoc) {
+        if (previous?.kind === 'image' && previous.image?.src !== current?.image?.src) {
           const placed = store.state.shapes?.some((s) => s.type === 'image' && s.src === previous.image?.src)
           if (!placed) {
             const fileName =
-              pendingFileDoc?.name ||
-              pendingFileDoc?.message?.name ||
-              pendingFileDoc?.file_name ||
-              pendingFileDoc?.message?.file_name
+              previous.image?.name ||
+              previous.image?.fileDoc?.name ||
+              previous.image?.fileDoc?.message?.name ||
+              previous.image?.file_name ||
+              previous.image?.fileDoc?.file_name
             if (fileName) {
               call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
             }
           }
-          pendingFileDoc = null
         }
       },
     )
@@ -87,9 +86,12 @@ export function useImageInsert(store, editorUi) {
             return
           }
           if (image) {
-            pendingFileDoc = fileDoc
             toast.success('Image uploaded successfully')
-            onReady?.(image)
+            onReady?.({
+              ...image,
+              fileDoc,
+              name: fileDoc?.name || fileDoc?.message?.name || fileDoc?.file_name,
+            })
           }
         })
       }
