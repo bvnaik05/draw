@@ -131,15 +131,11 @@ function createSaveSession(store, diagramResource, status, frozen, offline) {
   // timers are cancelled on unmount and on tab-close, so the edits made since the
   // last debounce survive to be recovered on reopen. No-op when nothing is pending.
   session.persistPending = () => {
-    if (session.pendingDocument && !hasPendingBlob(session.pendingDocument) && session.diagramName()) {
+    if (session.pendingDocument && session.diagramName()) {
       putLocalDoc(session.diagramName(), session.pendingDocument, session.revision())
     }
   }
   return session
-}
-
-function hasPendingBlob(document) {
-  return document?.shapes?.some((s) => s.type === 'image' && s.src?.startsWith('blob:'))
 }
 
 // Capture the latest document and (re)start the debounce window. The document is
@@ -147,13 +143,11 @@ function hasPendingBlob(document) {
 // server save still keeps the edits. Frozen sessions ignore further edits.
 function scheduleSave(session, store, status, frozen) {
   if (frozen.value) return
-  const doc = store.getDocument()
-  session.pendingDocument = doc
-  clearTimeout(session.debounceTimer)
-  clearTimeout(session.localTimer)
-  if (hasPendingBlob(doc)) return
+  session.pendingDocument = store.getDocument()
   status.value = 'saving'
+  clearTimeout(session.debounceTimer)
   session.debounceTimer = setTimeout(session.flushNow, DEBOUNCE_MS)
+  clearTimeout(session.localTimer)
   session.localTimer = setTimeout(() => {
     putLocalDoc(session.diagramName(), session.pendingDocument, session.revision())
   }, LOCAL_DEBOUNCE_MS)
@@ -166,7 +160,7 @@ function scheduleSave(session, store, status, frozen) {
 // than only through the editor.
 export async function flush(session, saver, diagramResource, status, frozen) {
   if (frozen.value || session.inFlight) return
-  if (!session.pendingDocument || !session.diagramName() || hasPendingBlob(session.pendingDocument)) return
+  if (!session.pendingDocument || !session.diagramName()) return
 
   session.inFlight = true
   // The retry budget is per flush: it exists to stop a hot loop inside this call,

@@ -17,8 +17,7 @@
 // only as an unhandled rejection in the console. From the canvas all of that looked
 // identical: nothing happened.
 
-import { watch } from 'vue'
-import { FileUploadHandler, toast, call } from 'frappe-ui'
+import { FileUploadHandler, toast } from 'frappe-ui'
 
 const ACCEPT = 'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/svg+xml'
 const MAX_W = 420 // cap the placed width so a big photo doesn't fill the canvas
@@ -28,7 +27,7 @@ const MAX_W = 420 // cap the placed width so a big photo doesn't fill the canvas
 const MAX_BYTES = 10 * 1024 * 1024
 const EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
 
-export function useImageInsert(store, editorUi = null) {
+export function useImageInsert(store) {
   const handler = new FileUploadHandler()
 
   // Open the OS file picker and hand the uploaded image to `onReady`, which arms it
@@ -42,124 +41,42 @@ export function useImageInsert(store, editorUi = null) {
     input.accept = ACCEPT
     input.addEventListener('change', () => {
       const file = input.files && input.files[0]
-      if (file) startOptimisticUpload(file, onReady)
+      if (file) {
+        upload(file).then((image) => {
+          if (image) {
+            toast.success('Image uploaded successfully')
+            onReady?.(image)
+          }
+        })
+      }
     })
     input.click()
   }
 
-  async function startOptimisticUpload(file, onReady) {
+  // Upload `file` and return `{ src, w, h }` ready to place, or null having told the
+  // user why not. The box is measured here rather than at placement so an armed
+  // image knows its own size before the click that drops it.
+  async function upload(file) {
     const refusal = refusalFor(file)
     if (refusal) return report(refusal)
-
-    let localUrl = ''
+    let fileDoc = null
     try {
-      localUrl = URL.createObjectURL(file)
-    } catch {
-      localUrl = 'blob:' + Math.random().toString(36).slice(2)
+      fileDoc = await handler.upload(file, uploadOptions())
+    } catch (error) {
+      return report(uploadFailure(error, file))
     }
-    const size = await naturalSize(localUrl)
-    const image = boxFor(localUrl, size)
-
-    let stopWatchPending = null
-    let isCanceled = false
-
-    function cleanupCanceled() {
-      if (isCanceled) return
-      isCanceled = true
-      try { URL.revokeObjectURL(localUrl) } catch {}
-      if (stopWatchPending) {
-        stopWatchPending()
-        stopWatchPending = null
-      }
-    }
-
-    if (editorUi) {
-      stopWatchPending = watch(
-        () => editorUi.state.pendingStarter,
-        (currentStarter) => {
-          if (currentStarter?.image !== image) {
-            cleanupCanceled()
-          }
-        }
-      )
-    }
-
-    image.onPlaced = (id) => {
-      if (stopWatchPending) {
-        stopWatchPending()
-        stopWatchPending = null
-      }
-      if (isCanceled) return
-
-      handler.upload(file, uploadOptions())
-        .then((fileDoc) => {
-          const src = fileDoc?.file_url || fileDoc?.message?.file_url
-          if (!src) throw new Error('No URL returned from upload')
-          try { URL.revokeObjectURL(localUrl) } catch {}
-          if (!store.shapeById?.(id)) {
-            const fileName = fileDoc?.name || fileDoc?.message?.name || fileDoc?.file_name || fileDoc?.message?.file_name
-            if (fileName) {
-              call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
-            }
-            return
-          }
-          store.updateShape(id, { src })
-          toast.success('Image uploaded successfully')
-        })
-        .catch((err) => {
-          try { URL.revokeObjectURL(localUrl) } catch {}
-          if (store.shapeById?.(id)) {
-            store.removeShapes([id])
-          }
-          report(uploadFailure(err, file))
-        })
-    }
-
-    onReady?.(image)
+    const src = fileDoc?.file_url || fileDoc?.message?.file_url
+    if (!src) return report(`Could not insert ${nameOf(file)} — the upload returned no file.`)
+    return boxFor(src, await naturalSize(src))
   }
 
   // Upload `file` and place it; `at` (canvas-unit point) centers it, else canvas center.
   // Used by drop and paste, which already know where the image goes.
   async function insert(file, at) {
-    const refusal = refusalFor(file)
-    if (refusal) return report(refusal)
-
-    let localUrl = ''
-    try {
-      localUrl = URL.createObjectURL(file)
-    } catch {
-      localUrl = 'blob:' + Math.random().toString(36).slice(2)
-    }
-    const size = await naturalSize(localUrl)
-    const image = boxFor(localUrl, size)
-
-    // Place the shape immediately with the local URL
+    const image = await upload(file)
+    if (!image) return null
     const id = store.insertImage(image, at)
-
-    // Start background upload
-    handler.upload(file, uploadOptions())
-      .then((fileDoc) => {
-        const src = fileDoc?.file_url || fileDoc?.message?.file_url
-        if (!src) throw new Error('No URL returned from upload')
-        try { URL.revokeObjectURL(localUrl) } catch {}
-        if (!store.shapeById?.(id)) {
-          const fileName = fileDoc?.name || fileDoc?.message?.name || fileDoc?.file_name || fileDoc?.message?.file_name
-          if (fileName) {
-            call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
-          }
-          return
-        }
-        store.updateShape(id, { src })
-        toast.success('Image uploaded successfully')
-      })
-      .catch((err) => {
-        try { URL.revokeObjectURL(localUrl) } catch {}
-        if (store.shapeById?.(id)) {
-          store.removeShapes([id])
-        }
-        report(uploadFailure(err, file))
-      })
-
+    toast.success('Image uploaded successfully')
     return id
   }
 
