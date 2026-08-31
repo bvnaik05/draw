@@ -60,13 +60,9 @@ export function useImageInsert(store, editorUi = null) {
     const size = await naturalSize(localUrl)
     const image = boxFor(localUrl, size)
 
-    let placedShapeId = null
-    let uploadResolved = false
-    let uploadedSrc = null
-    let uploadError = null
+    let stopWatchPending = null
     let isCanceled = false
 
-    let stopWatchPending = null
     function cleanupCanceled() {
       if (isCanceled) return
       isCanceled = true
@@ -81,61 +77,33 @@ export function useImageInsert(store, editorUi = null) {
       stopWatchPending = watch(
         () => editorUi.state.pendingStarter,
         (currentStarter) => {
-          if (placedShapeId === null && currentStarter?.image !== image) {
+          if (currentStarter?.image !== image) {
             cleanupCanceled()
           }
         }
       )
     }
 
-    // Start background upload
-    handler.upload(file, uploadOptions())
-      .then((fileDoc) => {
-        const src = fileDoc?.file_url || fileDoc?.message?.file_url
-        if (!src) throw new Error('No URL returned from upload')
-        uploadedSrc = src
-        uploadResolved = true
-        if (isCanceled) return
-        if (placedShapeId) {
-          store.updateShape(placedShapeId, { src })
-          try { URL.revokeObjectURL(localUrl) } catch {}
-          toast.success('Image uploaded successfully')
-        }
-      })
-      .catch((err) => {
-        uploadError = err
-        uploadResolved = true
-        if (isCanceled) return
-        if (placedShapeId) {
-          store.removeShapes([placedShapeId])
-          try { URL.revokeObjectURL(localUrl) } catch {}
-          report(uploadFailure(err, file))
-        } else {
-          if (editorUi && editorUi.state.pendingStarter?.image === image) {
-            editorUi.clearStarter()
-          }
-          cleanupCanceled()
-          report(uploadFailure(err, file))
-        }
-      })
-
     image.onPlaced = (id) => {
-      placedShapeId = id
       if (stopWatchPending) {
         stopWatchPending()
         stopWatchPending = null
       }
-      if (uploadResolved) {
-        if (uploadedSrc) {
-          store.updateShape(placedShapeId, { src: uploadedSrc })
+      if (isCanceled) return
+
+      handler.upload(file, uploadOptions())
+        .then((fileDoc) => {
+          const src = fileDoc?.file_url || fileDoc?.message?.file_url
+          if (!src) throw new Error('No URL returned from upload')
+          store.updateShape(id, { src })
           try { URL.revokeObjectURL(localUrl) } catch {}
           toast.success('Image uploaded successfully')
-        } else if (uploadError) {
-          store.removeShapes([placedShapeId])
+        })
+        .catch((err) => {
+          store.removeShapes([id])
           try { URL.revokeObjectURL(localUrl) } catch {}
-          report(uploadFailure(uploadError, file))
-        }
-      }
+          report(uploadFailure(err, file))
+        })
     }
 
     onReady?.(image)
