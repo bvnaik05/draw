@@ -31,6 +31,7 @@ const EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
 export function useImageInsert(store, editorUi) {
   const handler = new FileUploadHandler()
   let pendingFileDoc = null
+  let activePickId = 0
 
   if (editorUi) {
     watch(
@@ -39,13 +40,23 @@ export function useImageInsert(store, editorUi) {
         if (previous?.kind === 'image' && previous.image?.src !== current?.image?.src && pendingFileDoc) {
           const placed = store.state.shapes?.some((s) => s.type === 'image' && s.src === previous.image?.src)
           if (!placed) {
-            const fileName = pendingFileDoc?.name || pendingFileDoc?.message?.name
+            const fileName =
+              pendingFileDoc?.name ||
+              pendingFileDoc?.message?.name ||
+              pendingFileDoc?.file_name ||
+              pendingFileDoc?.message?.file_name
             if (fileName) {
               call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
             }
           }
           pendingFileDoc = null
         }
+      },
+    )
+    watch(
+      () => editorUi.state.tool,
+      () => {
+        activePickId++
       },
     )
   }
@@ -56,6 +67,7 @@ export function useImageInsert(store, editorUi) {
   // while the OS dialog was open needs no special handling any more, because the
   // click decides the position.
   function pick(onReady) {
+    const pickId = ++activePickId
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = ACCEPT
@@ -63,6 +75,17 @@ export function useImageInsert(store, editorUi) {
       const file = input.files && input.files[0]
       if (file) {
         upload(file).then(({ image, fileDoc }) => {
+          if (pickId !== activePickId) {
+            const fileName =
+              fileDoc?.name ||
+              fileDoc?.message?.name ||
+              fileDoc?.file_name ||
+              fileDoc?.message?.file_name
+            if (fileName) {
+              call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
+            }
+            return
+          }
           if (image) {
             pendingFileDoc = fileDoc
             toast.success('Image uploaded successfully')
