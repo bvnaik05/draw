@@ -17,6 +17,7 @@
 // only as an unhandled rejection in the console. From the canvas all of that looked
 // identical: nothing happened.
 
+import { watch } from 'vue'
 import { FileUploadHandler, toast } from 'frappe-ui'
 
 const ACCEPT = 'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/svg+xml'
@@ -27,7 +28,7 @@ const MAX_W = 420 // cap the placed width so a big photo doesn't fill the canvas
 const MAX_BYTES = 10 * 1024 * 1024
 const EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
 
-export function useImageInsert(store) {
+export function useImageInsert(store, editorUi = null) {
   const handler = new FileUploadHandler()
 
   // Open the OS file picker and hand the uploaded image to `onReady`, which arms it
@@ -63,6 +64,29 @@ export function useImageInsert(store) {
     let uploadResolved = false
     let uploadedSrc = null
     let uploadError = null
+    let isCanceled = false
+
+    let stopWatchPending = null
+    function cleanupCanceled() {
+      if (isCanceled) return
+      isCanceled = true
+      try { URL.revokeObjectURL(localUrl) } catch {}
+      if (stopWatchPending) {
+        stopWatchPending()
+        stopWatchPending = null
+      }
+    }
+
+    if (editorUi) {
+      stopWatchPending = watch(
+        () => editorUi.state.pendingStarter,
+        (currentStarter) => {
+          if (placedShapeId === null && currentStarter?.image !== image) {
+            cleanupCanceled()
+          }
+        }
+      )
+    }
 
     // Start background upload
     handler.upload(file, uploadOptions())
@@ -71,6 +95,7 @@ export function useImageInsert(store) {
         if (!src) throw new Error('No URL returned from upload')
         uploadedSrc = src
         uploadResolved = true
+        if (isCanceled) return
         if (placedShapeId) {
           store.updateShape(placedShapeId, { src })
           try { URL.revokeObjectURL(localUrl) } catch {}
@@ -80,15 +105,26 @@ export function useImageInsert(store) {
       .catch((err) => {
         uploadError = err
         uploadResolved = true
+        if (isCanceled) return
         if (placedShapeId) {
           store.removeShapes([placedShapeId])
           try { URL.revokeObjectURL(localUrl) } catch {}
+          report(uploadFailure(err, file))
+        } else {
+          if (editorUi && editorUi.state.pendingStarter?.image === image) {
+            editorUi.clearStarter()
+          }
+          cleanupCanceled()
           report(uploadFailure(err, file))
         }
       })
 
     image.onPlaced = (id) => {
       placedShapeId = id
+      if (stopWatchPending) {
+        stopWatchPending()
+        stopWatchPending = null
+      }
       if (uploadResolved) {
         if (uploadedSrc) {
           store.updateShape(placedShapeId, { src: uploadedSrc })

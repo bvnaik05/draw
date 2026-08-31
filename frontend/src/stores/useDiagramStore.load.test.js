@@ -35,6 +35,17 @@ describe('loadCount distinguishes a document load from an edit', () => {
     store.loadDocument(createDiagramDocument())
     expect(store.getDocument()).not.toHaveProperty('loadCount')
   })
+
+  it('scrubs blob: URLs from getDocument() to prevent them entering persisted data', () => {
+    const store = createDiagramStore()
+    store.state.shapes = [
+      { id: 's1', type: 'image', src: 'blob:local-url', x: 0, y: 0, w: 100, h: 100 },
+      { id: 's2', type: 'image', src: 'https://server.com/image.png', x: 100, y: 0, w: 100, h: 100 }
+    ]
+    const doc = store.getDocument()
+    expect(doc.shapes[0].src).toBe('')
+    expect(doc.shapes[1].src).toBe('https://server.com/image.png')
+  })
 })
 
 describe('undo restores the canvas without looking like a resize', () => {

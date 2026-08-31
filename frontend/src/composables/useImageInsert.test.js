@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { reactive } from 'vue'
 import { useViewport } from './useViewport.js'
 
 // Capture the options passed to FileUploadHandler.upload so we can assert the
@@ -15,6 +16,7 @@ vi.mock('frappe-ui', () => ({
     }
   },
   toast,
+  createResource: () => ({}),
 }))
 
 // naturalSize() builds `new Image()` and waits for onload; stub it so the promise
@@ -53,6 +55,14 @@ function fakeStore(name) {
   }
   return store
 }
+
+function fakePicker(file) {
+  const input = { type: '', accept: '', files: file ? [file] : [], click: vi.fn(), listeners: {} }
+  input.addEventListener = (name, fn) => (input.listeners[name] = fn)
+  vi.stubGlobal('document', { createElement: () => input })
+  return input
+}
+
 const pngFile = { type: 'image/png', name: 'photo.png' }
 
 describe('useImageInsert', () => {
@@ -150,15 +160,6 @@ describe('useImageInsert', () => {
   // #503: the picker hands the uploaded image to its caller to ARM, instead of
   // dropping it at the viewport centre. A rejected file arms nothing.
   describe('pick hands an uploaded image to its caller (#503)', () => {
-    // vitest runs this file in the node environment, so there is no document to spy
-    // on — the whole thing is stubbed, which is enough for an <input type="file">.
-    function fakePicker(file) {
-      const input = { type: '', accept: '', files: file ? [file] : [], click: vi.fn(), listeners: {} }
-      input.addEventListener = (name, fn) => (input.listeners[name] = fn)
-      vi.stubGlobal('document', { createElement: () => input })
-      return input
-    }
-
     it('passes the uploaded image, measured and capped, to onReady', async () => {
       const store = fakeStore('my-diagram')
       const input = fakePicker(pngFile)
@@ -219,5 +220,40 @@ describe('useImageInsert', () => {
     expect(viewport.state.panX).toBe(before.panX)
     expect(viewport.state.panY).toBe(before.panY)
     expect(viewport.state.zoom).toBe(before.zoom)
+  })
+
+  describe('optimistic upload cleanup and serialization safety', () => {
+    it('cleans up resources and revokes object URL if the placement is canceled', async () => {
+      const store = fakeStore('my-diagram')
+      const input = fakePicker(pngFile)
+      const onReady = vi.fn()
+
+      const editorUi = reactive({
+        state: {
+          pendingStarter: { kind: 'image', image: null }
+        },
+        clearStarter: vi.fn()
+      })
+
+      useImageInsert(store, editorUi).pick((image) => {
+        editorUi.state.pendingStarter.image = image
+        onReady(image)
+      })
+
+      // Simulate picker selection
+      await input.listeners.change()
+      await vi.waitFor(() => expect(onReady).toHaveBeenCalled())
+
+      const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
+
+      // Disarm starter (simulate escape/cancellation)
+      editorUi.state.pendingStarter = null
+
+      // Wait for background upload completion and URL revocation
+      await vi.waitFor(() => {
+        expect(revokeSpy).toHaveBeenCalled()
+      })
+      revokeSpy.mockRestore()
+    })
   })
 })
