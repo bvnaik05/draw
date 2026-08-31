@@ -8,7 +8,7 @@
 
 import { reactive, ref, readonly, shallowRef } from 'vue'
 import { DEFAULT_INK, PEN_WIDTHS, HIGHLIGHTER_WIDTHS, STICKY_COLORS, PEN_OPACITY, HIGHLIGHTER_OPACITY } from '@/diagram/whiteboardColors.js'
-import { pruneTrail } from '@/diagram/laser.js'
+import { pruneTrail, smoothLaserPoint } from '@/diagram/laser.js'
 import { ERASER_SIZES } from '@/diagram/eraser.js'
 
 let singleton = null
@@ -184,7 +184,8 @@ function attachLaser(api, laserTrail, laserClock) {
     // Accumulate: the pointer leaves a short trail of timestamped points behind
     // it, each fading out on its own. Old points are dropped here as well as in
     // the loop so a fast drag can never grow the trail past the fade window.
-    laserTrail.value = [...pruneTrail(laserTrail.value, at), { x: point.x, y: point.y, at }]
+    const trail = pruneTrail(laserTrail.value, at)
+    laserTrail.value = [...trail, smoothLaserPoint(trail.at(-1), { x: point.x, y: point.y, at })]
     laserClock.value = at
     schedulePrune()
   }
