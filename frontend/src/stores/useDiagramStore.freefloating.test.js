@@ -404,6 +404,25 @@ describe('deleting a mind-map node settles the tree (#513)', () => {
     expect(distanceFromRoot(store, rootId, ids[2])).toBeLessThan(before)
   })
 
+  it('cascade deletes the subtree of a mind-map node on plain shape delete', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
+    store.addChildNode(ids[0])
+    const grandchildId = store.state.shapes.find((s) => s.mindmap?.parentId === ids[0])?.id
+    expect(grandchildId).toBeTruthy()
+
+    store.removeShapes([ids[0]])
+    expect(store.shapeById(ids[0])).toBeFalsy()
+    expect(store.shapeById(grandchildId)).toBeFalsy()
+  })
+
+  it('deletes both mind-map subtrees and standalone connectors in deleteMindmapSubtrees', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
+    const connId = store.addConnector({ id: 'c-standalone', from: { x: 0, y: 0 }, to: { x: 10, y: 10 } })
+    store.deleteMindmapSubtrees([ids[0], connId])
+    expect(store.shapeById(ids[0])).toBeFalsy()
+    expect(store.connectorById(connId)).toBeFalsy()
+  })
+
   it('is one undo step covering the delete and the settle', () => {
     const { store, ids } = migratedMindmapStoreWith(['right', 'right', 'right'])
     const survivor = store.shapeById(ids[2])
