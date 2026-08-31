@@ -689,6 +689,44 @@ describe('documentToSvg — inserted images (#518)', () => {
       else expect(svg, `${type} fell through to a bare rectangle`).not.toMatch(/<rect[^>]*#EFF6FF/)
     }
   })
+
+  it('handles rotated shapes, and structured connector endpoints/types (#572)', () => {
+    const doc = {
+      schemaVersion: 2,
+      diagramType: 'block',
+      themePreset: 'ocean',
+      canvas: { width: 1280, height: 720, background: 'none' },
+      sections: [],
+      shapes: [
+        {
+          id: 's1', type: 'rectangle', x: 100, y: 100, w: 100, h: 50,
+          rotation: 45, flipX: true, flipY: false, opacity: 1, zIndex: 1,
+          fill: '#EFF6FF', border: { color: '#4F94FF', width: 2 }, text: { content: 'Rotated Rect', style: {} }
+        },
+        {
+          id: 's2', type: 'ellipse', x: 300, y: 100, w: 100, h: 50,
+          rotation: 0, flipX: false, flipY: false, opacity: 1, zIndex: 2,
+          fill: '#EFF6FF', border: { color: '#4F94FF', width: 2 }, text: { content: 'Ellipse', style: {} }
+        }
+      ],
+      connectors: [
+        {
+          id: 'c1', type: 'elbow', from: { shapeId: 's1', anchor: 'right' }, to: { shapeId: 's2', anchor: 'left' },
+          style: { color: '#FF0000', width: 3, dash: 'dashed', corner: 'sharp' }, arrowheads: { start: true, end: true }
+        }
+      ],
+      mindmap: null, flowchart: null, whiteboard: null
+    }
+
+    const svg = documentToSvg(doc)
+    expect(svg).toContain('transform="rotate(45 150 125) translate(150 125) scale(-1 1) translate(-150 -125)"')
+    expect(svg).toContain('marker id="mk-start-c1"')
+    expect(svg).toContain('marker id="mk-end-c1"')
+    expect(svg).toContain('marker-start="url(#mk-start-c1)"')
+    expect(svg).toContain('marker-end="url(#mk-end-c1)"')
+    expect(svg).toContain('stroke="#FF0000"')
+    expect(svg).toContain('stroke-dasharray="9 6"')
+  })
 })
 
 // The other half of #518: a file_url is right on screen and wrong in a file. A
