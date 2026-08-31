@@ -95,13 +95,16 @@ export function useImageInsert(store, editorUi = null) {
         .then((fileDoc) => {
           const src = fileDoc?.file_url || fileDoc?.message?.file_url
           if (!src) throw new Error('No URL returned from upload')
-          store.updateShape(id, { src })
           try { URL.revokeObjectURL(localUrl) } catch {}
+          if (!store.shapeById?.(id)) return
+          store.updateShape(id, { src })
           toast.success('Image uploaded successfully')
         })
         .catch((err) => {
-          store.removeShapes([id])
           try { URL.revokeObjectURL(localUrl) } catch {}
+          if (store.shapeById?.(id)) {
+            store.removeShapes([id])
+          }
           report(uploadFailure(err, file))
         })
     }
@@ -132,13 +135,16 @@ export function useImageInsert(store, editorUi = null) {
       .then((fileDoc) => {
         const src = fileDoc?.file_url || fileDoc?.message?.file_url
         if (!src) throw new Error('No URL returned from upload')
-        store.updateShape(id, { src })
         try { URL.revokeObjectURL(localUrl) } catch {}
+        if (!store.shapeById?.(id)) return
+        store.updateShape(id, { src })
         toast.success('Image uploaded successfully')
       })
       .catch((err) => {
-        store.removeShapes([id])
         try { URL.revokeObjectURL(localUrl) } catch {}
+        if (store.shapeById?.(id)) {
+          store.removeShapes([id])
+        }
         report(uploadFailure(err, file))
       })
 

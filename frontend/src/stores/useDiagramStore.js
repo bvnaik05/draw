@@ -1385,12 +1385,7 @@ function attachDocumentIo(store, state, history) {
     schemaVersion: SCHEMA_VERSION,
     diagramType: state.diagramType,
     canvas: clone(state.canvas),
-    shapes: clone(state.shapes).map((shape) => {
-      if (shape.type === 'image' && shape.src?.startsWith('blob:')) {
-        return { ...shape, src: '' }
-      }
-      return shape
-    }),
+    shapes: clone(state.shapes),
     connectors: clone(state.connectors),
     sections: clone(state.sections || []),
     mindmap: state.mindmap ? clone(state.mindmap) : null,

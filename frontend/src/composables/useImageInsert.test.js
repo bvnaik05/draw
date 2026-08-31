@@ -38,6 +38,7 @@ function fakeStore(name) {
     select: vi.fn(),
     updateShape: vi.fn(),
     removeShapes: vi.fn(),
+    shapeById: vi.fn((id) => ({ id, type: 'image' })),
   }
   store.insertImage = (image, at) => {
     const cx = at?.x ?? store.state.canvas.width / 2
@@ -254,6 +255,23 @@ describe('useImageInsert', () => {
         expect(revokeSpy).toHaveBeenCalled()
       })
       revokeSpy.mockRestore()
+    })
+
+    it('does not update shape or toast success if shape was deleted before upload completes', async () => {
+      const store = fakeStore('my-diagram')
+      store.shapeById = vi.fn().mockReturnValue(null) // Shape was deleted/undone!
+      const input = fakePicker(pngFile)
+      const onReady = vi.fn()
+
+      useImageInsert(store).pick(onReady)
+      await input.listeners.change()
+      await vi.waitFor(() => expect(onReady).toHaveBeenCalled())
+      const image = onReady.mock.calls[0][0]
+
+      image.onPlaced('shape-1')
+      await vi.waitFor(() => expect(captured.options).toBeTruthy())
+      expect(store.updateShape).not.toHaveBeenCalled()
+      expect(toast.success).not.toHaveBeenCalled()
     })
   })
 })
