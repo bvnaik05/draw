@@ -182,18 +182,21 @@ function markerMarkup(id, type, color, orient) {
 }
 
 function elbowPath(a, b, midX, corner) {
-  const sharp = `M ${a.x} ${a.y} L ${midX} ${a.y} L ${midX} ${b.y} L ${b.x} ${b.y}`
+  const ax = num(a.x), ay = num(a.y)
+  const bx = num(b.x), by = num(b.y)
+  const mx = num(midX)
+  const sharp = `M ${ax} ${ay} L ${mx} ${ay} L ${mx} ${by} L ${bx} ${by}`
   if (corner === 'sharp') return sharp
-  const r = Math.min(14, Math.abs(midX - a.x) / 2, Math.abs(b.y - a.y) / 2, Math.abs(b.x - midX) / 2)
+  const r = Math.min(14, Math.abs(mx - ax) / 2, Math.abs(by - ay) / 2, Math.abs(bx - mx) / 2)
   if (!(r > 0.5)) return sharp
-  const sx1 = Math.sign(midX - a.x)
-  const sy = Math.sign(b.y - a.y)
-  const sx2 = Math.sign(b.x - midX)
+  const sx1 = Math.sign(mx - ax)
+  const sy = Math.sign(by - ay)
+  const sx2 = Math.sign(bx - mx)
   return (
-    `M ${a.x} ${a.y} L ${midX - sx1 * r} ${a.y} ` +
-    `Q ${midX} ${a.y} ${midX} ${a.y + sy * r} ` +
-    `L ${midX} ${b.y - sy * r} ` +
-    `Q ${midX} ${b.y} ${midX + sx2 * r} ${b.y} L ${b.x} ${b.y}`
+    `M ${ax} ${ay} L ${mx - sx1 * r} ${ay} ` +
+    `Q ${mx} ${ay} ${mx} ${ay + sy * r} ` +
+    `L ${mx} ${by - sy * r} ` +
+    `Q ${mx} ${by} ${mx + sx2 * r} ${by} L ${bx} ${by}`
   )
 }
 
@@ -320,7 +323,8 @@ function endpointPoint(endpoint, shapes) {
   if (endpoint?.shapeId) {
     const shape = shapes.find((s) => s.id === endpoint.shapeId)
     if (shape) {
-      return anchorPoint(shape, endpoint.anchor || 'right')
+      const pt = anchorPoint(shape, endpoint.anchor || 'right')
+      return { x: num(pt.x), y: num(pt.y) }
     }
   }
   return { x: num(endpoint?.x), y: num(endpoint?.y) }
