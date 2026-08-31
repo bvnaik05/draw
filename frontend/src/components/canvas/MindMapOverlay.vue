@@ -53,7 +53,7 @@ function confirmDeleteNodes() {
     selectNode(store, null)
   } else if (pending.freeFloating) {
     if (pending.items?.length && store.state.whiteboard) {
-      store.removeWhiteboardSelection(pending.items, pending.ids)
+      store.removeWhiteboardSelection(pending.items, pending.ids, true)
     } else {
       store.deleteMindmapSubtrees(pending.ids)
     }

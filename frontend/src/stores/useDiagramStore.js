@@ -881,11 +881,11 @@ function attachWhiteboard(store, state, history) {
   // Delete whiteboard objects AND block shapes/connectors (e.g. images) as ONE
   // undoable unit — Select All on a whiteboard can select both, so a single
   // Delete should undo in one step (not two).
-  store.removeWhiteboardSelection = (items, ids = []) => {
+  store.removeWhiteboardSelection = (items, ids = [], force = false) => {
     if (!state.whiteboard) return
     const shapeIds = ids.filter((id) => store.shapeById(id))
     const connectorIds = ids.filter((id) => store.connectorById(id))
-    if (shouldConfirmMindmapDelete(state.shapes, shapeIds)) {
+    if (!force && shouldConfirmMindmapDelete(state.shapes, shapeIds)) {
       const label = ids.length > 1
         ? `Delete ${ids.length} selected items and their sub-branches?`
         : `Delete "${state.shapes.find((s) => s.id === shapeIds[0])?.text || 'this node'}" and its sub-branches?`
@@ -1146,9 +1146,9 @@ function attachShapeMutations(store, state, history) {
     history.commit('Delete shapes', () => store.removeShapesAndSettle(ids))
   store.removeConnectors = (ids) =>
     history.commit('Delete connectors', () => removeConnectorsInternal(state, ids))
-  store.removeSelectionOrIds = (ids) => {
+  store.removeSelectionOrIds = (ids, force = false) => {
     const targetIds = ids || state.selection || []
-    if (shouldConfirmMindmapDelete(state.shapes, targetIds)) {
+    if (!force && shouldConfirmMindmapDelete(state.shapes, targetIds)) {
       const mindmapShapes = targetIds.filter((id) => {
         const s = store.shapeById(id)
         return s && s.role === ROLE.mindmapNode
