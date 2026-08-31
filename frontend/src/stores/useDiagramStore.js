@@ -7,6 +7,7 @@ import { reactive, computed, provide, inject } from 'vue'
 import { createShape, createConnector, nextId } from '@/diagram/factories.js'
 import { createHistory } from '@/stores/history.js'
 import { clone } from '@/utils/clone.js'
+import { mindmapUi } from '@/stores/mindmapUi.js'
 import { DEFAULT_THEME_PRESET } from '@/diagram/theme.js'
 import { createDiagramDocument, SCHEMA_VERSION, DEFAULT_DIAGRAM_TYPE } from '@/diagram/schema.js'
 import { addChild, addSibling, addRootNode, createMindMap, subtreeIds } from '@/diagram/mindmapModel.js'
@@ -1137,7 +1138,29 @@ function attachShapeMutations(store, state, history) {
     history.commit('Delete shapes', () => store.removeShapesAndSettle(ids))
   store.removeConnectors = (ids) =>
     history.commit('Delete connectors', () => removeConnectorsInternal(state, ids))
-  store.removeSelectionOrIds = (ids) => removeMixed(store, state, history, ids || state.selection)
+  store.removeSelectionOrIds = (ids) => {
+    const targetIds = ids || state.selection || []
+    const shapeIds = targetIds.filter((id) => store.shapeById(id))
+    const mindmapShapes = shapeIds.filter((id) => {
+      const s = store.shapeById(id)
+      return s && s.role === ROLE.mindmapNode
+    })
+    if (mindmapShapes.length) {
+      const hasSubBranches = mindmapShapes.some((nid) =>
+        state.shapes.some(
+          (other) => other.role === ROLE.mindmapNode && other.mindmap?.parentId === nid,
+        ),
+      )
+      if (hasSubBranches) {
+        const label = targetIds.length > 1
+          ? `Delete ${targetIds.length} selected items and their sub-branches?`
+          : `Delete "${state.shapes.find((s) => s.id === mindmapShapes[0])?.text || 'this node'}" and its sub-branches?`
+        mindmapUi.confirmDelete = { ids: [...targetIds], label, freeFloating: true }
+        return
+      }
+    }
+    removeMixed(store, state, history, targetIds)
+  }
   store.duplicate = (ids) => duplicateInternal(store, state, history, ids)
 }
 

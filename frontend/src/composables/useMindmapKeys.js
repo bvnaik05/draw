@@ -149,6 +149,18 @@ function freeFloatingMindmapKey(event, store, editorUi, ids) {
   if (event.key === 'Enter' && id) return name(store.addSiblingNode(id))
   if (event.key === 'Delete' || event.key === 'Backspace') {
     const allSelected = store.state.selection?.length ? [...store.state.selection] : [...ids]
+    const hasSubBranches = allSelected.some((nid) =>
+      store.state.shapes?.some(
+        (other) => other.role === 'mindmap-node' && other.mindmap?.parentId === nid,
+      ),
+    )
+    if (hasSubBranches) {
+      const label = allSelected.length > 1
+        ? `Delete ${allSelected.length} selected items and their sub-branches?`
+        : `Delete "${store.state.shapes?.find((s) => s.id === ids[0])?.text || 'this node'}" and its sub-branches?`
+      mindmapUi.confirmDelete = { ids: allSelected, label, freeFloating: true }
+      return true
+    }
     store.deleteMindmapSubtrees(allSelected)
     selectNode(store, null)
     return true
