@@ -4,6 +4,7 @@ import { createDiagramDocument } from '@/diagram/schema.js'
 import { flattenSubmodels, ROLE } from '@/diagram/freeFloating.js'
 import { createFlowchart, addFlowchartNode } from '@/diagram/flowchartModel.js'
 import { createMindMap, addChild } from '@/diagram/mindmapModel.js'
+import { mindmapUi } from '@/stores/mindmapUi.js'
 import { useAppSettings, resetSettings } from '@/composables/useAppSettings.js'
 
 // A store whose flowchart has been flattened to free-floating tagged shapes (the
@@ -421,6 +422,25 @@ describe('deleting a mind-map node settles the tree (#513)', () => {
     store.deleteMindmapSubtrees([ids[0], connId])
     expect(store.shapeById(ids[0])).toBeFalsy()
     expect(store.connectorById(connId)).toBeFalsy()
+  })
+
+  it('prompts confirmation when removing a mind-map node with unselected children', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
+    store.addChildNode(ids[0])
+    mindmapUi.confirmDelete = null
+    store.removeSelectionOrIds([ids[0]])
+    expect(mindmapUi.confirmDelete).toBeTruthy()
+    expect(mindmapUi.confirmDelete.ids).toEqual([ids[0]])
+  })
+
+  it('includes whiteboard items in confirmation payload on removeWhiteboardSelection', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
+    store.addChildNode(ids[0])
+    mindmapUi.confirmDelete = null
+    store.removeWhiteboardSelection([{ type: 'sticky', id: 's1' }], [ids[0]])
+    expect(mindmapUi.confirmDelete).toBeTruthy()
+    expect(mindmapUi.confirmDelete.items).toEqual([{ type: 'sticky', id: 's1' }])
+    expect(mindmapUi.confirmDelete.ids).toEqual([ids[0]])
   })
 
   it('is one undo step covering the delete and the settle', () => {

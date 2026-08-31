@@ -52,7 +52,11 @@ function confirmDeleteNodes() {
     deleteTrees(store, pending.trees)
     selectNode(store, null)
   } else if (pending.freeFloating) {
-    store.deleteMindmapSubtrees(pending.ids)
+    if (pending.items?.length && store.state.whiteboard) {
+      store.removeWhiteboardSelection(pending.items, pending.ids)
+    } else {
+      store.deleteMindmapSubtrees(pending.ids)
+    }
     selectNode(store, null)
   } else {
     const first = model.value?.nodes.find((node) => node.id === pending.ids[0])

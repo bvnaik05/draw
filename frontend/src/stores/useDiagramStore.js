@@ -889,7 +889,7 @@ function attachWhiteboard(store, state, history) {
       const label = ids.length > 1
         ? `Delete ${ids.length} selected items and their sub-branches?`
         : `Delete "${state.shapes.find((s) => s.id === shapeIds[0])?.text || 'this node'}" and its sub-branches?`
-      mindmapUi.confirmDelete = { ids: [...ids], label, freeFloating: true }
+      mindmapUi.confirmDelete = { ids: [...ids], items: [...items], label, freeFloating: true }
       return
     }
     history.commit('Delete', () => {
