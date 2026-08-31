@@ -311,7 +311,7 @@ function connectorBody(c, shapes, flowchartRoutes = null) {
     labelPillAndText = pill + textStr
   }
 
-  return `<g data-connector-id="${escapeText(c.id)}">${defs}${mainPath}${labelPillAndText}</g>`
+  return `<g data-connector-id="${escapeAttr(c.id)}">${defs}${mainPath}${labelPillAndText}</g>`
 }
 
 function endpointPoint(endpoint, shapes) {
