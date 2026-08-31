@@ -69,4 +69,9 @@ describe('the text colour picker (#581)', () => {
     expect(source).toContain('class="w-[176px] p-3"')
     expect(source).toContain('<ColorPickerBody :show-quick-colors="false"')
   })
+
+  it('initializes from the active range color when editing', () => {
+    expect(source).toContain('import { richCommands, isMarkActive, activeTextColor }')
+    expect(source).toContain('if (editing.value && activeTextColor.value)')
+  })
 })

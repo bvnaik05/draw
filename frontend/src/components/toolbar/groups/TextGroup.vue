@@ -10,7 +10,7 @@
 import { computed, ref, watch } from 'vue'
 import { Popover, Select, TextInput } from 'frappe-ui'
 import { useBlockSelection } from '@/composables/useBlockSelection.js'
-import { richCommands, isMarkActive } from '@/composables/useRichText.js'
+import { richCommands, isMarkActive, activeTextColor } from '@/composables/useRichText.js'
 import ColorPickerBody from '@/components/palette-right/ColorPickerBody.vue'
 import ToolbarButton from '../ToolbarButton.vue'
 
@@ -68,7 +68,12 @@ const textAlign = computed(() => textRef.value?.text?.align || 'center')
 // on every shape that has never had a font chosen — which is most of them.
 const font = computed(() => textStyle.value.font || ESPRESSO_SANS)
 const fontSize = computed(() => textStyle.value.size ?? 16)
-const currentTextColor = computed(() => textStyle.value.color || '#171717')
+const currentTextColor = computed(() => {
+  if (editing.value && activeTextColor.value) {
+    return activeTextColor.value
+  }
+  return textStyle.value.color || '#171717'
+})
 
 // The typed draft, kept separate from `fontSize` so a half-typed value (the "3"
 // on its way to "32") never round-trips through the store. Re-synced whenever
