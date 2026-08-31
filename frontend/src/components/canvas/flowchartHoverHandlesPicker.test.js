@@ -137,4 +137,9 @@ describe('the "+" survives the trip from the node to the handle (#441 round 2)',
   it('unmounting clears a pending leave timer instead of leaking it', () => {
     expect(src).toMatch(/onBeforeUnmount\(\(\) => \{\s*\n\s*clearPendingLeave\(\)/)
   })
+
+  it('stops pointerdown and mousedown so clicking unselected node handle fires on first click (#576)', () => {
+    expect(src).toContain('@pointerdown.stop')
+    expect(src).toContain('@mousedown.stop')
+  })
 })
