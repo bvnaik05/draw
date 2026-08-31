@@ -132,9 +132,9 @@ function placeTable(context, store, editorUi, ui) {
 // really travelled still fires moves — hand tremor, a high-rate mouse, a stylus
 // resting — and each one used to become a point. Those samples carry no shape,
 // only weight in the saved document, and clustering them is what made a slow line
-// wobble. Small enough that nothing a hand can draw is lost: at 1 unit a deliberate
-// curve still records a point every screen pixel at 100% zoom.
-const MIN_POINT_DISTANCE = 1
+// wobble. The baseline is deliberately coarser than raw pointer samples; wide ink
+// needs proportionally fewer anchors, because sub-width movement is only tremor.
+const MIN_POINT_DISTANCE = 2
 
 // Add `point` to the stroke unless it is closer than MIN_POINT_DISTANCE to the last
 // one kept. Returns whether the stroke actually grew, so the caller can skip the
@@ -145,7 +145,8 @@ const MIN_POINT_DISTANCE = 1
 // what keeps the document compact now, so it is worth pinning on its own.
 export function extendStroke(drawing, point) {
   const last = drawing.points[drawing.points.length - 1]
-  if (last && Math.hypot(point.x - last.x, point.y - last.y) < MIN_POINT_DISTANCE) return false
+  const minDistance = drawing.minPointDistance || MIN_POINT_DISTANCE
+  if (last && Math.hypot(point.x - last.x, point.y - last.y) < minDistance) return false
   drawing.points.push(point)
   return true
 }
@@ -159,6 +160,9 @@ function beginStroke(context, ui, drawing, tool) {
   const highlighter = tool === 'highlighter'
   const width = highlighter ? ui.state.highlighterWidth : ui.state.penWidth
   const opacity = highlighter ? ui.state.highlighterOpacity : ui.state.penOpacity
+  // Keep the stroke's input density in step with its visual footprint. A wider
+  // line does not need one noisy anchor per canvas unit to retain its shape.
+  drawing.minPointDistance = Math.max(MIN_POINT_DISTANCE, width * 0.75)
   ui.liveStroke.value = { points: drawing.points, color: ui.state.penColor, width, opacity, kind: tool }
 }
 

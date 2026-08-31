@@ -163,6 +163,15 @@ describe('thinning a stroke while it is drawn', () => {
     ])
   })
 
+  it('uses a coarser threshold for wider ink, where small movements are tremor', () => {
+    const drawing = { points: [], minPointDistance: 4 }
+
+    expect(extendStroke(drawing, { x: 0, y: 0 })).toBe(true)
+    expect(extendStroke(drawing, { x: 3, y: 0 })).toBe(false)
+    expect(extendStroke(drawing, { x: 4, y: 0 })).toBe(true)
+    expect(drawing.points).toEqual([{ x: 0, y: 0 }, { x: 4, y: 0 }])
+  })
+
   it('keeps every sample a hand actually moves between', () => {
     const drawn = [
       { x: 0, y: 0 },
