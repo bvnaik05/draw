@@ -18,7 +18,7 @@
 // identical: nothing happened.
 
 import { watch } from 'vue'
-import { FileUploadHandler, toast } from 'frappe-ui'
+import { FileUploadHandler, toast, call } from 'frappe-ui'
 
 const ACCEPT = 'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/svg+xml'
 const MAX_W = 420 // cap the placed width so a big photo doesn't fill the canvas
@@ -96,7 +96,13 @@ export function useImageInsert(store, editorUi = null) {
           const src = fileDoc?.file_url || fileDoc?.message?.file_url
           if (!src) throw new Error('No URL returned from upload')
           try { URL.revokeObjectURL(localUrl) } catch {}
-          if (!store.shapeById?.(id)) return
+          if (!store.shapeById?.(id)) {
+            const fileName = fileDoc?.name || fileDoc?.message?.name
+            if (fileName) {
+              call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
+            }
+            return
+          }
           store.updateShape(id, { src })
           toast.success('Image uploaded successfully')
         })
@@ -136,7 +142,13 @@ export function useImageInsert(store, editorUi = null) {
         const src = fileDoc?.file_url || fileDoc?.message?.file_url
         if (!src) throw new Error('No URL returned from upload')
         try { URL.revokeObjectURL(localUrl) } catch {}
-        if (!store.shapeById?.(id)) return
+        if (!store.shapeById?.(id)) {
+          const fileName = fileDoc?.name || fileDoc?.message?.name
+          if (fileName) {
+            call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
+          }
+          return
+        }
         store.updateShape(id, { src })
         toast.success('Image uploaded successfully')
       })
