@@ -36,7 +36,7 @@ export function useImageInsert(store, editorUi) {
     watch(
       () => editorUi.state.pendingStarter,
       (current, previous) => {
-        if (previous?.kind === 'image' && !current && pendingFileDoc) {
+        if (previous?.kind === 'image' && previous.image?.src !== current?.image?.src && pendingFileDoc) {
           const placed = store.state.shapes?.some((s) => s.type === 'image' && s.src === previous.image?.src)
           if (!placed) {
             const fileName = pendingFileDoc?.name || pendingFileDoc?.message?.name
