@@ -60,6 +60,14 @@ describe('the Fill button swatch', () => {
   })
 })
 
+describe('Fill and Border popovers (#580)', () => {
+  it('uses a compact picker in a narrower toolbar popover', () => {
+    expect(source).toContain("const panel = 'max-h-[70vh] w-[240px] overflow-y-auto'")
+    expect(template).toContain('<FillBorderSection compact mode="fill" />')
+    expect(template).toContain('<FillBorderSection v-else compact mode="border" />')
+  })
+})
+
 // supportsCornerRounding still gates the DRAG HANDLE in SelectionLayer, which is now
 // the only way to round a box shape.
 describe('which shapes take the corner-rounding handle', () => {
