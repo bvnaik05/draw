@@ -151,6 +151,14 @@ export function extendStroke(drawing, point) {
   return true
 }
 
+// Pointerup can arrive without a final pointermove. Always retain that endpoint
+// when it differs from the last anchor: a short, wide stroke must not disappear
+// solely because its movement fell below the capture-thinning threshold.
+export function appendStrokeEndpoint(drawing, point) {
+  const last = drawing.points[drawing.points.length - 1]
+  if (!last || last.x !== point.x || last.y !== point.y) drawing.points.push(point)
+}
+
 // Start capturing a freehand stroke; the live preview renders from ui.liveStroke.
 // Width and opacity are read once, here — the stroke keeps whatever the tool was
 // set to when it was drawn, however the sliders move afterwards.
@@ -227,7 +235,7 @@ function onPointerMove(event, context, ui, drawing, erasing, store, lining, lase
 }
 
 function onPointerUp(event, context, store, ui, drawing, erasing, lining, lasering) {
-  if (drawing.active) return finishStroke(ui, drawing, store)
+  if (drawing.active) return finishStroke(ui, drawing, store, context.point)
   if (lining.active) return finishLine(ui, lining, store)
   if (erasing.active) return finishErase(store, erasing)
   if (lasering.active) lasering.active = false
@@ -294,10 +302,11 @@ function finishLine(ui, lining, store) {
 // was handed another. The thinning that keeps the document compact now happens
 // during capture instead, so the committed path IS the previewed path.
 // Discard a degenerate (single-point) stroke.
-function finishStroke(ui, drawing, store) {
+function finishStroke(ui, drawing, store, endpoint) {
   drawing.active = false
   const live = ui.liveStroke.value
   ui.liveStroke.value = null
+  appendStrokeEndpoint(drawing, endpoint)
   const points = drawing.points
   drawing.points = []
   if (!live || points.length < 2) return
