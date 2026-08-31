@@ -179,13 +179,14 @@ function attachSelection(api, state) {
 // trail keeps fading after the pointer stops (spec C5 self-fading trail, #41).
 function attachLaser(api, laserTrail, laserClock) {
   let raf = null
-  api.pushLaserPoint = (point) => {
+  api.pushLaserPoint = (point, { snap = false } = {}) => {
     const at = performance.now()
     // Accumulate: the pointer leaves a short trail of timestamped points behind
     // it, each fading out on its own. Old points are dropped here as well as in
     // the loop so a fast drag can never grow the trail past the fade window.
     const trail = pruneTrail(laserTrail.value, at)
-    laserTrail.value = [...trail, smoothLaserPoint(trail.at(-1), { x: point.x, y: point.y, at })]
+    const sample = { x: point.x, y: point.y, at }
+    laserTrail.value = [...trail, snap ? sample : smoothLaserPoint(trail.at(-1), sample)]
     laserClock.value = at
     schedulePrune()
   }
