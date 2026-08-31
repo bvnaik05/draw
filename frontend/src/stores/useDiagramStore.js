@@ -18,6 +18,7 @@ import {
   isAuthoredConnector,
   flattenSubmodels,
   FLOWCHART_FALLBACK_TYPE,
+  shouldConfirmMindmapDelete,
 } from '@/diagram/freeFloating.js'
 import { createWhiteboard } from '@/diagram/whiteboardModel.js'
 import {
@@ -884,6 +885,13 @@ function attachWhiteboard(store, state, history) {
     if (!state.whiteboard) return
     const shapeIds = ids.filter((id) => store.shapeById(id))
     const connectorIds = ids.filter((id) => store.connectorById(id))
+    if (shouldConfirmMindmapDelete(state.shapes, shapeIds)) {
+      const label = ids.length > 1
+        ? `Delete ${ids.length} selected items and their sub-branches?`
+        : `Delete "${state.shapes.find((s) => s.id === shapeIds[0])?.text || 'this node'}" and its sub-branches?`
+      mindmapUi.confirmDelete = { ids: [...ids], label, freeFloating: true }
+      return
+    }
     history.commit('Delete', () => {
       removeWhiteboardObjectsInto(items)
       if (shapeIds.length) store.removeShapesAndSettle(shapeIds)
@@ -1140,24 +1148,16 @@ function attachShapeMutations(store, state, history) {
     history.commit('Delete connectors', () => removeConnectorsInternal(state, ids))
   store.removeSelectionOrIds = (ids) => {
     const targetIds = ids || state.selection || []
-    const shapeIds = targetIds.filter((id) => store.shapeById(id))
-    const mindmapShapes = shapeIds.filter((id) => {
-      const s = store.shapeById(id)
-      return s && s.role === ROLE.mindmapNode
-    })
-    if (mindmapShapes.length) {
-      const hasSubBranches = mindmapShapes.some((nid) =>
-        state.shapes.some(
-          (other) => other.role === ROLE.mindmapNode && other.mindmap?.parentId === nid,
-        ),
-      )
-      if (hasSubBranches) {
-        const label = targetIds.length > 1
-          ? `Delete ${targetIds.length} selected items and their sub-branches?`
-          : `Delete "${state.shapes.find((s) => s.id === mindmapShapes[0])?.text || 'this node'}" and its sub-branches?`
-        mindmapUi.confirmDelete = { ids: [...targetIds], label, freeFloating: true }
-        return
-      }
+    if (shouldConfirmMindmapDelete(state.shapes, targetIds)) {
+      const mindmapShapes = targetIds.filter((id) => {
+        const s = store.shapeById(id)
+        return s && s.role === ROLE.mindmapNode
+      })
+      const label = targetIds.length > 1
+        ? `Delete ${targetIds.length} selected items and their sub-branches?`
+        : `Delete "${state.shapes.find((s) => s.id === mindmapShapes[0])?.text || 'this node'}" and its sub-branches?`
+      mindmapUi.confirmDelete = { ids: [...targetIds], label, freeFloating: true }
+      return
     }
     removeMixed(store, state, history, targetIds)
   }
