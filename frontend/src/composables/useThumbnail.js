@@ -10,11 +10,11 @@ import { resolveNodeColor, nodeFill, readableInk } from '@/diagram/mindmapColors
 import { isRoot } from '@/diagram/mindmapModel.js'
 import { nodeSize as flowchartNodeSize } from '@/diagram/flowchartModel.js'
 import { nodeShape } from '@/diagram/flowchartShapes.js'
+import { routeFlowchartEdges } from '@/diagram/flowchartRouting.js'
 import { routeEdge, routeOffsets, flowchartContentBounds } from '@/diagram/flowchartLayout.js'
 import { flowchartPathData } from '@/diagram/flowchartPath.js'
 import { whiteboardContentBounds } from '@/diagram/whiteboardLayout.js'
 import { ROLE } from '@/diagram/freeFloating.js'
-import { flowchartModelFromShapes } from '@/diagram/freeFloatingGraph.js'
 import {
   stickyLines,
   STICKY_FONT_SIZE,
@@ -197,7 +197,49 @@ function elbowPath(a, b, midX, corner) {
   )
 }
 
-function connectorBody(c, shapes, connectors = [], flowchartModel = null, offsets = null) {
+function midpointAlong(points) {
+  let total = 0
+  for (let i = 0; i < points.length - 1; i += 1) {
+    total += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y)
+  }
+  let remaining = total / 2
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i]
+    const b = points[i + 1]
+    const segment = Math.hypot(b.x - a.x, b.y - a.y)
+    if (segment >= remaining) {
+      const t = segment === 0 ? 0 : remaining / segment
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+    }
+    remaining -= segment
+  }
+  return points[points.length - 1] || { x: 0, y: 0 }
+}
+
+function computeFlowchartRoutes(doc) {
+  const boxes = {}
+  for (const shape of doc.shapes || []) {
+    if (shape.role === ROLE.flowchartNode) {
+      boxes[shape.id] = {
+        x: num(shape.x), y: num(shape.y), w: num(shape.w), h: num(shape.h),
+        nodeType: shape.flowchart?.nodeType,
+      }
+    }
+  }
+  const edges = []
+  for (const connector of doc.connectors || []) {
+    if (connector.role === ROLE.flowchartEdge) {
+      const fromId = connector.from?.shapeId
+      const toId = connector.to?.shapeId
+      if (boxes[fromId] && boxes[toId] && fromId !== toId) {
+        edges.push({ id: connector.id, fromId, toId })
+      }
+    }
+  }
+  return edges.length ? routeFlowchartEdges(boxes, edges) : {}
+}
+
+function connectorBody(c, shapes, flowchartRoutes = null) {
   const a = endpointPoint(c.from, shapes)
   const b = endpointPoint(c.to, shapes)
   const style = c.style || {}
@@ -215,11 +257,8 @@ function connectorBody(c, shapes, connectors = [], flowchartModel = null, offset
 
   let d = ''
   let route = null
-  if (c.role === ROLE.flowchartEdge && flowchartModel && offsets) {
-    const edge = flowchartModel.edges.find((e) => e.id === c.id || e.id === c.flowchart?.edgeId)
-    if (edge) {
-      route = routeEdge(flowchartModel, edge, offsets[edge.id] || 0)
-    }
+  if (c.role === ROLE.flowchartEdge && flowchartRoutes) {
+    route = flowchartRoutes[c.id]
   }
 
   if (route) {
@@ -236,8 +275,9 @@ function connectorBody(c, shapes, connectors = [], flowchartModel = null, offset
     d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`
   }
 
-  const startMarkerId = `mk-start-${c.id}`
-  const endMarkerId = `mk-end-${c.id}`
+  const safeId = String(c.id).replace(/[^a-zA-Z0-9_-]/g, '')
+  const startMarkerId = `mk-start-${safeId}`
+  const endMarkerId = `mk-end-${safeId}`
   const startType = normEnd(c.arrowheads?.start)
   const endType = normEnd(c.arrowheads?.end)
 
@@ -260,7 +300,7 @@ function connectorBody(c, shapes, connectors = [], flowchartModel = null, offset
 
   let labelPillAndText = ''
   if (c.label) {
-    const labelAnchor = route ? route.labelPoint :
+    const labelAnchor = route ? midpointAlong(route.points) :
                         c.type === 'curved' ? { x: (a.x + 2 * (c.midpoint?.x ?? (a.x + b.x) / 2) + b.x) / 4, y: (a.y + 2 * (c.midpoint?.y ?? a.y) + b.y) / 4 } :
                         { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
     const labelWidth = (c.label.length || 0) * 7 + 16
@@ -271,7 +311,7 @@ function connectorBody(c, shapes, connectors = [], flowchartModel = null, offset
     labelPillAndText = pill + textStr
   }
 
-  return `<g data-connector-id="${c.id}">${defs}${mainPath}${labelPillAndText}</g>`
+  return `<g data-connector-id="${escapeText(c.id)}">${defs}${mainPath}${labelPillAndText}</g>`
 }
 
 function endpointPoint(endpoint, shapes) {
@@ -535,10 +575,9 @@ function unionViewBox(boxes, pad = 40) {
 
 function blockBody(doc) {
   const { width, height } = doc.canvas
-  const flowchartModel = flowchartModelFromShapes(doc.shapes || [], doc.connectors || [])
-  const offsets = routeOffsets(flowchartModel)
+  const flowchartRoutes = computeFlowchartRoutes(doc)
   const connectors = (doc.connectors || [])
-    .map((c) => connectorBody(c, doc.shapes || [], doc.connectors || [], flowchartModel, offsets))
+    .map((c) => connectorBody(c, doc.shapes || [], flowchartRoutes))
     .join('')
   const shapes = (doc.shapes || [])
     .filter((s) => !s.hidden)
@@ -682,10 +721,9 @@ function shiftPolygon(points, dx, dy) {
 function whiteboardBody(doc) {
   const model = doc.whiteboard
   const bounds = whiteboardContentBounds(model, doc.shapes || [])
-  const flowchartModel = flowchartModelFromShapes(doc.shapes || [], doc.connectors || [])
-  const offsets = routeOffsets(flowchartModel)
+  const flowchartRoutes = computeFlowchartRoutes(doc)
   const connectors = (doc.connectors || [])
-    .map((c) => connectorBody(c, doc.shapes || [], doc.connectors || [], flowchartModel, offsets))
+    .map((c) => connectorBody(c, doc.shapes || [], flowchartRoutes))
     .join('')
   // Shapes and board objects share one stacking scale (#27), so the export paints
   // them in a single zIndex-ordered pass — the same order the canvas draws. Lines
