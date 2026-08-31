@@ -17,7 +17,8 @@
 // only as an unhandled rejection in the console. From the canvas all of that looked
 // identical: nothing happened.
 
-import { FileUploadHandler, toast } from 'frappe-ui'
+import { watch } from 'vue'
+import { FileUploadHandler, toast, call } from 'frappe-ui'
 
 const ACCEPT = 'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/svg+xml'
 const MAX_W = 420 // cap the placed width so a big photo doesn't fill the canvas
@@ -27,8 +28,27 @@ const MAX_W = 420 // cap the placed width so a big photo doesn't fill the canvas
 const MAX_BYTES = 10 * 1024 * 1024
 const EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
 
-export function useImageInsert(store) {
+export function useImageInsert(store, editorUi) {
   const handler = new FileUploadHandler()
+  let pendingFileDoc = null
+
+  if (editorUi) {
+    watch(
+      () => editorUi.state.pendingStarter,
+      (current, previous) => {
+        if (previous?.kind === 'image' && !current && pendingFileDoc) {
+          const placed = store.state.shapes?.some((s) => s.type === 'image' && s.src === previous.image?.src)
+          if (!placed) {
+            const fileName = pendingFileDoc?.name || pendingFileDoc?.message?.name
+            if (fileName) {
+              call('frappe.client.delete', { doctype: 'File', name: fileName }).catch(() => {})
+            }
+          }
+          pendingFileDoc = null
+        }
+      },
+    )
+  }
 
   // Open the OS file picker and hand the uploaded image to `onReady`, which arms it
   // for click-to-place (#503). The upload starts the moment the file is chosen, so
@@ -42,8 +62,9 @@ export function useImageInsert(store) {
     input.addEventListener('change', () => {
       const file = input.files && input.files[0]
       if (file) {
-        upload(file).then((image) => {
+        upload(file).then(({ image, fileDoc }) => {
           if (image) {
+            pendingFileDoc = fileDoc
             toast.success('Image uploaded successfully')
             onReady?.(image)
           }
@@ -58,22 +79,30 @@ export function useImageInsert(store) {
   // image knows its own size before the click that drops it.
   async function upload(file) {
     const refusal = refusalFor(file)
-    if (refusal) return report(refusal)
+    if (refusal) {
+      report(refusal)
+      return { image: null, fileDoc: null }
+    }
     let fileDoc = null
     try {
       fileDoc = await handler.upload(file, uploadOptions())
     } catch (error) {
-      return report(uploadFailure(error, file))
+      report(uploadFailure(error, file))
+      return { image: null, fileDoc: null }
     }
     const src = fileDoc?.file_url || fileDoc?.message?.file_url
-    if (!src) return report(`Could not insert ${nameOf(file)} — the upload returned no file.`)
-    return boxFor(src, await naturalSize(src))
+    if (!src) {
+      report(`Could not insert ${nameOf(file)} — the upload returned no file.`)
+      return { image: null, fileDoc: null }
+    }
+    const image = boxFor(src, await naturalSize(src))
+    return { image, fileDoc }
   }
 
   // Upload `file` and place it; `at` (canvas-unit point) centers it, else canvas center.
   // Used by drop and paste, which already know where the image goes.
   async function insert(file, at) {
-    const image = await upload(file)
+    const { image } = await upload(file)
     if (!image) return null
     const id = store.insertImage(image, at)
     toast.success('Image uploaded successfully')
