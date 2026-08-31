@@ -266,13 +266,15 @@ function connectorBody(c, shapes, flowchartRoutes = null) {
   } else if (c.role === ROLE.mindmapBranch) {
     d = branchPathPoints(a, b)
   } else if (c.type === 'curved') {
-    const q = c.midpoint || { x: (a.x + b.x) / 2, y: a.y }
-    d = `M ${a.x} ${a.y} Q ${q.x} ${q.y} ${b.x} ${b.y}`
+    const q = c.midpoint
+      ? { x: num(c.midpoint.x), y: num(c.midpoint.y) }
+      : { x: num((a.x + b.x) / 2), y: num(a.y) }
+    d = `M ${num(a.x)} ${num(a.y)} Q ${num(q.x)} ${num(q.y)} ${num(b.x)} ${num(b.y)}`
   } else if (c.type === 'elbow') {
-    const midX = (a.x + b.x) / 2
+    const midX = num((a.x + b.x) / 2)
     d = elbowPath(a, b, midX, style.corner)
   } else {
-    d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`
+    d = `M ${num(a.x)} ${num(a.y)} L ${num(b.x)} ${num(b.y)}`
   }
 
   const safeId = String(c.id).replace(/[^a-zA-Z0-9_-]/g, '')
@@ -311,7 +313,7 @@ function connectorBody(c, shapes, flowchartRoutes = null) {
     labelPillAndText = pill + textStr
   }
 
-  return `<g data-connector-id="${escapeAttr(c.id)}">${defs}${mainPath}${labelPillAndText}</g>`
+  return `<g data-connector-id="${escapeAttr(safeId)}">${defs}${mainPath}${labelPillAndText}</g>`
 }
 
 function endpointPoint(endpoint, shapes) {
@@ -338,7 +340,7 @@ function renderShape(s) {
 function shapeTransform(s) {
   const parts = []
   const roleIsNode = s.role === 'mindmap-node' || s.role === 'flowchart-node'
-  const rotation = roleIsNode ? 0 : s.rotation
+  const rotation = roleIsNode ? 0 : num(s.rotation, 0)
   const flipX = s.flipX
   const flipY = s.flipY
   if (rotation) {
