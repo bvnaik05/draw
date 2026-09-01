@@ -381,7 +381,7 @@ export function flattenSubmodels(document, themePreset, styles = DEFAULT_STYLES)
 }
 
 // Whether deleting targetIds requires user confirmation because it would
-// cascade-delete mind-map children that the user has NOT selected.  A root
+// cascade-delete mind-map descendants that the user has NOT selected.  A root
 // without children or a fully-selected subtree deletes immediately — the user
 // selected everything explicitly and Undo is available.
 export function shouldConfirmMindmapDelete(shapes, targetIds) {
@@ -389,12 +389,23 @@ export function shouldConfirmMindmapDelete(shapes, targetIds) {
   const idSet = new Set(targetIds)
   const mindmapNodes = shapes.filter((s) => idSet.has(s.id) && s.role === ROLE.mindmapNode)
   if (!mindmapNodes.length) return false
-  return mindmapNodes.some((node) =>
-    shapes.some(
-      (other) =>
-        other.role === ROLE.mindmapNode &&
-        other.mindmap?.parentId === node.id &&
-        !idSet.has(other.id),
-    ),
-  )
+  // Build a parent→children lookup so we can walk full subtrees, not just
+  // direct children.  This catches grandchildren that would be implicitly
+  // cascade-deleted even when all direct children are selected.
+  const childrenOf = new Map()
+  for (const s of shapes) {
+    if (s.role === ROLE.mindmapNode && s.mindmap?.parentId) {
+      const siblings = childrenOf.get(s.mindmap.parentId)
+      if (siblings) siblings.push(s.id)
+      else childrenOf.set(s.mindmap.parentId, [s.id])
+    }
+  }
+  function hasUnselectedDescendant(nodeId) {
+    for (const childId of childrenOf.get(nodeId) || []) {
+      if (!idSet.has(childId)) return true
+      if (hasUnselectedDescendant(childId)) return true
+    }
+    return false
+  }
+  return mindmapNodes.some((node) => hasUnselectedDescendant(node.id))
 }

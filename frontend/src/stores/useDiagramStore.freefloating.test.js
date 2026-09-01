@@ -459,6 +459,20 @@ describe('deleting a mind-map node settles the tree (#513)', () => {
     expect(store.shapeById(rootId)).toBeFalsy()
   })
 
+  it('prompts confirmation when a selected child has an unselected grandchild', () => {
+    const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
+    // ids[0] is a child of root; add a grandchild under ids[0]
+    store.addChildNode(ids[0])
+    const grandchild = store.state.shapes.find(
+      (s) => s.role === ROLE.mindmapNode && s.mindmap?.parentId === ids[0],
+    )
+    expect(grandchild).toBeTruthy()
+    mindmapUi.confirmDelete = null
+    // Select ids[0] but NOT the grandchild → should confirm
+    store.removeSelectionOrIds([ids[0]])
+    expect(mindmapUi.confirmDelete).toBeTruthy()
+  })
+
   it('includes whiteboard items in confirmation payload on removeWhiteboardSelection', () => {
     const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
     store.addChildNode(ids[0])
