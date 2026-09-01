@@ -395,7 +395,6 @@ export function shouldConfirmMindmapDelete(shapes, targetIds) {
         other.mindmap?.parentId === node.id &&
         !idSet.has(other.id),
     )
-    if (targetIds.length === 1) return isRoot || hasUnselectedChildren
-    return hasUnselectedChildren
+    return isRoot || hasUnselectedChildren
   })
 }
