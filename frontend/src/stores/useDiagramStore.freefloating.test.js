@@ -434,8 +434,8 @@ describe('deleting a mind-map node settles the tree (#513)', () => {
   })
 
   it('prompts confirmation when removing a root whose children are not selected', () => {
-    const { store, rootId, ids } = migratedMindmapStoreWith(['right'])
-    // Root has a child (ids[0]) which is NOT in the deletion set
+    const { store, rootId } = migratedMindmapStoreWith(['right'])
+    // Root has a child which is NOT in the deletion set
     mindmapUi.confirmDelete = null
     store.removeSelectionOrIds([rootId])
     expect(mindmapUi.confirmDelete).toBeTruthy()
