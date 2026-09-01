@@ -433,22 +433,30 @@ describe('deleting a mind-map node settles the tree (#513)', () => {
     expect(mindmapUi.confirmDelete.ids).toEqual([ids[0]])
   })
 
-  it('prompts confirmation when removing an authored root node', () => {
-    const { store, rootId } = migratedMindmapStoreWith(['right'])
+  it('prompts confirmation when removing a root whose children are not selected', () => {
+    const { store, rootId, ids } = migratedMindmapStoreWith(['right'])
+    // Root has a child (ids[0]) which is NOT in the deletion set
     mindmapUi.confirmDelete = null
     store.removeSelectionOrIds([rootId])
     expect(mindmapUi.confirmDelete).toBeTruthy()
     expect(mindmapUi.confirmDelete.ids).toEqual([rootId])
   })
 
-  it('allows immediate deletion of empty starter nodes without children', () => {
+  it('deletes a childless root immediately without confirmation', () => {
     const { store } = migratedMindmapStoreWith([])
-    const emptyStarter = store.state.shapes.find((s) => s.role === ROLE.mindmapNode)
-    emptyStarter.text = ''
+    const starter = store.state.shapes.find((s) => s.role === ROLE.mindmapNode)
     mindmapUi.confirmDelete = null
-    store.removeSelectionOrIds([emptyStarter.id])
+    store.removeSelectionOrIds([starter.id])
     expect(mindmapUi.confirmDelete).toBeNull()
-    expect(store.shapeById(emptyStarter.id)).toBeFalsy()
+    expect(store.shapeById(starter.id)).toBeFalsy()
+  })
+
+  it('deletes a root and all children immediately when all are selected', () => {
+    const { store, rootId, ids } = migratedMindmapStoreWith(['right', 'right'])
+    mindmapUi.confirmDelete = null
+    store.removeSelectionOrIds([rootId, ...ids])
+    expect(mindmapUi.confirmDelete).toBeNull()
+    expect(store.shapeById(rootId)).toBeFalsy()
   })
 
   it('includes whiteboard items in confirmation payload on removeWhiteboardSelection', () => {

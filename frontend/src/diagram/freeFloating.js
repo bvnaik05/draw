@@ -380,27 +380,21 @@ export function flattenSubmodels(document, themePreset, styles = DEFAULT_STYLES)
   return next
 }
 
-// Whether deleting targetIds requires user confirmation because it contains
-// an authored mind-map root or mind-map subtrees with unselected children.
+// Whether deleting targetIds requires user confirmation because it would
+// cascade-delete mind-map children that the user has NOT selected.  A root
+// without children or a fully-selected subtree deletes immediately — the user
+// selected everything explicitly and Undo is available.
 export function shouldConfirmMindmapDelete(shapes, targetIds) {
   if (!shapes?.length || !targetIds?.length) return false
   const idSet = new Set(targetIds)
   const mindmapNodes = shapes.filter((s) => idSet.has(s.id) && s.role === ROLE.mindmapNode)
   if (!mindmapNodes.length) return false
-  return mindmapNodes.some((node) => {
-    const hasAnyChildren = shapes.some(
-      (other) => other.role === ROLE.mindmapNode && other.mindmap?.parentId === node.id,
-    )
-    const textStr = typeof node.text === 'string'
-      ? node.text
-      : (node.text?.content || node.text?.text || '')
-    const isRootWithTreeOrContent = !node.mindmap?.parentId && (!!textStr.trim() || hasAnyChildren)
-    const hasUnselectedChildren = shapes.some(
+  return mindmapNodes.some((node) =>
+    shapes.some(
       (other) =>
         other.role === ROLE.mindmapNode &&
         other.mindmap?.parentId === node.id &&
         !idSet.has(other.id),
-    )
-    return isRootWithTreeOrContent || hasUnselectedChildren
-  })
+    ),
+  )
 }
