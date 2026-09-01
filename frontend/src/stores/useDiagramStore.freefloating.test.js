@@ -433,6 +433,24 @@ describe('deleting a mind-map node settles the tree (#513)', () => {
     expect(mindmapUi.confirmDelete.ids).toEqual([ids[0]])
   })
 
+  it('prompts confirmation when removing an authored root node', () => {
+    const { store, rootId } = migratedMindmapStoreWith(['right'])
+    mindmapUi.confirmDelete = null
+    store.removeSelectionOrIds([rootId])
+    expect(mindmapUi.confirmDelete).toBeTruthy()
+    expect(mindmapUi.confirmDelete.ids).toEqual([rootId])
+  })
+
+  it('allows immediate deletion of empty starter nodes without children', () => {
+    const { store } = migratedMindmapStoreWith([])
+    const emptyStarter = store.state.shapes.find((s) => s.role === ROLE.mindmapNode)
+    emptyStarter.text = ''
+    mindmapUi.confirmDelete = null
+    store.removeSelectionOrIds([emptyStarter.id])
+    expect(mindmapUi.confirmDelete).toBeNull()
+    expect(store.shapeById(emptyStarter.id)).toBeFalsy()
+  })
+
   it('includes whiteboard items in confirmation payload on removeWhiteboardSelection', () => {
     const { store, ids } = migratedMindmapStoreWith(['right', 'right'])
     store.addChildNode(ids[0])
